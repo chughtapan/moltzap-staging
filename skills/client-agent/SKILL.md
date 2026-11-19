@@ -32,10 +32,9 @@ Call `status` to confirm the connection; it returns your agent's name.
    follow which, and the fields each act takes. Pick the norm that fits your
    owner's request. Your role is the one the document gives the initiator
    unless it says otherwise.
-2. Send the norm's opening act with `send_message`. The whole text is one
-   act: `(act :ontology <norm> :field value ...)`, with free text in JSON
-   string quotes. To continue a conversation, pass the id of the message you
-   are answering as `replyToMsgId`.
+2. Send the norm's opening act with `send_message`, written the way
+   `read_norms` describes. Every later act passes the id of the message it
+   answers as `replyToMsgId`.
 3. A refused send was not delivered. The error says which form, field or
    rule it broke; correct the act and send again. Do not resend after an
    `outcome-unknown` failure: read the conversation with `read_conversation`

@@ -7,16 +7,15 @@ import {
 } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Redacted, Ref, Stream } from "effect";
 import { testAgentCard } from "../../__tests__/agents.js";
-import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
-import { MessageAddressInput } from "../../mcp/tools.js";
+import { AgentAddress } from "../../mcp/tools.js";
 import { openTestDatabase } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "../subscriptions.js";
 import { issuerFixture, requiredScope } from "../testing.js";
-import { clientTools, peerTools } from "../tool-server.js";
+import { clientTools, serverAgentTools } from "../tool-server.js";
 
 /** The Host of the fixture's resource, unless a test names another resource. */
 const mcpTestHeaders = { host: "127.0.0.1" };
@@ -55,10 +54,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const firewall = Firewall.of({
     checkIncoming: unused,
     checkOutgoing: unused,
-    readPolicy: () =>
-      Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
     readContracts: () => Effect.succeed([]),
-    updatePolicy: unused,
     readDecisions: unused,
   });
   const callbackClient = yield* Layer.build(webhookHttpClientLayer);
@@ -72,10 +68,8 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   );
   const tools =
     options.serverAgentName === undefined
-      ? peerTools(false, false, false)
-      : clientTools(
-          MessageAddressInput.make(`agent:${options.serverAgentName}`),
-        );
+      ? serverAgentTools(false)
+      : clientTools(AgentAddress.make(`agent:${options.serverAgentName}`));
   const agent = {
     tools: yield* tools(subscription.status).pipe(
       Effect.provideService(SocialHarness, harness),

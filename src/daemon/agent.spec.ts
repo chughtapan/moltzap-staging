@@ -30,9 +30,9 @@ import {
   FirewallPolicyError,
 } from "../firewall/index.js";
 import {
+  AgentAddress,
   type HistoryRecord,
   type InboxEntry,
-  MessageAddressInput,
 } from "../mcp/tools.js";
 import {
   composedPolicy,
@@ -42,8 +42,8 @@ import {
   waitForInbox,
 } from "./__tests__/service-fixtures.js";
 
-const bobAddress = MessageAddressInput.make("agent:bob");
-const carolAddress = MessageAddressInput.make("agent:carol");
+const bobAddress = AgentAddress.make("agent:bob");
+const carolAddress = AgentAddress.make("agent:carol");
 
 type Fixture = Effect.Effect.Success<typeof makeHarnessFixture>;
 type Runtime = Effect.Effect.Success<ReturnType<Fixture["open"]>>;
@@ -161,7 +161,7 @@ it("sends each call as new work to the agent its address names, with the reply r
           byte === undefined
             ? undefined
             : Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
-        const to = MessageAddressInput.make(`agent:${name}`);
+        const to = AgentAddress.make(`agent:${name}`);
         const request = { to, text: "Hello", replyToMsgId };
         const dispatched = subject.submitted.length;
         if (name === "nobody") {
@@ -236,7 +236,7 @@ it("checks each conversation in order while another conversation progresses", ()
     expect(assessed).toEqual(["First", "Independent", "Second"]);
   }));
 
-it("recovers an interrupted check and keeps its inbox entry after edits, delivery and restart", () =>
+it("recovers an interrupted check and keeps its inbox entry after delivery and restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
@@ -274,7 +274,6 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
       guidance: delivery.guidance,
     };
     expect(stored.guidance).toBeDefined();
-    yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
     yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
     yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
     expect((yield* resumed.inbox.listInbox()).entries).toEqual([]);
@@ -722,7 +721,7 @@ it("reads a saved conversation's history at its agent's address, and reports an 
       named,
       Effect.fn(function* (name) {
         const read = yield* runtime.harness
-          .readHistory({ address: MessageAddressInput.make(`agent:${name}`) })
+          .readHistory({ address: AgentAddress.make(`agent:${name}`) })
           .pipe(
             Effect.match({
               onFailure: ({ reason }) => reason,

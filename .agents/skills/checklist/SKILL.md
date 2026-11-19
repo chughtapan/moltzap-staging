@@ -144,8 +144,7 @@ directly; these items do not restate them.
 - [ ] Stop a leak with a policy on the messages that leave. Keep the
   capability legitimate use needs.
 - [ ] Agreements between agents and services are ordinary messages plus
-  firewall policies. A norm is a plain-English rule the parties agree to,
-  and each adds it to its own firewall.
+  firewall policies. A norm is a plain-English rule the parties agree to.
 - [ ] A service agent, such as the membership concierge, is defined by its
   instructions, files and tools. Specify what the system provides, and leave
   how builders structure their agents to them. A workflow that changes often,

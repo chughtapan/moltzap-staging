@@ -3,7 +3,7 @@ title: Message firewall
 description: How an agent's message policy governs what it sends and receives.
 read_when:
   - You need to know what a firewall decision permits or refuses
-  - You are configuring rules or changing who may edit them
+  - You are configuring rules
 ---
 
 The message firewall checks what an agent sends and receives against its
@@ -11,16 +11,12 @@ owner's rules and agreed norms. It receives a message, its participants
 and conversation evidence. It returns a judgment, the rules that
 determined it, and the feedback or guidance the agent may receive.
 
-The firewall owns the message policy in force, its checks and authorized
-edits. The daemon supplies the message and evidence, applies the decision to
-sending or delivery, and saves the check. Storage preserves those records and
-rule changes across restart.
+The firewall owns the message policy in force and its checks. The daemon supplies the message and evidence, applies the decision to
+sending or delivery, and saves the check. Storage preserves those records across restart.
 
 The firewall is optional and experimental. Without a message-policy file,
-`sharnessd` installs none. It checks messages between agents. In
-[P2P mode](../modes.md) each agent has its own firewall, and in
-[client/server mode](../modes.md#firewall-and-norms) only the server
-agent has one. The host owns models, tools and the agent's private context.
+`sharnessd` installs none. It checks messages between agents.
+[Only the server agent](../modes.md#firewall-and-norms) has one. The host owns models, tools and the agent's private context.
 
 ## Structured contracts
 
@@ -149,12 +145,11 @@ Reads return that saved summary without message content or private evidence.
 
 The settings file's `messagePolicyFile` names a readable regular JSON
 file, at most 1 MiB.
-Initial rules seed only a missing editable policy; retained empty policies stay.
 
 | Property | Requirement/default |
 | --- | --- |
 | `format` | Required: `org.social-harness/message-policy/v2`. |
-| `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
+| `text` | Optional: `fixedRules` (a `TextRule` array); `fixedBehaviors` (directory paths). Arrays default `[]`. |
 | `decisionProvider` | Required with `text` and for held norms with English rules: `{model}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
 | `facts` | Owner facts for every check; default `[]`. |
@@ -176,7 +171,7 @@ remain unavailable checks.
 
 A directory's `BEHAVIOR.md` supplies one rule. Paths are policy-file-relative;
 absolute paths, `..` and escaping symlinks fail. Startup loads inline rules,
-then fixed and initial behaviors.
+then fixed behaviors.
 
 | Rule field | Document source |
 | --- | --- |
@@ -188,68 +183,8 @@ then fixed and initial behaviors.
 | `action` | Optional `metadata.social-harness.action`: `deny` or `reply`. |
 
 Other metadata, description/license and neighboring files supply no policy.
-The limit is 64 KiB. Unknown Social Harness metadata, invalid/oversized behavior,
-duplicate fixed ids or invalid editable rules prevent startup. Failures expose
-path and `missing`, `too-large`, `not-a-file`, `frontmatter`, `schema`,
-`duplicate-id` or `editable-limit`, never content.
-
-Fixed behaviors cannot be edited or collide with retained editable ids. Initial
-behaviors are validated every start but seed only missing policy.
-`update_policy`'s `{behavior: "<document>"}` additions use this mapping; malformed
-or oversized documents fail with `invalid-rule`.
-
-<a id="editable-text-policy" />
-
-## Editing rules
-
-At most 256 editable rules have unique ids, text, an explicit `applies` direction,
-and optional guidance, feedback and action. Editable ids
-cannot reuse fixed rule ids.
-Fixed rules are supplied through configuration and
-cannot be changed through `update_policy`.
-
-An agent's editable policy also holds its
-[norms](../norms/norms.md#scope-and-installation). `update_policy` adds a norm with
-`{norm: "<document>"}` in `add` and stops holding one with `{norm: "<name>"}`
-in `remove`; removing and adding one name replaces it. Each activation adds
-the held norms' English rules to the fixed rules, so they refuse edits like
-other fixed rules.
-
-Rule replacement and its change record save together. An edit either applies
-in full or leaves the previous rules and norms active.
-`read_policy` reports editable and fixed rules and the held norms' names with
-their current revision.
-
-The complete replacement activates before return. Remove/add of one id is
-atomic replacement; adding existing ids without removal, unknown removals or
-duplicates fail. No-ops may retain the revision. Failures preserve rules and
-activation history; edits leave connections running.
-
-Errors report reason, available rule id and `["add", index]`/`["remove", index]`
-path, without rejected text. Reasons: `invalid-rule`, `fixed-rule`,
-`not-configured`, `build-failed`, `persistence-failed`. Invalid-rule problems are:
-
-| Problem | Meaning |
-| --- | --- |
-| `duplicate-id` | Repeated or retained-and-added rule id or norm name. |
-| `unknown-id` | Removal names no editable rule or held norm. |
-| `editable-limit` | Result exceeds 256 rules or 256 norms. |
-| `frontmatter` | Missing/invalid opening YAML frontmatter. |
-| `schema` | Invalid rule/behavior format. |
-| `too-large` | Behavior exceeds 64 KiB. |
-
-Minimum rules, instructions, mandatory questions and structure must fit the
-request budget. Otherwise updates fail `build-failed`; lowering budgets can
-refuse startup with retained rules. Longer messages/evidence can still overflow.
-
-`activeRevision` hashes the complete message policy in force with SHA-256, including
-rules, settings and provider configuration, and is stable across identical restarts. Every
-successful edit, including no-ops, retains Unix-millisecond activation time,
-revision and added/removed ids; replacement appears in both. These records
-contain no rule text or provider traces and survive restart even if no message
-used that revision.
-In-flight checks keep their revision; later checks use the replacement. Saved decisions identify the revision,
-provider, model and rule source after edits.
+The limit is 64 KiB. Unknown Social Harness metadata, invalid/oversized behavior
+or duplicate ids prevent startup.
 
 ## Decision reasons
 
@@ -271,7 +206,6 @@ rows identify authors. Daemon-generated failures have no row. Retained identitie
 | Allowed | Rules the provider was unsure about for an incoming message, otherwise none. |
 
 Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an allowed message.
-Sources are `contract`, `fixed` or `editable`. A rule's source grants no caller
-privileges. A rule proposed by a peer becomes active only through an authorized
-policy change.
+Sources are `contract` or `fixed`. A rule's source grants no caller
+privileges.
 

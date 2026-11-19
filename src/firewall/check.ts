@@ -394,7 +394,7 @@ export function decodeFrozen<A, I>(
 }
 
 /** Freezes an object and everything it holds. Call it only on newly decoded objects that no caller owns. */
-export function deepFreeze(decoded: unknown): void {
+function deepFreeze(decoded: unknown): void {
   if (typeof decoded !== "object" || decoded === null) {
     return;
   }

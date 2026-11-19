@@ -23,6 +23,7 @@ const settings = {
     issuer: "https://issuer.example/",
     scope: "use:mcp",
   },
+  serverAgent: { name: "front-desk", subject: "server" },
 };
 
 /**
@@ -41,7 +42,12 @@ const fixture = Effect.gen(function* () {
   yield* write(settings);
   const load = loadDaemonSettings().pipe(
     Effect.withConfigProvider(
-      ConfigProvider.fromMap(new Map([[settingsVariable, filename]])),
+      ConfigProvider.fromMap(
+        new Map([
+          [settingsVariable, filename],
+          ["SHARNESS_DECISION_PROVIDER_KEY", providerKey],
+        ]),
+      ),
     ),
   );
   return { filesystem, directory, filename, write, load };
@@ -49,8 +55,8 @@ const fixture = Effect.gen(function* () {
 
 /**
  * A message policy file in `beneath`, a directory under the settings file's
- * own, with a decision provider and its key when `judged`. Returns the
- * settings that name them.
+ * own, with a decision provider when `judged`. Returns the setting that
+ * names it.
  */
 function messagePolicy(
   test: Effect.Effect.Success<typeof fixture>,
@@ -67,16 +73,7 @@ function messagePolicy(
         ...(judged ? { decisionProvider: { model: "configured-model" } } : {}),
       }),
     );
-    yield* test.filesystem.writeFileString(
-      join(directory, "provider.key"),
-      providerKey,
-    );
-    return {
-      messagePolicyFile: join(beneath, "policy.json"),
-      ...(judged
-        ? { decisionProviderKeyFile: join(beneath, "provider.key") }
-        : {}),
-    };
+    return { messagePolicyFile: join(beneath, "policy.json") };
   });
 }
 
@@ -137,7 +134,7 @@ it("refuses a settings file that does not exist", () =>
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.prop(
-  "resolves the policy, the provider key and the norms directory relative to the settings file, however deep beneath it they sit",
+  "resolves the policy and the norms directory relative to the settings file, however deep beneath it they sit, and reads the provider key from its variable",
   [fc.array(fc.stringMatching(/^[a-z0-9]{1,8}$/), { maxLength: 3 })],
   ([segments]) =>
     Effect.gen(function* () {
@@ -233,10 +230,7 @@ it.prop(
 
 const knownSettings = new Set([
   ...Object.keys(settings),
-  "serverAgent",
-  "hideGroups",
   "messagePolicyFile",
-  "decisionProviderKeyFile",
   "normsDirectory",
   "maximumHistoryRecords",
 ]);

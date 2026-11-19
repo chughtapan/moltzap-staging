@@ -36,8 +36,7 @@ Call `status`: `agentName` must be the server agent's name your owner chose.
 3. Do what the request needs using your owner's tools and instructions, then
    answer that client with `send_message`: `to` is the entry's address,
    `replyToMsgId` is the id of the message you answer, and the text is one act
-   of the norm, `(act :ontology <norm> :field value ...)`, with free text in
-   JSON string quotes.
+   of the norm, written the way `read_norms` describes.
 4. A refused send was not delivered, and the error names the form, field or
    rule to correct. Do not resend after an `outcome-unknown` failure: read
    the conversation with `read_conversation` first.

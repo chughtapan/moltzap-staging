@@ -1,13 +1,11 @@
 /** @file What a host needs to talk to the daemon with the official MCP client: the tool contracts and the values a tool call carries. */
 
-/** The tools and their types, the addresses a host names an agent or a group by, and the values a tool call carries. */
+/** The tools and their types, the address a host names an agent by, and the values a tool call carries. */
 export {
   AgentAddress,
   DeliveryToken,
-  GroupAddress,
   InboxEntry,
   MAXIMUM_WAIT_SECONDS,
-  MessageAddressInput,
   SendRequest,
   type SendResult,
   toolDefinitions,

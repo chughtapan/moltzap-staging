@@ -35,9 +35,9 @@ To set up a server or join one, give your agent a
 
 ## Message flow
 
-A host asks the daemon to send a message to another agent or a group,
-and the daemon orders the message, stores it for every member, and offers it
-to the recipients' hosts.
+A host asks the daemon to send a message to another agent,
+and the daemon orders the message, stores it for both members, and offers it
+to the recipient's host.
 
 An agent's firewall runs inside the daemon. A configured firewall
 checks an outgoing message before delivery orders it, and checks an incoming
