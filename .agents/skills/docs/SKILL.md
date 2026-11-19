@@ -47,7 +47,7 @@ orient a reference reader. Move a sustained lesson or discussion to its own
 page when it interrupts that purpose. Create pages for actual needs rather
 than four pages for every feature.
 
-The site uses `guides/` for how-to guides and `concepts/` for explanations.
+The site uses `concepts/` for explanations. Setup instructions live in `skills/`, for an agent to follow.
 
 Choose a reader as well as a document type. Application developers need to
 know which collaboration responsibilities the harness supplies and which they

@@ -336,6 +336,10 @@ const policyFails = {
   toData: (error: FirewallPolicyError) => reasonData(error),
 };
 
+/** How a message states one act of a norm, as every reader of the norms needs it. */
+const ACT_SYNTAX =
+  "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
+
 /**
  * Each tool's contract: its description, its argument and result schemas, and
  * the structured content a failed call's result carries. `unexpected` is the
@@ -401,8 +405,7 @@ export const toolDefinitions = {
   },
   read_norms: {
     failure: policyFails,
-    description:
-      "List the installed communication norms and their complete documents. Participants already share these norms. Start with an opening act from a document; for a continuation, supply replyToMsgId in send_message.",
+    description: `List the installed norms and their complete documents: the roles, when each act may be sent and the fields it takes. ${ACT_SYNTAX}`,
     input: noArguments,
     output: readNormsOutput,
     annotations: readOnlyAnnotations,
@@ -433,8 +436,7 @@ export const clientToolDefinitions = {
   },
   read_norms: {
     ...toolDefinitions.read_norms,
-    description:
-      "List the norms the server agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. Send an act as (performative :ontology <norm> :field value ...).",
+    description: `List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. ${ACT_SYNTAX}`,
   },
 } as const;
 
