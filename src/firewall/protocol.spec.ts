@@ -7,7 +7,6 @@ import { type Message, messageWithId, MsgId } from "../communication/index.js";
 import {
   contractOf,
   form,
-  formatAct,
   noFields,
   peer,
   valueField,
@@ -17,6 +16,7 @@ import {
   type CheckedMessage,
   checkStructure,
   type CompiledContract,
+  formatAct,
 } from "./contract.js";
 import { checkProtocol, projectProtocol } from "./protocol.js";
 
@@ -313,12 +313,11 @@ it("permits an act with a delay and a limit only once its fact is that old and w
     fc.property(
       fc.record({
         wait: fc.nat({ max: 50 }),
-        millisecondsPerUnit: fc.constantFrom(1, 1000),
         elapsed: fc.nat({ max: 60_000 }),
         maximum: fc.integer({ min: 1, max: 3 }),
         sent: fc.nat({ max: 4 }),
       }),
-      ({ wait, millisecondsPerUnit, elapsed, maximum, sent }) => {
+      ({ wait, elapsed, maximum, sent }) => {
         const timed = contractOf("timed", [
           {
             ...form,
@@ -339,12 +338,12 @@ it("permits an act with a delay and a limit only once its fact is that old and w
             fields: noFields,
             when: ["held"],
             maximum,
-            delay: { fact: "held", field: "wait", millisecondsPerUnit },
+            delay: { fact: "held", field: "wait" },
           },
         ]);
         const history: CheckedMessage[] = [];
         const start = 1_000;
-        const due = start + wait * millisecondsPerUnit;
+        const due = start + wait * 1000;
         attempt(timed, history, {
           author: alice,
           act: { name: "hold", norm: "timed", fields: { wait } },

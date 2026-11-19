@@ -1,4 +1,4 @@
-/** @file An agent's inbox hands over the entries after a cursor in the order they were stored, and stays scoped to its agent. */
+/** @file An agent's inbox hands over the allowed entries after a cursor in the order they were allowed, and stays scoped to its agent. */
 import { scopedLive as it } from "@effect/vitest";
 import { Array as Arr, Effect, FastCheck as fc, Schema } from "effect";
 import { expect } from "vitest";
@@ -9,29 +9,44 @@ import { AgentAddress } from "../mcp/tools.js";
 import { openTestDatabase } from "../test.js";
 import { type Inbox, makeInbox } from "./inbox.js";
 
-/** A new message from `peer` to bob. */
-function messageFrom(peer: string) {
-  return Message.create({
-    author: testAgentCard(peer),
-    recipients: [testAgentCard("agent:bob")],
-    content: [{ type: "text", text: "Can we meet tomorrow?" }],
+const allowed = { kind: "allowed", save: Effect.void } as const;
+const withheld = {
+  kind: "withheld",
+  reason: "rule-violation",
+  save: Effect.void,
+} as const;
+
+/** Stores a new unchecked message from `peer` in its conversation with bob and returns its id. */
+function arrive(inbox: Inbox, peer: string) {
+  return Effect.gen(function* () {
+    const message = yield* Message.create({
+      author: testAgentCard(peer),
+      recipients: [testAgentCard("agent:bob")],
+      content: [{ type: "text", text: "Can we meet tomorrow?" }],
+    });
+    yield* inbox.storeUnchecked(
+      yield* Schema.decodeUnknown(AgentAddress)(`agent:${peer}`),
+      message,
+    );
+    return message.msgId;
   });
 }
 
-/** Stores `message` as an entry of the inbox. */
-function store(inbox: Inbox, message: Message) {
-  return Effect.flatMap(
-    Schema.decodeUnknown(AgentAddress)(`agent:${message.author.agentName}`),
-    (address) => inbox.store(address, message),
-  );
-}
-
-/** Stores a new message from `peer` and returns its id. */
-function arrive(inbox: Inbox, peer: string) {
+/** Records `decision` for the oldest unchecked message from `peer`, and returns that message's id when there was one. */
+function decide(
+  inbox: Inbox,
+  peer: string,
+  decision: typeof allowed | typeof withheld,
+) {
   return Effect.gen(function* () {
-    const message = yield* messageFrom(peer);
-    yield* store(inbox, message);
-    return message.msgId;
+    const unchecked = (yield* inbox.unchecked(10)).find(
+      (candidate) => candidate.address === `agent:${peer}`,
+    );
+    if (unchecked === undefined) {
+      return undefined;
+    }
+    yield* inbox.recordDecision(unchecked, decision);
+    return unchecked.message.msgId;
   });
 }
 
@@ -39,6 +54,11 @@ const peers = fc.constantFrom("alice", "carol", "dave");
 const steps = fc.array(
   fc.oneof(
     fc.record({ step: fc.constant("arrive" as const), peer: peers }),
+    fc.record({
+      step: fc.constant("decide" as const),
+      peer: peers,
+      decision: fc.constantFrom(allowed, withheld),
+    }),
     fc.record({
       step: fc.constant("read" as const),
       /** Which earlier read's cursor the read presents, counted back from the latest; none when absent. */
@@ -52,7 +72,7 @@ type Step =
 
 /** What an inbox should hold after the steps taken on it. */
 interface Expected {
-  /** The ids of the stored messages, in the order they were stored. */
+  /** The ids of the allowed messages, in the order they were allowed. */
   readonly readable: string[];
   /** Each cursor a read returned, with the count of entries readable when it did. */
   readonly cursors: Array<{ cursor: string; through: number }>;
@@ -61,7 +81,12 @@ interface Expected {
 function take(inbox: Inbox, expected: Expected, step: Step) {
   return Effect.gen(function* () {
     if (step.step === "arrive") {
-      expected.readable.push(yield* arrive(inbox, step.peer));
+      yield* arrive(inbox, step.peer);
+    } else if (step.step === "decide") {
+      const decided = yield* decide(inbox, step.peer, step.decision);
+      if (decided !== undefined && step.decision === allowed) {
+        expected.readable.push(decided);
+      }
     } else {
       const presented =
         step.cursor === undefined
@@ -82,7 +107,7 @@ function take(inbox: Inbox, expected: Expected, step: Step) {
   });
 }
 
-it("returns, for any cursor a read gave, every entry stored since that read in the order the entries were stored, and none for a read without a cursor", () =>
+it("returns, for any cursor a read gave, every entry allowed since that read in the order the entries were allowed, and none for a read without a cursor", () =>
   Effect.gen(function* () {
     const database = yield* openTestDatabase();
     let agents = 0;
@@ -99,34 +124,38 @@ it("returns, for any cursor a read gave, every entry stored since that read in t
     yield* Effect.tryPromise(() => fc.assert(fc.asyncProperty(steps, holds)));
   }));
 
-it("gives entries stored at the same time distinct places in the read order, and a message stored again no second place", () =>
+it("gives entries allowed at the same time distinct places in the read order, and a message whose decision is recorded again no second place", () =>
   Effect.gen(function* () {
     const inbox = yield* makeInbox("bob");
-    const messages = yield* Effect.forEach(
-      Arr.makeBy(12, (index) => `peer-${String(index)}`),
-      messageFrom,
-      { concurrency: 1 },
-    );
+    const names = Arr.makeBy(12, (index) => `peer-${String(index)}`);
+    const sent = yield* Effect.forEach(names, (peer) => arrive(inbox, peer), {
+      concurrency: 1,
+    });
+    const unchecked = yield* inbox.unchecked(names.length);
     yield* Effect.forEach(
-      [...messages, ...messages],
-      (message) => store(inbox, message),
-      { concurrency: messages.length },
+      [...unchecked, ...unchecked],
+      (message) => inbox.recordDecision(message, allowed),
+      { concurrency: names.length },
     );
     const read = yield* inbox.listInbox(100, "0");
     expect(
       read.entries.map((entry) => entry.message.msgId).sort(compareAscii),
-    ).toEqual(messages.map((message) => message.msgId).sort(compareAscii));
-    expect(read.nextCursor).toBe(String(messages.length));
+    ).toEqual([...sent].sort(compareAscii));
+    expect(read.nextCursor).toBe(String(names.length));
   }).pipe((test) =>
     Effect.flatMap(openTestDatabase(), (database) => database.run(test)),
   ));
 
-it("keeps one agent's entries out of another agent's inbox", () =>
+it("stores the same message for each agent, and one agent's decision leaves the other's inbox as it was", () =>
   Effect.gen(function* () {
     const first = yield* makeInbox("first");
     const second = yield* makeInbox("second");
     yield* arrive(first, "alice");
+    yield* arrive(second, "alice");
+    yield* decide(first, "alice", allowed);
     expect((yield* second.listInbox(1, "0")).entries).toEqual([]);
+    yield* decide(second, "alice", allowed);
+    expect((yield* second.listInbox(2, "0")).entries).toHaveLength(1);
     expect((yield* first.listInbox(2, "0")).entries).toHaveLength(1);
   }).pipe((test) =>
     Effect.flatMap(openTestDatabase(), (database) => database.run(test)),

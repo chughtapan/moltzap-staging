@@ -1,9 +1,9 @@
-/** @file Stores one agent's inbox entries in the order they arrived. */
+/** @file Stores one agent's unchecked messages and its inbox entries in the order they were allowed. */
 
 import { SqlClient } from "@effect/sql";
 import { Effect, Schema } from "effect";
-import type { Message, MessageReference } from "../communication/index.js";
-import type { LocalGuidance } from "../firewall/index.js";
+import type { IncomingDecision } from "../firewall/service.js";
+import { Message, type MessageReference } from "../communication/index.js";
 import {
   type Compilable,
   executeQuery,
@@ -11,23 +11,39 @@ import {
   makeQueries,
   withAgentRows,
 } from "../database.js";
-import { encodeJson, exactStruct } from "../encoding.js";
-import { type AgentAddress, InboxEntry } from "../mcp/tools.js";
+import {
+  encodeJson,
+  exactStruct,
+  MAXIMUM_RUNTIME_ITEM_BYTES,
+} from "../encoding.js";
+import { AgentAddress, InboxEntry } from "../mcp/tools.js";
 
+const uncheckedRow = exactStruct({
+  address: AgentAddress,
+  unchecked: Schema.parseJson(Message),
+});
 const entryRow = exactStruct({
   read_number: Schema.Number,
   entry: Schema.parseJson(InboxEntry),
 });
 
-/** `read_number` orders an agent's entries by when each was stored, counting from one. */
+/** A received message the firewall has not yet decided, with the address its inbox entry takes. */
+export interface Unchecked {
+  readonly address: AgentAddress;
+  readonly message: Message;
+}
+
+/** `read_number` orders an agent's allowed entries by when each was allowed, counting from one. */
 type InboxTables = Record<
   "inbox_entries",
-  Record<"agent_key" | "author" | "message_id" | "entry", string> &
+  Record<"agent_key" | "address" | "author" | "message_id", string> &
+    Record<"unchecked" | "entry", string | null> &
     Record<"sequence", Generated<number>> &
-    Record<"read_number", number>
+    Record<"read_number", number | null> &
+    Record<"status", "unchecked" | "withheld" | "allowed">
 >;
 
-/** One agent's inbox: the storing of an entry, then the reads of what was stored. */
+/** One agent's inbox: its operations in the order an entry lives through them, then the reads of what was stored. */
 export type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 
 /** Captures the database. */
@@ -53,42 +69,103 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       eb.fn.coalesce(eb.fn.max("read_number"), eb.val(0)).as("newest"),
     );
   return {
-    /**
-     * Stores a received message as the agent's next entry, with the guidance
-     * its check gave. Storing a message again changes nothing. The lock on
-     * the agent is held until the caller's transaction ends, so entries
-     * become readable in read-number order and a reader that has read to one
-     * number has seen every entry before it.
-     */
-    store: Effect.fn(function* (
+    storeUnchecked: Effect.fn(function* (
       address: AgentAddress,
       message: Message,
-      guidance?: LocalGuidance,
     ) {
-      const entry = yield* encodeJson(InboxEntry, {
-        address,
-        message,
-        ...(guidance === undefined ? {} : { guidance }),
-      });
+      const encodedMessage = yield* encodeJson(Message, message);
+      yield* run(
+        queries
+          .insertInto("inbox_entries")
+          .values({
+            agent_key: agentKey,
+            address,
+            author: message.author.agentId,
+            message_id: message.msgId,
+            unchecked: encodedMessage,
+            entry: null,
+            status: "unchecked",
+          })
+          .onConflict((conflict) =>
+            conflict.columns(["agent_key", "author", "message_id"]).doNothing(),
+          ),
+      );
+    }),
+    unchecked: (limit: number) =>
+      read(
+        uncheckedRow,
+        queries
+          .selectFrom("inbox_entries as candidate")
+          .select(["candidate.address", "candidate.unchecked"])
+          .where("candidate.agent_key", "=", agentKey)
+          .where("candidate.status", "=", "unchecked")
+          .where((eb) =>
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom("inbox_entries as earlier")
+                  .select("earlier.sequence")
+                  .whereRef("earlier.agent_key", "=", "candidate.agent_key")
+                  .whereRef("earlier.address", "=", "candidate.address")
+                  .where("earlier.status", "=", "unchecked")
+                  .whereRef("earlier.sequence", "<", "candidate.sequence"),
+              ),
+            ),
+          )
+          .orderBy("candidate.sequence")
+          .limit(limit),
+      ).pipe(
+        Effect.map((rows) =>
+          rows.map(
+            (row): Unchecked => ({
+              address: row.address,
+              message: row.unchecked,
+            }),
+          ),
+        ),
+      ),
+    /**
+     * An allowed entry takes the agent's next read number. The lock on the
+     * agent is held until the transaction that records the decision ends, so
+     * entries become readable in read-number order and a reader that has read
+     * to one number has seen every entry before it.
+     */
+    recordDecision: Effect.fn(function* (
+      unchecked: Unchecked,
+      decision: IncomingDecision,
+    ) {
+      let encodedEntry: string | undefined;
+      if (decision.kind === "allowed") {
+        encodedEntry = yield* encodeJson(InboxEntry, {
+          address: unchecked.address,
+          message: unchecked.message,
+          ...(decision.guidance === undefined
+            ? {}
+            : { guidance: decision.guidance }),
+        });
+        if (Buffer.byteLength(encodedEntry) > MAXIMUM_RUNTIME_ITEM_BYTES) {
+          encodedEntry = undefined;
+        }
+      }
+      const entry = encodedEntry ?? null;
       yield* withAgentRows(
         agentKey,
         sql`SELECT pg_advisory_xact_lock(hashtext(${agentKey}))`.pipe(
           Effect.zipRight(
             executeQuery(
               queries
-                .insertInto("inbox_entries")
-                .values((eb) => ({
-                  agent_key: agentKey,
-                  author: message.author.agentId,
-                  message_id: message.msgId,
+                .updateTable("inbox_entries")
+                .set((eb) => ({
+                  unchecked: null,
                   entry,
-                  read_number: eb(newest(inboxRows()), "+", 1).$notNull(),
+                  status: entry === null ? "withheld" : "allowed",
+                  read_number:
+                    entry === null ? null : eb(newest(inboxRows()), "+", 1),
                 }))
-                .onConflict((conflict) =>
-                  conflict
-                    .columns(["agent_key", "author", "message_id"])
-                    .doNothing(),
-                ),
+                .where("agent_key", "=", agentKey)
+                .where("author", "=", unchecked.message.author.agentId)
+                .where("message_id", "=", unchecked.message.msgId)
+                .where("status", "=", "unchecked"),
             ),
           ),
         ),
@@ -125,7 +202,28 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .select("entry")
           .where("author", "=", reference.authorAgentId)
           .where("message_id", "=", reference.msgId)
+          .where("entry", "is not", null)
           .limit(1),
       ).pipe(Effect.map((rows) => rows[0]?.entry)),
+    visibleMessages: (messages: readonly Message[]) =>
+      Effect.forEach(
+        messages,
+        (message) =>
+          run(
+            queries
+              .selectFrom("inbox_entries")
+              .select("sequence")
+              .where("agent_key", "=", agentKey)
+              .where("author", "=", message.author.agentId)
+              .where("message_id", "=", message.msgId)
+              .where("entry", "is not", null),
+          ).pipe(
+            Effect.map((rows) => ({
+              message,
+              visibleToAgent: rows.length > 0,
+            })),
+          ),
+        { concurrency: 1 },
+      ),
   };
 });

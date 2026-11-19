@@ -6,6 +6,7 @@ import {
   exactStruct,
   readSExpressions,
   type SExpression,
+  writeSExpression,
 } from "../encoding.js";
 import { RequestedSchema, validateResponseContent } from "./forms.js";
 import { TextRule } from "./rules.js";
@@ -14,15 +15,10 @@ const name = Schema.String.pipe(
   Schema.pattern(/^[a-zA-Z][a-zA-Z0-9-]{0,63}$/u),
 );
 const names = Schema.Array(name);
-const actReference = Schema.Union(
-  name,
-  Schema.NonEmptyArray(name),
-  exactStruct({ fact: name }),
-);
+const actReference = Schema.Union(name, exactStruct({ fact: name }));
 const fieldValue = Schema.Union(
   Schema.String,
   Schema.Number.pipe(Schema.finite()),
-  Schema.Boolean,
   Schema.Array(Schema.String),
 );
 const actSchema = exactStruct({
@@ -75,17 +71,10 @@ const formSchema = exactStruct({
   starts: Schema.Boolean,
   ends: Schema.Boolean,
   when: names,
-  unless: names,
   initiates: names,
   terminates: names,
   maximum: Schema.optional(Schema.Positive.pipe(Schema.int())),
-  delay: Schema.optional(
-    exactStruct({
-      fact: name,
-      field: name,
-      millisecondsPerUnit: Schema.Positive,
-    }),
-  ),
+  delay: Schema.optional(exactStruct({ fact: name, field: name })),
   relations: Schema.Array(relationSchema),
 });
 
@@ -110,6 +99,7 @@ export const compiledContractSchema = exactStruct({
   textRules: Schema.Array(
     exactStruct({ ...TextRule.fields, act: Schema.optional(name) }),
   ),
+  onRefusal: Schema.optional(name),
 });
 
 /** A compiled norm: data the firewall checks messages against, with no code of its own. */
@@ -218,6 +208,19 @@ export const checkStructure = Effect.fn("checkStructure")(function* (
   return form;
 });
 
+/** An act as message text, with strings quoted as a norm document quotes them. */
+export function formatAct(act: Act): string {
+  const values: SExpression[] = [
+    { kind: "symbol", value: act.name },
+    { kind: "symbol", value: ":ontology" },
+    { kind: "symbol", value: act.norm },
+  ];
+  for (const [field, value] of Object.entries(act.fields)) {
+    values.push({ kind: "symbol", value: `:${field}` }, valueExpression(value));
+  }
+  return writeSExpression({ kind: "list", values });
+}
+
 function readParameters(
   performative: string,
   parameters: readonly SExpression[],
@@ -279,15 +282,25 @@ function readValue(
       { concurrency: 1 },
     );
   }
-  if (node.value === "true" || node.value === "false") {
-    return Effect.succeed(node.value === "true");
-  }
   if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u.test(node.value)) {
     return Effect.succeed(node.value);
   }
   return Number.isFinite(Number(node.value))
     ? Effect.succeed(Number(node.value))
     : Effect.fail(structuralProblem("Numbers must be finite."));
+}
+
+function valueExpression(value: Act["fields"][string]): SExpression {
+  if (typeof value === "string") {
+    return { kind: "string", value };
+  }
+  if (typeof value === "number") {
+    return { kind: "symbol", value: String(value) };
+  }
+  return {
+    kind: "list",
+    values: value.map((choice) => ({ kind: "string", value: choice })),
+  };
 }
 
 function structuralProblem(detail: string, field?: string) {

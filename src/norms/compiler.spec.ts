@@ -26,10 +26,7 @@ const refused = (document: string) =>
 
 const fieldTypes = {
   string: ":type string :min-length 1",
-  number: ":type number :minimum 0",
   integer: ":type integer :maximum 9",
-  boolean: ":type boolean",
-  select: ":type select :choices (one two)",
   "multi-select": ":type multi-select :choices (one two) :max-items 2",
 } as const;
 
@@ -41,10 +38,7 @@ const fields = fc.uniqueArray(
       .filter((name) => name !== "ontology"),
     type: fc.constantFrom<keyof typeof fieldTypes>(
       "string",
-      "number",
       "integer",
-      "boolean",
-      "select",
       "multi-select",
     ),
     optional: fc.boolean(),
@@ -165,9 +159,9 @@ vitestIt(
       fc.property(
         fields,
         fc.constantFrom<(source: string) => string>(
-          (source) => source.replace("(Asker Answerer)", "(Asker Absent)"),
           (source) =>
-            source.replace(":ends true)", ":ends true :unless absent)"),
+            source.replace("Answerer)\n", "Answerer :on-refusal absent)\n"),
+          (source) => source.replace("(Asker Answerer)", "(Asker Absent)"),
           (source) =>
             source.replace(":ends true)", ":ends true :terminates absent)"),
           (source) =>
