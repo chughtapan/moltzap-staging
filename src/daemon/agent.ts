@@ -7,8 +7,10 @@ import {
   Effect,
   Layer,
   Option,
+  Predicate,
   PubSub,
   Queue,
+  Schedule,
   Schema,
   Scope,
   Stream,
@@ -18,23 +20,20 @@ import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
   type CommunicationError,
   Message,
-  type MessageAddressInput,
   messageWithId,
   MsgId,
-  type Page,
+  PAGE_SIZE,
   type PaginatedRequest,
-  SendError,
 } from "../communication/index.js";
 import {
   Communication,
   type Conversation,
-  type HistoryPage as MessageHistoryPage,
-  restarting,
+  type HistoryPage,
 } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import { Firewall, type IncomingDecision } from "../firewall/service.js";
-import { type AgentCard, Identity } from "../identity.js";
+import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
   addressOf,
   canonicalMessageAddress,
@@ -43,11 +42,14 @@ import {
   type InboxError,
   type InboxPage,
   MessageAddress,
-  PAGE_SIZE,
+  type MessageAddressInput,
+  SendError,
   type SendRequest,
   type SendResult,
+  type ToolResult,
 } from "../mcp/tools.js";
 import {
+  type CursorError,
   decodeCursor,
   encodeCursor,
   type Inbox,
@@ -65,17 +67,9 @@ const conversationsCursor = Schema.Struct({
   address: MessageAddress,
 });
 
-/** Conversation addresses are canonical and follow unsigned-ASCII order. */
-interface ConversationsPage extends Page {
-  readonly addresses: readonly MessageAddress[];
-}
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: MessageAddressInput;
-}
-/** A missing nextCursor ends this fixed-boundary history traversal. */
-export interface HistoryPage extends Page {
-  readonly records: readonly HistoryRecord[];
 }
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
@@ -105,7 +99,7 @@ interface SocialHarnessService {
    */
   readonly listConversations: (
     request?: PaginatedRequest,
-  ) => Effect.Effect<ConversationsPage, HistoryError>;
+  ) => Effect.Effect<ToolResult<"list_conversations">, HistoryError>;
   /**
    * Pages include only history available at the first read. Rule edits leave
    * stored inbox entries as they are. Start a new traversal after reconnecting
@@ -113,7 +107,7 @@ interface SocialHarnessService {
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<HistoryPage, HistoryError>;
+  ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
   /**
    * Each notification carries no data and may cover several arrivals. Read the
    * inbox initially, after each notification and after reconnecting because
@@ -400,16 +394,12 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (position !== undefined && position.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-cursor" });
     }
-    const [first, ...rest] = [
-      card,
-      ...(yield* agent.identity.resolve(destination.others)),
-    ].sort((a, b) => compareAscii(a.agentName, b.agentName));
-    if (first === undefined || rest[0] === undefined) {
-      return yield* new HistoryError({ reason: "invalid-address" });
-    }
     const page = yield* messageRecords(
       agent,
-      [first, rest[0], ...rest.slice(1)],
+      yield* conversation([
+        card,
+        ...(yield* agent.identity.resolve(destination.others)),
+      ]),
       position?.communicationCursor,
     );
     return {
@@ -621,7 +611,7 @@ function readProtocolHistory(
   before?: Message,
 ) {
   return Effect.gen(function* () {
-    const pages: Array<MessageHistoryPage["entries"]> = [];
+    const pages: Array<HistoryPage["entries"]> = [];
     let boundary = before;
     while (true) {
       const page = yield* readHistoryBefore(agent, members, boundary);
@@ -665,6 +655,7 @@ function readHistoryBefore(
   });
 }
 
+/** The members of a conversation in agent-name order. */
 function conversation(members: readonly AgentCard[]) {
   const ordered = [...members].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
@@ -707,17 +698,58 @@ function sendFailure(
  * or a cursor this read did not return. Any other failure is one of storage
  * and ends the read as a defect.
  */
-function historyFailure(error: object) {
-  if (error instanceof HistoryError) {
+function historyFailure(
+  error:
+    | HistoryError
+    | SendError
+    | CursorError
+    | CommunicationError
+    | IdentityError
+    | {
+        readonly _tag: "SqlError" | "ParseError" | "JsonRepresentationError";
+      },
+) {
+  if (error._tag === "HistoryError") {
     return Effect.fail(error);
   }
-  if (error instanceof SendError) {
+  if (error._tag === "SendError") {
     return Effect.fail(new HistoryError({ reason: "invalid-address" }));
   }
-  const reason = "reason" in error ? error.reason : undefined;
-  return reason === "invalid-cursor" || reason === "unknown-agent"
-    ? Effect.fail(new HistoryError({ reason }))
+  if (
+    error._tag === "CursorError" ||
+    (error._tag === "CommunicationError" && error.reason === "invalid-cursor")
+  ) {
+    return Effect.fail(new HistoryError({ reason: "invalid-cursor" }));
+  }
+  return error._tag === "IdentityError" && error.reason === "unknown-agent"
+    ? Effect.fail(new HistoryError({ reason: "unknown-agent" }))
     : Effect.die(error);
+}
+
+/**
+ * Keeps a background loop of one agent running. A failure is logged and the
+ * loop starts again after a pause that doubles from one second up to thirty.
+ */
+function restarting(agentKey: string, loop: string) {
+  return <E, R>(work: Effect.Effect<never, E, R>) =>
+    work.pipe(
+      Effect.tapError((error) =>
+        Effect.logError(`The ${loop} failed and will start again`).pipe(
+          Effect.annotateLogs({
+            agentKey,
+            failure: Predicate.hasProperty(error, "_tag")
+              ? String(error._tag)
+              : "unknown",
+          }),
+        ),
+      ),
+      Effect.retry(
+        Schedule.union(
+          Schedule.exponential("1 second"),
+          Schedule.spaced("30 seconds"),
+        ),
+      ),
+    );
 }
 
 /**

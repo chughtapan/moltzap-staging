@@ -4,7 +4,8 @@ import { scopedLive as it } from "@effect/vitest";
 import { Array as Arr, Effect, FastCheck as fc, Schema } from "effect";
 import { expect } from "vitest";
 import { digest } from "../__tests__/agents.js";
-import { Message, MessageAddressInput, MsgId } from "../communication/index.js";
+import { Message, MsgId } from "../communication/index.js";
+import { MessageAddressInput } from "../mcp/tools.js";
 import {
   makeHarnessFixture,
   waitForInbox,

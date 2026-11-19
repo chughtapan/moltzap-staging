@@ -29,7 +29,7 @@ const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
 });
 
 /** Request admission uses the validated authentication settings without translating them. */
-export type McpAuthentication = DaemonSettings["authentication"];
+type McpAuthentication = DaemonSettings["authentication"];
 
 /** Admission failures expose no bearer, provider response or identity claims. */
 class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}

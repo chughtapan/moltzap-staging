@@ -16,7 +16,6 @@ import {
 import * as fc from "fast-check";
 import { createHmac } from "node:crypto";
 import { describe, expect } from "vitest";
-import { INBOX_PENDING_EVENT } from "../mcp/tools.js";
 import {
   decodeWakeUp,
   enqueue,
@@ -26,6 +25,7 @@ import {
   subscribeRequest,
 } from "./__tests__/webhook-fixtures.js";
 import {
+  INBOX_PENDING_EVENT,
   isPublicWebhookAddress,
   sendWebhook,
   webhookHttpClientLayer,

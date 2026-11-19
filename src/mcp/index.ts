@@ -18,10 +18,14 @@ export {
   McpSettingsError,
   sendMessage,
 } from "./connection.js";
-/** What a host sends, and the inbox entries and history records it reads. */
+/** What a host sends, the addresses it names an agent or a group by, and the inbox entries it reads. */
 export {
+  AgentAddress,
   DeliveryToken,
   InboxEntry,
+  MessageAddressInput,
   SendRequest,
   type SendResult,
 } from "./tools.js";
+/** The address of a group, which only P2P mode offers. */
+export { GroupAddress } from "./groups.js";
