@@ -34,23 +34,14 @@ const readConversation = (reader: SignedIn, address: string) =>
 /** The identifiers of the messages in the agent's saved conversation, in order. */
 const savedOrder = (reader: SignedIn, address: string) =>
   readConversation(reader, address).pipe(
-    Effect.map((records) =>
-      records.flatMap((record) =>
-        record.kind === "collectiveResult" ? [] : [record.message.msgId],
-      ),
-    ),
+    Effect.map((records) => records.map((record) => record.message.msgId)),
   );
 
 /** The identifiers of the next `count` messages the participant receives, in order. */
 const receivedOrder = (participant: Participant, count: number) =>
   Effect.forEach(
     Array.from({ length: count }),
-    () =>
-      nextItem(participant).pipe(
-        Effect.map((item) =>
-          item.kind === "message" ? item.message.msgId : item.kind,
-        ),
-      ),
+    () => nextItem(participant).pipe(Effect.map((item) => item.message.msgId)),
     { concurrency: 1 },
   );
 

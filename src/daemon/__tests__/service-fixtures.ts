@@ -17,20 +17,13 @@ import type {
   DecisionResponse,
 } from "../../firewall/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
-import {
-  CollectiveRequestMessage,
-  CommunicationError,
-  Message,
-  RequestError,
-} from "../../communication/index.js";
+import { CommunicationError, Message } from "../../communication/index.js";
 import {
   Communication,
   type Conversation,
   type ConversationQuery,
   type HistoryPage,
   type HistoryQuery,
-  type Incoming,
-  type Outgoing,
 } from "../../communication/service.js";
 import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import { compareAscii } from "../../encoding.js";
@@ -153,14 +146,13 @@ interface HistoryPosition {
   readonly address: string;
 }
 interface Intake {
-  readonly incoming: Incoming;
+  readonly message: Message;
   readonly accepted: Deferred.Deferred<undefined>;
 }
 interface Network {
   readonly self: AgentCard;
   readonly messages: Message[];
-  readonly submitted: Outgoing[];
-  readonly collectiveRequests: Map<string, CollectiveRequestMessage>;
+  readonly submitted: Message[];
   readonly conversations: Map<string, Conversation>;
   readonly historyPositions: Map<string, HistoryPosition>;
   readonly conversationPositions: Map<string, string>;
@@ -192,7 +184,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
     self,
     messages: [],
     submitted: [],
-    collectiveRequests: new Map(),
     conversations: new Map(),
     historyPositions: new Map(),
     conversationPositions: new Map(),
@@ -213,7 +204,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
     carol,
     submitted: network.submitted,
     open: (options: OpenOptions = {}) => openHarness(environment, options),
-    deliver: (incoming: Incoming) => deliver(network, incoming),
+    deliver: (message: Message) => deliver(network, message),
     addPeer: (name: string) => Effect.sync(() => addPeer(environment, name)),
     retain: (message: Message) =>
       Effect.sync(() => {
@@ -311,28 +302,19 @@ function communicationFor(network: Network) {
             members.length === names.length && sameNames(members, names),
         ),
       ),
-    send: (outgoing) =>
+    send: (message) =>
       Effect.suspend(() => {
-        network.submitted.push(outgoing);
+        network.submitted.push(message);
         if (network.sendFailure !== undefined) {
           return Effect.fail(network.sendFailure);
         }
-        if (!("kind" in outgoing)) {
-          retain(network, outgoing);
-        }
+        retain(network, message);
         return Effect.void;
-      }),
-    getCollectiveRequest: (id) =>
-      Effect.suspend(() => {
-        const found = network.collectiveRequests.get(id);
-        return found === undefined
-          ? Effect.fail(new RequestError({ failure: { kind: "request-none" } }))
-          : Effect.succeed(found);
       }),
     consume: (handle) =>
       Queue.take(network.incoming).pipe(
-        Effect.flatMap(({ incoming, accepted }) =>
-          handle(incoming).pipe(
+        Effect.flatMap(({ message, accepted }) =>
+          handle(message).pipe(
             Effect.zipRight(Deferred.succeed(accepted, undefined)),
           ),
         ),
@@ -435,22 +417,11 @@ function historyPage(
   };
 }
 
-function deliver(network: Network, incoming: Incoming) {
+function deliver(network: Network, message: Message) {
   return Effect.gen(function* () {
-    if (incoming.kind === "message" || incoming.kind === "collectiveRequest") {
-      retain(network, incoming.message);
-    } else if (incoming.kind === "collectiveResult") {
-      for (const message of [
-        ...(incoming.sources.request === undefined
-          ? []
-          : [incoming.sources.request]),
-        ...incoming.sources.responses,
-      ]) {
-        retain(network, message);
-      }
-    }
+    retain(network, message);
     const accepted = yield* Deferred.make<undefined>();
-    yield* Queue.offer(network.incoming, { incoming, accepted });
+    yield* Queue.offer(network.incoming, { message, accepted });
     yield* Deferred.await(accepted);
   });
 }
@@ -467,12 +438,6 @@ function retain(network: Network, message: Message) {
   }
   const members = membersOf(message);
   network.conversations.set(addressOf(network.self, members), members);
-  if (message.collectiveRequest !== undefined) {
-    network.collectiveRequests.set(
-      message.msgId,
-      Schema.decodeUnknownSync(CollectiveRequestMessage)(message),
-    );
-  }
 }
 
 function membersOf(

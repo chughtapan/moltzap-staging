@@ -1,4 +1,4 @@
-/** @file Message and collective request contracts preserve public values, forms and decoded content. */
+/** @file Message and form contracts preserve public values and content. */
 
 import { effect as it } from "@effect/vitest";
 import {
@@ -8,7 +8,6 @@ import {
   Encoding,
   Exit,
   FastCheck as fc,
-  Option,
   Order,
   Schema,
   Struct,
@@ -16,15 +15,8 @@ import {
 import { expect, it as vitestIt } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
 import {
-  CollectivePartInvalidError,
-  collectivePartOf,
-  CollectiveRequest,
-  collectiveRequestContent,
-  CollectiveResponse,
   Content,
-  encodeCollectiveContent,
   GroupAddress,
-  isCollectiveRequestMessage,
   Message,
   MessageAddressInput,
   messageWithId,
@@ -33,7 +25,6 @@ import {
   type ResponseContent,
   validateResponseContent,
 } from "./messages.js";
-import { Incoming } from "./service.js";
 
 const alice = testAgentCard("alice");
 
@@ -102,60 +93,6 @@ vitestIt(
     );
   },
 );
-
-it("captures a collective request and a response while keeping their decoded meaning out of stored message bytes", () =>
-  Effect.gen(function* () {
-    const request = yield* CollectiveRequest.create({
-      author: alice,
-      recipients: [bob, carol],
-      op: "all_gather",
-      question: "Which day works?",
-      deadline: 30,
-      requestedSchema: Schema.decodeUnknownSync(RequestedSchema)({
-        type: "object",
-        properties: { day: { type: "string" } },
-        required: ["day"],
-      }),
-    });
-    const received = yield* messageWithId(
-      request.author,
-      request.recipients,
-      { msgId: request.msgId },
-      yield* collectiveRequestContent(request),
-    );
-    if (!isCollectiveRequestMessage(received)) {
-      return yield* Effect.dieMessage("the collective request did not decode");
-    }
-    expect(received.collectiveRequest).toEqual({
-      op: request.op,
-      question: request.question,
-      requestedSchema: request.requestedSchema,
-      deadlineAt: request.deadlineAt,
-    });
-    const response = yield* CollectiveResponse.create({
-      author: bob,
-      request: received,
-      response: {
-        requestId: received.msgId,
-        action: "accept",
-        content: { day: "monday" },
-      },
-    });
-    expect(response.recipients).toEqual([alice, carol]);
-    expect(response.collectiveResponse).toEqual({
-      requestId: request.msgId,
-      action: "accept",
-      content: { day: "monday" },
-    });
-    const incoming: Incoming = { kind: "message", message: response };
-    const stored = yield* Schema.encode(Incoming)(incoming);
-    expect(stored).toMatchObject({ kind: "message", message: { author: bob } });
-    if (stored.kind !== "message") {
-      return yield* Effect.dieMessage("stored handoff changed kind");
-    }
-    expect(stored.message).not.toHaveProperty("collectiveResponse");
-    expect(yield* Schema.decodeUnknown(Incoming)(stored)).toEqual(incoming);
-  }));
 
 const fieldSchema = (field: object) =>
   Schema.decodeUnknownSync(RequestedSchema)({
@@ -448,123 +385,6 @@ vitestIt(
   },
 );
 
-const requestId = digest("msg_", 3);
-
-const requestedSchema = {
-  type: "object",
-  properties: {
-    slot: { type: "string", enum: ["mon", "tue"] },
-    hours: { type: "number", minimum: 0 },
-  },
-  required: ["slot"],
-};
-
-const gather = {
-  kind: "request",
-  op: "gather",
-  deadlineAt: 1_790_000_000_000,
-  requestedSchema,
-};
-
-const decline = { kind: "response", requestId, action: "decline" };
-
-const collectiveParts = [
-  gather,
-  { ...gather, op: "all_gather" },
-  { kind: "response", requestId, action: "accept", content: { slot: "mon" } },
-  decline,
-  {
-    kind: "close",
-    requestId,
-    included: [
-      {
-        authorAgentId: testAgentCard("agent:bob").agentId,
-        msgId: digest("msg_", 2),
-      },
-    ],
-    closedAt: 1_790_000_000_000,
-    closedBy: "deadline",
-  },
-];
-
-/** The data part that carries a collective part. */
-const carrying = (part: unknown) => ({
-  type: "data",
-  value: { "org.social-harness/collective": part },
-});
-
-/** What a recipient reads from a message with this content. */
-const interpreted = (content: readonly unknown[]) =>
-  collectivePartOf(
-    Schema.decodeUnknownSync(Message)({
-      msgId,
-      author: alice,
-      recipients: [bob],
-      content,
-    }),
-  );
-
-const decodes = (part: unknown): boolean =>
-  Exit.isSuccess(Effect.runSyncExit(interpreted([carrying(part)])));
-
-vitestIt(
-  "reads the one collective part content carries, none without one and a refusal with more",
-  () => {
-    fc.assert(
-      fc.property(
-        fc.constantFrom(...collectiveParts),
-        fc.integer({ min: 0, max: 3 }),
-        (part, copies) => {
-          const read = Effect.runSync(
-            Effect.either(
-              interpreted([
-                { type: "text", text: "Which day?" },
-                ...Array.from({ length: copies }, () => carrying(part)),
-              ]),
-            ),
-          );
-
-          if (copies > 1) {
-            expect(read).toStrictEqual(
-              Either.left(
-                new CollectivePartInvalidError({ reason: "duplicate" }),
-              ),
-            );
-            return;
-          }
-          expect(Either.map(read, Option.isSome)).toEqual(
-            Either.right(copies === 1),
-          );
-        },
-      ),
-    );
-  },
-);
-
-vitestIt(
-  "writes a collective part into content that reads back as the same part",
-  () => {
-    fc.assert(
-      fc.property(
-        fc.constantFrom(...collectiveParts),
-        fc.option(fc.string({ minLength: 1, maxLength: 64 }), {
-          nil: undefined,
-        }),
-        (raw, text) => {
-          const part = Option.getOrThrow(
-            Effect.runSync(interpreted([carrying(raw)])),
-          );
-          const content = Effect.runSync(encodeCollectiveContent(part, text));
-
-          expect(Effect.runSync(interpreted(content))).toEqual(
-            Option.some(part),
-          );
-        },
-      ),
-    );
-  },
-);
-
 vitestIt(
   "accepts content exactly when its JSON text is at most 32,768 bytes",
   () => {
@@ -580,30 +400,18 @@ vitestIt(
   },
 );
 
-it("gives each collective request its own message id", () =>
+it("gives each created message its own message id", () =>
   Effect.gen(function* () {
-    const ask = CollectiveRequest.create({
+    const create = Message.create({
       author: bob,
       recipients: [alice],
-      op: "gather",
-      question: "Which day works?",
-      deadline: 30,
-      requestedSchema:
-        Schema.decodeUnknownSync(RequestedSchema)(requestedSchema),
+      content,
     });
-    const first = yield* ask;
-    const second = yield* ask;
+    const first = yield* create;
+    const second = yield* create;
 
     expect(first.msgId).not.toBe(second.msgId);
   }));
-
-vitestIt.each([
-  { ...decline, requestId: digest("req_", 1) },
-  { ...decline, requestId: `${requestId}=` },
-])("rejects a response that names no canonical message id: %j", (response) => {
-  expect(decodes(response)).toBe(false);
-  expect(decodes(decline)).toBe(true);
-});
 
 const decodingFails = (
   schema: Schema.Schema.AnyNoContext,

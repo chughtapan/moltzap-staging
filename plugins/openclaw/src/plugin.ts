@@ -21,7 +21,7 @@ import {
   type SendResult,
   toolDefinitions,
 } from "@social-harness/social-harness";
-import { absurd, Data, Effect, Option, Schema } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
 import {
   buildChannelOutboundSessionRoute,
@@ -39,9 +39,6 @@ import {
   defineChannelMessageAdapter,
   waitUntilAbort,
 } from "openclaw/plugin-sdk/channel-outbound";
-
-/** The sender OpenClaw records for an entry no agent authored: a collective result. */
-const HARNESS_SENDER_NAME = "Social Harness";
 
 const CHANNEL_ID = "sharness";
 const TARGET_HINT =
@@ -589,7 +586,7 @@ function handleInboxEntry(
 ) {
   const kind = entry.address.startsWith("group:") ? "group" : "direct";
   const projected: ProjectedEntry = {
-    id: entryId(entry),
+    id: entry.item.message.msgId,
     kind,
     address: entry.address,
     ...entryParticipants(entry, kind),
@@ -606,7 +603,7 @@ function handleInboxEntry(
  * `receive_messages` returns it.
  */
 function entryText(entry: InboxEntry): string {
-  if (entry.item.kind === "message" && entry.guidance === undefined) {
+  if (entry.guidance === undefined) {
     const [part, ...rest] = entry.item.message.content;
     if (part.type === "text" && rest.length === 0) {
       return part.text;
@@ -615,45 +612,16 @@ function entryText(entry: InboxEntry): string {
   return JSON.stringify(entry);
 }
 
-/**
- * Who an entry is from and, for a group message or collective request, who is
- * in the group. A collective result is from Social Harness and names only the
- * request's recipients, so it lists no members.
- */
+/** Who an entry is from and, for a group message, who is in the group. */
 function entryParticipants(
   entry: InboxEntry,
   kind: ProjectedEntry["kind"],
 ): Pick<ProjectedEntry, "sender" | "members"> {
-  const { item } = entry;
-  switch (item.kind) {
-    case "message":
-    case "collectiveRequest": {
-      const { author, recipients } = item.message;
-      const sender = agentSender(author);
-      return kind === "direct"
-        ? { sender }
-        : { sender, members: [author, ...recipients].map(agentAddress) };
-    }
-    case "collectiveResult":
-      return {
-        sender: {
-          id: `sharness:${entryId(entry)}`,
-          name: HARNESS_SENDER_NAME,
-        },
-      };
-    default:
-      return absurd(item);
-  }
-}
-
-/**
- * The id the host knows an entry by, which its explicit reply names: the
- * message id, or for a collective result the id of its request.
- */
-function entryId(entry: InboxEntry): string {
-  return entry.item.kind === "collectiveResult"
-    ? entry.item.requestId
-    : entry.item.message.msgId;
+  const { author, recipients } = entry.item.message;
+  const sender = agentSender(author);
+  return kind === "direct"
+    ? { sender }
+    : { sender, members: [author, ...recipients].map(agentAddress) };
 }
 
 function agentSender(agent: AgentCard): EntrySender {

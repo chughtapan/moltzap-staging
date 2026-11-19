@@ -15,10 +15,10 @@ const rows: Readonly<
   Record<string, Readonly<Record<string, string | number>>>
 > = {
   inbox_entries: {
-    dedupe_key: "dedupe",
     delivery_token: "token",
     address: "agent:alice",
-    kind: "message",
+    author: "author",
+    message_id: "message",
     status: "unchecked",
   },
   inbox_visibility: { author: "author", message_id: "message", visible: 1 },
@@ -45,19 +45,6 @@ const rows: Readonly<
     ordinal: 0,
     author_agent_id: "author",
     msg_id: "message",
-    message: "{}",
-  },
-  collectives: {
-    request_id: "request",
-    requester_agent_id: "requester",
-    role: "requester",
-    request: "{}",
-    deadline_at: 0,
-  },
-  collective_copies: { copy_id: "copy", request_id: "request" },
-  collective_responses: {
-    request_id: "request",
-    recipient: "recipient",
     message: "{}",
   },
 };

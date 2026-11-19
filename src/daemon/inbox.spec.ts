@@ -18,9 +18,8 @@ it("stores the same peer message for each agent and leaves another agent's deliv
       recipients: [testAgentCard("agent:bob"), testAgentCard("agent:carol")],
       content: [{ type: "text", text: "Can we meet tomorrow?" }],
     });
-    const incoming = { kind: "message", message } as const;
-    yield* first.storeUnchecked(address, incoming);
-    yield* second.storeUnchecked(address, incoming);
+    yield* first.storeUnchecked(address, message);
+    yield* second.storeUnchecked(address, message);
     const uncheckedByFirst = yield* first.unchecked(10);
     const uncheckedBySecond = yield* second.unchecked(10);
     expect(uncheckedByFirst).toHaveLength(1);

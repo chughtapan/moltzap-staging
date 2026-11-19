@@ -1,7 +1,6 @@
 /** @file A contract: the forms, turn rules and text rules one norm compiles to, and the reading of a message as one act of it. */
 
 import { Data, Effect, Either, Schema } from "effect";
-import type { Outgoing } from "../communication/service.js";
 import {
   type Message,
   RequestedSchema,
@@ -154,21 +153,16 @@ export class ContractProblem extends Data.TaggedError("ContractProblem")<{
   readonly field?: string;
 }> {}
 
-/** Whether a contract can govern `message`: a message from one agent to one other that is no collective request or response. */
-export function isDirectText(message: Outgoing): message is Message {
-  return (
-    !("kind" in message) &&
-    message.collectiveRequest === undefined &&
-    message.collectiveResponse === undefined &&
-    message.recipients.length === 1
-  );
+/** Whether a contract can govern `message`: a message from one agent to one other. */
+export function isDirectText(message: Message) {
+  return message.recipients.length === 1;
 }
 
 /**
  * Reads a message as one act. A contract governs direct text messages: the
  * whole text is one parenthesized act, with no other content part.
  */
-export const readAct = Effect.fn("readAct")(function* (message: Outgoing) {
+export const readAct = Effect.fn("readAct")(function* (message: Message) {
   if (
     !isDirectText(message) ||
     message.content.some((part) => part.type !== "text")

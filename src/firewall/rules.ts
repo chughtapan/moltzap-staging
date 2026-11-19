@@ -24,8 +24,7 @@ const identifier = Schema.NonEmptyTrimmedString;
  * Operational holds remain distinct from a settled rule violation. A draft
  * that a rule holds for the owner, who has not approved it, has its own reason.
  */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Assessment, saved summaries and host projection share one refusal grammar; package entry points expose opaque values.
-export const firewallRefusalReasonSchema = Schema.Literal(
+const firewallRefusalReasonSchema = Schema.Literal(
   "rule-violation",
   "unresolved-evidence",
   "check-unavailable",

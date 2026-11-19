@@ -115,7 +115,7 @@ export function incoming(self: AgentCard) {
     author: peer("bob", 2),
     recipients: [self],
     content: [{ type: "text", text: "Hello" }],
-  }).pipe(Effect.map((message) => ({ kind: "message" as const, message })));
+  });
 }
 
 /** A peer card whose ids repeat `byte`. */

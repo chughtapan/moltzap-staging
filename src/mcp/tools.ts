@@ -13,7 +13,6 @@ import {
   MsgId,
   Page,
   PaginatedRequest,
-  type RequestError,
   SendError,
   wellFormedString,
 } from "../communication/index.js";
@@ -112,7 +111,7 @@ export const StoredInboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type StoredInboxEntry = typeof StoredInboxEntry.Type;
 
-/** One message or collective result as the host reads it. It keeps its delivery token once delivered. */
+/** One message as the host reads it. It keeps its delivery token once delivered. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
   ...StoredInboxEntry.fields,
@@ -173,9 +172,8 @@ export type SendResult = typeof SendResultSchema.Type;
 export const PAGE_SIZE = 50;
 
 /**
- * One record of a conversation's history: a message this agent sent, the
- * stored inbox entry of a message it received, or the stored inbox entry of a
- * collective result.
+ * One record of a conversation's history: a message this agent sent, or the
+ * stored inbox entry of a message it received.
  */
 export type HistoryRecord =
   | { readonly kind: "sent"; readonly message: Message }
@@ -185,10 +183,6 @@ export type HistoryRecord =
         readonly authorAgentId: Message["author"]["agentId"];
         readonly msgId: Message["msgId"];
       };
-    } & StoredInboxEntry)
-  | ({
-      readonly kind: "collectiveResult";
-      readonly deliveryToken: DeliveryToken;
     } & StoredInboxEntry);
 
 const historyFailureText = {
@@ -240,8 +234,6 @@ export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
 /** A wake-up to read the pending inbox. It carries no content. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
-const savedItemSchema = Schema.typeSchema(PermittedItem);
-
 const historyRecordSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("sent"),
@@ -251,14 +243,7 @@ const historyRecordSchema = Schema.Union(
     kind: Schema.Literal("received"),
     address: MessageAddress,
     message: MessageReference,
-    item: savedItemSchema,
-    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("collectiveResult"),
-    address: MessageAddress,
-    deliveryToken: DeliveryToken,
-    item: savedItemSchema,
+    item: Schema.typeSchema(PermittedItem),
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
 );
@@ -309,11 +294,8 @@ const receiveMessagesInput = exactStruct({
   ),
 });
 const receiveMessagesOutput = Schema.typeSchema(InboxPage);
-/**
- * Writes the typed refusal's details, the collective request's message id and
- * failing members or fields as the structured content of a failed send.
- */
-function sendErrorData(error: SendError | RequestError | FirewallRefusal) {
+/** Writes the typed refusal's details as the structured content of a failed send. */
+function sendErrorData(error: SendError | FirewallRefusal) {
   if (error._tag === "FirewallRefusal") {
     return {
       reason: "firewall-refused",
@@ -322,13 +304,6 @@ function sendErrorData(error: SendError | RequestError | FirewallRefusal) {
       ...(error.rule === undefined ? {} : { rule: error.rule }),
       feedback: error.feedback,
       ...(error.detail === undefined ? {} : { detail: error.detail }),
-    };
-  }
-  if (error._tag === "RequestError") {
-    return {
-      reason: "collective-failed",
-      ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
-      failure: error.failure,
     };
   }
   if (error.detail === undefined) {

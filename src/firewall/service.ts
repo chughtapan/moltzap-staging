@@ -12,14 +12,7 @@ import {
   Struct,
 } from "effect";
 import { createHash } from "node:crypto";
-import type {
-  CollectiveOutcome,
-  CollectiveRequest,
-  CollectiveResultSources,
-  Message,
-  MessageReference,
-} from "../communication/index.js";
-import type { Incoming, Outgoing } from "../communication/service.js";
+import type { Message, MessageReference } from "../communication/index.js";
 import {
   decodeJson,
   exactStruct,
@@ -37,9 +30,7 @@ import {
 import {
   type AssessmentText,
   checkCapturedMessage,
-  type CheckedGuidance,
   type CheckEvidence,
-  type CollectiveResult,
   decidingRules,
   type DecisionProvider,
   type DecisionProviderError,
@@ -53,7 +44,6 @@ import {
   type PermittedItem,
   textQuestionEdition,
   validateChecks,
-  type Withheld,
 } from "./check.js";
 import {
   type ContractCheck,
@@ -131,23 +121,6 @@ export interface ComposedMessagePolicy {
 
 type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof initialPolicy>>;
 
-type IncomingCollectiveResult = Extract<
-  Incoming,
-  { readonly kind: "collectiveResult" }
->;
-
-/**
- * The evidence a check of a collective result reads. A peer's question and
- * each peer's collective response keep their own preceding history.
- */
-export interface CollectiveResultEvidence {
-  readonly question?: FirewallEvidence;
-  readonly responses: ReadonlyArray<{
-    readonly message: MessageReference;
-    readonly evidence: FirewallEvidence;
-  }>;
-}
-
 /**
  * Run `save` before returning refusal or submitting this exact message.
  * Saving is repeatable and uses the caller's current SQL transaction.
@@ -187,17 +160,17 @@ export type IncomingDecision = {
 interface FirewallService {
   /** Checks without saving. Refusals expose feedback. */
   readonly checkOutgoing: (
-    message: Outgoing,
+    message: Message,
     evidence: FirewallEvidence,
   ) => Effect.Effect<OutgoingDecision, InvalidCheckError>;
   /**
-   * Checks each part a peer wrote under one message policy with its preceding
-   * evidence. An allowed part the provider was unsure about carries guidance;
-   * withheld parts expose none.
+   * Checks a message a peer wrote with its preceding evidence. An allowed
+   * message the provider was unsure about carries guidance; a withheld one
+   * exposes none.
    */
   readonly checkIncoming: (
-    incoming: Incoming,
-    evidence?: FirewallEvidence | CollectiveResultEvidence,
+    message: Message,
+    evidence: FirewallEvidence,
   ) => Effect.Effect<IncomingDecision, InvalidCheckError>;
   readonly readPolicy: () => Effect.Effect<
     typeof policyReadSchema.Type,
@@ -304,14 +277,11 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
           readDecisions: (request) => store.readDecisions(request),
           checkOutgoing: (message, evidence) =>
             Effect.gen(function* () {
-              const [decision] = yield* decide(
+              const decision = yield* decide(
                 installed,
-                [{ message, evidence }],
+                { message, evidence },
                 "outgoing",
               );
-              if (decision === undefined) {
-                return yield* new InvalidCheckError({ reason: "message" });
-              }
               const save = saveRecords(store, decision);
               if (decision.kind === "allowed") {
                 return { kind: "allowed", save } satisfies OutgoingDecision;
@@ -334,33 +304,21 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                 }),
               } satisfies OutgoingDecision;
             }),
-          checkIncoming: (incoming, evidence) =>
+          checkIncoming: (message, evidence) =>
             Effect.gen(function* () {
-              const agent = localAgent;
-              if (incoming.kind === "collectiveResult") {
-                return yield* checkCollectiveResult(
-                  installed,
-                  agent,
-                  incoming,
-                  evidence,
-                );
-              }
-              if (evidence === undefined || "responses" in evidence) {
-                return yield* new InvalidCheckError({ reason: "evidence" });
-              }
-              const item: PermittedItem = incoming;
-              const [decision] = yield* decide(
+              const item: PermittedItem = { kind: "message", message };
+              const decision = yield* decide(
                 installed,
-                [{ message: incoming.message, evidence }],
+                { message, evidence },
                 "incoming",
               );
-              if (decision === undefined) {
-                return yield* new InvalidCheckError({ reason: "message" });
-              }
               const save = saveRecords(store, decision);
               const visibility = [
                 {
-                  message: messageReference(incoming.message),
+                  message: {
+                    authorAgentId: message.author.agentId,
+                    msgId: message.msgId,
+                  },
                   visibleToAgent: decision.kind === "allowed",
                 },
               ];
@@ -445,151 +403,15 @@ type CapturedTextCheck = Effect.Effect.Success<
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
 /**
- * Each part of a collective result that a peer wrote is checked as an incoming
- * message; a `reply` rule withholds it without replying.
- */
-function checkCollectiveResult(
-  installed: Installation,
-  self: AgentCard,
-  incoming: IncomingCollectiveResult,
-  evidence?: FirewallEvidence | CollectiveResultEvidence,
-) {
-  return Effect.gen(function* () {
-    const { result, sources } = incoming;
-    const peerResponses = sources.responses.filter(
-      (message) => message.author.agentId !== self.agentId,
-    );
-    const peerRequest =
-      sources.request?.author.agentId === self.agentId
-        ? undefined
-        : sources.request;
-    const parts: Array<
-      Candidate & {
-        readonly message: Message;
-        readonly part: "question" | "response";
-      }
-    > = [];
-    if (installed.policy !== undefined || installed.chain !== undefined) {
-      if (
-        evidence === undefined ||
-        !("responses" in evidence) ||
-        evidence.responses.length !== peerResponses.length
-      ) {
-        return yield* new InvalidCheckError({ reason: "evidence" });
-      }
-      const seenResponses = new Set<string>();
-      for (const message of peerResponses) {
-        const responseEvidence = evidence.responses.find((entry) =>
-          sameReference(entry.message, messageReference(message)),
-        );
-        const key = `${message.author.agentId}:${message.msgId}`;
-        if (responseEvidence === undefined || seenResponses.has(key)) {
-          return yield* new InvalidCheckError({ reason: "evidence" });
-        }
-        seenResponses.add(key);
-        const outcome = result.outcomes.find(
-          (entry) => entry.recipient.agentId === message.author.agentId,
-        );
-        if (outcome === undefined) {
-          return yield* new InvalidCheckError({ reason: "message" });
-        }
-        parts.push({
-          message,
-          part: "response",
-          evidence: responseEvidence.evidence,
-          textOverride: outcomeText(outcome.outcome),
-        });
-      }
-      if (peerRequest !== undefined) {
-        if (evidence.question === undefined) {
-          return yield* new InvalidCheckError({ reason: "evidence" });
-        }
-        parts.push({
-          message: peerRequest,
-          part: "question",
-          evidence: evidence.question,
-          textOverride: JSON.stringify(result.request.question),
-        });
-      }
-    }
-    const decisions =
-      parts.length === 0 ? [] : yield* decide(installed, parts, "incoming");
-    const checked = parts.map((source, index) => ({
-      source,
-      decision: decisions[index],
-    }));
-    if (checked.some((entry) => entry.decision === undefined)) {
-      return yield* new InvalidCheckError({ reason: "evidence" });
-    }
-    const questionDecision = checked.find(
-      (entry) => entry.source.part === "question",
-    )?.decision;
-    const permittedOutcome = (
-      outcome: (typeof result.outcomes)[number],
-    ): CollectiveResult["outcomes"][number] => {
-      const decision = checked.find(
-        (entry) =>
-          entry.source.part === "response" &&
-          entry.source.message.author.agentId === outcome.recipient.agentId,
-      )?.decision;
-      return decision?.kind === "refused"
-        ? { recipient: outcome.recipient, outcome: withheld(decision) }
-        : outcome;
-    };
-    const [first, ...rest] = result.outcomes;
-    const item: CollectiveResult = {
-      kind: "collectiveResult",
-      op: result.request.op,
-      requestId: result.request.msgId,
-      closedAt: result.closedAt,
-      closedBy: result.closedBy,
-      question:
-        questionDecision?.kind === "refused"
-          ? withheld(questionDecision)
-          : result.request.question,
-      outcomes: [permittedOutcome(first), ...rest.map(permittedOutcome)],
-    };
-    const responseGuidance = checked.flatMap(({ source, decision }) =>
-      source.part === "response" &&
-      decision?.kind === "allowed" &&
-      decision.guidance !== undefined
-        ? [{ recipient: source.message.author, ...decision.guidance }]
-        : [],
-    );
-    const questionGuidance =
-      questionDecision?.kind === "allowed"
-        ? questionDecision.guidance
-        : undefined;
-    const guidance: LocalGuidance | undefined =
-      responseGuidance.length === 0 && questionGuidance === undefined
-        ? undefined
-        : {
-            responses: responseGuidance,
-            ...(questionGuidance === undefined
-              ? {}
-              : { question: questionGuidance }),
-          };
-    return {
-      kind: "allowed",
-      item,
-      visibility: resultVisibility(item, sources),
-      save: saveRecords(installed.store, ...decisions),
-      ...(guidance === undefined ? {} : { guidance }),
-    } satisfies IncomingDecision;
-  });
-}
-
-/**
- * Decides each candidate. A direct message of an agent that has held a
- * contract is first read as an act and checked for structure and protocol; a
- * failure refuses it. The chain applies next. The text rules then judge every
- * candidate the chain did not refuse: the owner's rules unless a chain rule
- * allowed it, and the rules its contract gives its act either way. The text
- * checks run in one pass that shares its clock and permits.
+ * Decides a candidate. A direct message of an agent that has held a contract
+ * is first read as an act and checked for structure and protocol; a failure
+ * refuses it. The chain applies next. The text rules then judge a candidate
+ * the chain did not refuse: the owner's rules unless a chain rule allowed it,
+ * and the rules its contract gives its act either way.
  */
 function decide(
   installed: Installation,
-  candidates: readonly Candidate[],
+  candidate: Candidate,
   direction: Direction,
 ) {
   return Effect.gen(function* () {
@@ -597,70 +419,43 @@ function decide(
     const active = policy?.active;
     const revision = installed.revision();
     const chain = active?.chain ?? installed.chain;
-    const beforeText = yield* Effect.forEach(
-      candidates,
-      (candidate) =>
-        Effect.gen(function* () {
-          const contract =
-            active?.contractsUsed === true && isDirectText(candidate.message)
-              ? yield* prepareContract(
-                  active.contracts,
-                  installed.store,
-                  candidate.message,
-                  candidate.evidence,
-                )
-              : undefined;
-          if (contract?.kind === "refused") {
-            return {
-              candidate,
-              contract,
-              decision: contractRefusal(
-                revision,
-                candidate,
-                direction,
-                contract,
-              ),
-            };
-          }
-          const decision =
-            chain === undefined
-              ? undefined
-              : yield* chainDecision(chain, {
-                  candidate,
-                  direction,
-                  self: installed.localAgent,
-                  revision,
-                });
-          const plan =
-            active === undefined || decision?.kind === "refused"
-              ? undefined
-              : textCheckPlan(active, candidate, decision, contract);
-          return { candidate, contract, decision, plan };
-        }),
-      { concurrency: 1 },
-    );
-    const plans = beforeText.flatMap(({ plan }) =>
-      plan === undefined ? [] : [plan],
-    );
-    const textDecisions =
-      policy === undefined || plans.length === 0
-        ? []
-        : yield* checkTextRules(policy, installed.localAgent, plans, direction);
-    const remaining = textDecisions.values();
-    return yield* Effect.forEach(
-      beforeText,
-      ({ candidate, contract, decision, plan }) => {
-        const decided: Decision =
-          (plan === undefined ? decision : remaining.next().value) ??
-          (active === undefined
-            ? { kind: "allowed" }
-            : uncheckedDecision(revision, candidate, direction));
-        return contract?.kind === "ready"
-          ? withContract(decided, contract, candidate.message, direction)
-          : Effect.succeed(decided);
-      },
-      { concurrency: 1 },
-    );
+    const contract =
+      active?.contractsUsed === true && isDirectText(candidate.message)
+        ? yield* prepareContract(
+            active.contracts,
+            installed.store,
+            candidate.message,
+            candidate.evidence,
+          )
+        : undefined;
+    if (contract?.kind === "refused") {
+      return contractRefusal(revision, candidate, direction, contract);
+    }
+    const chained =
+      chain === undefined
+        ? undefined
+        : yield* chainDecision(chain, {
+            candidate,
+            direction,
+            self: installed.localAgent,
+            revision,
+          });
+    const plan =
+      active === undefined || chained?.kind === "refused"
+        ? undefined
+        : textCheckPlan(active, candidate, chained, contract);
+    const judged =
+      policy === undefined || plan === undefined
+        ? chained
+        : yield* checkTextRules(policy, installed.localAgent, plan, direction);
+    const unjudged: Decision =
+      active === undefined
+        ? { kind: "allowed" }
+        : uncheckedDecision(revision, candidate, direction);
+    const decided: Decision = judged ?? unjudged;
+    return contract?.kind === "ready"
+      ? yield* withContract(decided, contract, direction)
+      : decided;
   });
 }
 
@@ -714,90 +509,71 @@ function textCheckPlan(
   };
 }
 
-/** Saves the check records of decisions that have one; saving none does no work. */
-function saveRecords(store: FirewallStore, ...decisions: readonly Decision[]) {
-  const records = decisions.flatMap((decision) =>
-    decision.record === undefined ? [] : [decision.record],
-  );
-  return records.length === 0 ? Effect.void : store.saveCheckRecords(records);
+/** Saves the decision's check record when it has one. */
+function saveRecords(store: FirewallStore, decision: Decision) {
+  return decision.record === undefined
+    ? Effect.void
+    : store.saveCheckRecords([decision.record]);
 }
 
-/** Checks each planned candidate against its text rules, with the history before it. */
+/** Checks the planned candidate against its text rules, with the history before it. */
 function checkTextRules(
   policy: InstalledPolicy,
   self: AgentCard,
-  plans: readonly TextCheckPlan[],
+  { candidate, active, protocol }: TextCheckPlan,
   direction: Direction,
 ) {
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    const prepared: PreparedTextCheck[] = [];
-    for (const { candidate, active, protocol } of plans) {
-      const cards = new Map<string, AgentCard>();
-      for (const card of [
-        self,
-        candidate.message.author,
-        ...candidate.message.recipients,
-        ...candidate.evidence.history.flatMap(({ message }) => [
-          message.author,
-          ...message.recipients,
-        ]),
-      ]) {
-        cards.set(card.agentId, card);
-      }
-      const history: HistoryEntry[] = candidate.evidence.history.map(
-        (entry) => ({
-          // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
-          ...assessmentText(entry.message),
-          visibleToAgent:
-            entry.visibleToAgent ||
-            entry.message.author.agentId === self.agentId,
-        }),
-      );
-      const checkEvidence: CheckEvidence = {
-        agentId: self.agentId,
-        principal: self.principalId,
-        participants: [...cards.values()].map((card) => ({
-          agentId: card.agentId,
-          principal: card.principalId,
-        })),
-        history,
-        earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
-        now,
-        facts: policy?.captured.configuration.facts ?? [],
-        gaps: candidate.evidence.gaps,
-        ...(protocol === undefined ? {} : { protocol }),
-      };
-      const scope = yield* ruleScopes(active.textRules, active.matchers, {
-        direction,
-        message: candidate.message,
-        evidence: candidate.evidence,
-        self,
-      });
-      prepared.push({
+    const cards = new Map<string, AgentCard>();
+    for (const card of [
+      self,
+      candidate.message.author,
+      ...candidate.message.recipients,
+      ...candidate.evidence.history.flatMap(({ message }) => [
+        message.author,
+        ...message.recipients,
+      ]),
+    ]) {
+      cards.set(card.agentId, card);
+    }
+    const history: HistoryEntry[] = candidate.evidence.history.map((entry) => ({
+      // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
+      ...assessmentText(entry.message),
+      visibleToAgent:
+        entry.visibleToAgent || entry.message.author.agentId === self.agentId,
+    }));
+    const evidence: CheckEvidence = {
+      agentId: self.agentId,
+      principal: self.principalId,
+      participants: [...cards.values()].map((card) => ({
+        agentId: card.agentId,
+        principal: card.principalId,
+      })),
+      history,
+      earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
+      now,
+      facts: policy.captured.configuration.facts,
+      gaps: candidate.evidence.gaps,
+      ...(protocol === undefined ? {} : { protocol }),
+    };
+    const scope = yield* ruleScopes(active.textRules, active.matchers, {
+      direction,
+      message: candidate.message,
+      evidence: candidate.evidence,
+      self,
+    });
+    return yield* policy.permits.withPermits(1)(
+      checkMessageText(policy.captured, active, {
         active,
         direction,
         ...scope,
         messageKey: messageKey(candidate.message),
         messageJson: JSON.stringify(candidate.message),
-        message: {
-          // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
-          ...assessmentText(candidate.message),
-          ...(candidate.textOverride === undefined
-            ? {}
-            : { text: candidate.textOverride }),
-        },
-        evidence: checkEvidence,
+        message: assessmentText(candidate.message),
+        evidence,
         agents: [...cards.values()],
-      });
-    }
-    return yield* Effect.forEach(
-      prepared,
-      (check) =>
-        policy.permits.withPermits(1)(
-          checkMessageText(policy.captured, check.active, check),
-        ),
-      { concurrency: policy.captured.configuration.maximumConcurrentChecks },
+      }),
     );
   });
 }
@@ -842,51 +618,12 @@ function ruleScopes(
   );
 }
 
-function assessmentText(message: Outgoing): AssessmentText {
+function assessmentText(message: Message): AssessmentText {
   const [first, ...rest] = message.recipients;
-  const participants: Pick<AssessmentText, "sender" | "recipients"> = {
+  return {
+    id: referenceId(`${message.author.agentId}:${message.msgId}`),
     sender: message.author.agentId,
     recipients: [first.agentId, ...rest.map((card) => card.agentId)],
-  };
-  const base = {
-    id: referenceId(`${message.author.agentId}:${message.msgId}`),
-    ...participants,
-  };
-  const requestText = (
-    request: Parameters<typeof questionText>[0],
-  ): AssessmentText => ({
-    ...base,
-    text: questionText(request),
-    operation: {
-      kind: "request",
-      op: request.op,
-      requestId: message.msgId,
-      deadlineAt: request.deadlineAt,
-    },
-  });
-  if ("kind" in message) {
-    return requestText(message);
-  }
-  if (message.collectiveRequest !== undefined) {
-    return requestText({ ...message, ...message.collectiveRequest });
-  }
-  const response = message.collectiveResponse;
-  if (response !== undefined) {
-    return {
-      ...base,
-      text:
-        response.action === "accept"
-          ? `answered ${JSON.stringify(response.content)}`
-          : "declined",
-      operation: {
-        kind: "answer",
-        op: message.recipients.length === 1 ? "gather" : "all_gather",
-        requestId: response.requestId,
-      },
-    };
-  }
-  return {
-    ...base,
     text: message.content
       .map((part) =>
         part.type === "text" ? part.text : JSON.stringify(part.value),
@@ -895,91 +632,8 @@ function assessmentText(message: Outgoing): AssessmentText {
   };
 }
 
-function questionText(
-  request: Pick<
-    CollectiveRequest,
-    | "author"
-    | "recipients"
-    | "question"
-    | "op"
-    | "deadlineAt"
-    | "requestedSchema"
-  >,
-) {
-  return [
-    `${request.op} from ${request.author.agentName} to ${request.recipients.map((agent) => agent.agentName).join(", ")}, open until ${new Date(request.deadlineAt).toISOString()}.`,
-    `Question: ${request.question}`,
-    `Form: ${JSON.stringify(request.requestedSchema)}`,
-  ].join("\n");
-}
-
-function resultVisibility(
-  item: CollectiveResult,
-  sources: CollectiveResultSources,
-): IncomingDecision["visibility"] {
-  return [
-    ...sources.responses.map((message) => ({
-      message: messageReference(message),
-      visibleToAgent: item.outcomes.some(
-        (entry) =>
-          entry.recipient.agentId === message.author.agentId &&
-          (entry.outcome.kind === "answered" ||
-            entry.outcome.kind === "declined"),
-      ),
-    })),
-    ...(sources.request === undefined
-      ? []
-      : [
-          {
-            message: messageReference(sources.request),
-            visibleToAgent: typeof item.question === "string",
-          },
-        ]),
-  ];
-}
-
-function outcomeText(outcome: typeof CollectiveOutcome.Type): string {
-  switch (outcome.kind) {
-    case "answered":
-      return `answered ${JSON.stringify(outcome.content)}`;
-    case "declined":
-      return "declined";
-    case "invalid":
-      return `answered outside the form (${outcome.reason})`;
-    case "no-answer":
-      return "no answer";
-    default: {
-      const exhaustive: never = outcome;
-      return exhaustive;
-    }
-  }
-}
-
-function withheld(
-  decision: Extract<Decision, { readonly kind: "refused" }>,
-): Withheld {
-  return {
-    kind: "withheld",
-    checkId: decision.record.checkId,
-    reason: decision.refusal.reason,
-  };
-}
-
 function refusalReason(reason: FirewallCheck["reason"]): FirewallRefusalReason {
   return reason === "eligible" ? "unresolved-evidence" : reason;
-}
-
-function messageReference(message: Message): MessageReference {
-  return { authorAgentId: message.author.agentId, msgId: message.msgId };
-}
-
-function sameReference(
-  left: MessageReference,
-  right: MessageReference,
-): boolean {
-  return (
-    left.authorAgentId === right.authorAgentId && left.msgId === right.msgId
-  );
 }
 
 function referenceId(reference: string): string {
@@ -1420,7 +1074,7 @@ function guidanceProjection(check: FirewallCheck, checkId: string) {
   if (check.instructions.length === 0) {
     return { check };
   }
-  const guidance: CheckedGuidance = {
+  const guidance: LocalGuidance = {
     checkId,
     instructions: check.instructions,
   };

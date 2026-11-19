@@ -8,7 +8,6 @@
 
 import { Effect, Schema } from "effect";
 import type { Message } from "../communication/index.js";
-import type { Outgoing } from "../communication/service.js";
 import type { AgentCard } from "../identity.js";
 import { exactStruct } from "../encoding.js";
 import {
@@ -82,7 +81,7 @@ export const chainRuleFileSchema = exactStruct({
 /** What a matcher sees: the message, its direction, its evidence and this agent. */
 export interface MessageToMatch {
   readonly direction: Direction;
-  readonly message: Outgoing;
+  readonly message: Message;
   readonly evidence: FirewallEvidence;
   readonly self: AgentCard;
 }
@@ -121,7 +120,7 @@ export interface Chain {
   readonly matchers: Readonly<Record<string, Matcher>>;
   readonly approveHeld?: (
     rule: ChainRule,
-    message: Outgoing,
+    message: Message,
   ) => Effect.Effect<boolean>;
 }
 
@@ -234,7 +233,7 @@ function applyRule(
   });
 }
 
-function approved(chain: Chain, rule: ChainRule, message: Outgoing) {
+function approved(chain: Chain, rule: ChainRule, message: Message) {
   return chain.approveHeld === undefined
     ? Effect.succeed(true)
     : chain.approveHeld(rule, message);

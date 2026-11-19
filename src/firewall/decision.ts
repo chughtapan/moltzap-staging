@@ -2,7 +2,7 @@
 
 import { Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
-import type { Outgoing } from "../communication/service.js";
+import type { Message } from "../communication/index.js";
 import type { AgentCard } from "../identity.js";
 import type {
   Direction,
@@ -17,7 +17,7 @@ import {
   evaluateChain,
   type FirewallEvidence,
 } from "./chain.js";
-import { type CheckedGuidance, InvalidCheckError } from "./check.js";
+import { InvalidCheckError, type LocalGuidance } from "./check.js";
 import {
   type ContractCheck,
   contractReply,
@@ -26,14 +26,10 @@ import {
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
-/**
- * One message under check with its evidence. `textOverride` replaces the text
- * the text rules read, for a part of a collective result.
- */
+/** One message under check with its evidence. */
 export interface Candidate {
-  readonly message: Outgoing;
+  readonly message: Message;
   readonly evidence: FirewallEvidence;
-  readonly textOverride?: string;
 }
 
 /** A refused or withheld message's reason, the chain rule or contract stage that decided, and what its sender is told. */
@@ -55,7 +51,7 @@ export type Decision =
   | {
       readonly kind: "allowed";
       readonly record?: CheckRecord;
-      readonly guidance?: CheckedGuidance;
+      readonly guidance?: LocalGuidance;
     }
   | {
       readonly kind: "refused";
@@ -172,9 +168,7 @@ export function contractRefusal(
   };
   const ruleId = `${check.view.instance?.contract.name ?? "norm"}-${problem.stage}`;
   const reply =
-    direction === "incoming"
-      ? contractReply(check, candidate.message, problem.detail)
-      : undefined;
+    direction === "incoming" ? contractReply(check, problem.detail) : undefined;
   return {
     kind: "refused",
     record: {
@@ -225,7 +219,6 @@ export const withContract = Effect.fn("withContract")(
   function* (
     decision: Decision,
     check: Extract<ContractCheck, { readonly kind: "ready" }>,
-    message: Outgoing,
     direction: Direction,
   ) {
     if (decision.record === undefined) {
@@ -263,9 +256,7 @@ export const withContract = Effect.fn("withContract")(
       decision.refusal.feedback.map((entry) => entry.text).join(" ") ||
       `The semantic policy check returned ${decision.refusal.reason}.`;
     const reply =
-      direction === "incoming"
-        ? contractReply(check, message, text)
-        : undefined;
+      direction === "incoming" ? contractReply(check, text) : undefined;
     return {
       ...decision,
       record,

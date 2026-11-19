@@ -1,16 +1,14 @@
-/** @file Stores one agent's unchecked messages and collective results, its inbox entries and which of them are delivered. */
+/** @file Stores one agent's unchecked messages, its inbox entries and which of them are delivered. */
 
 import { SqlClient } from "@effect/sql";
 import { Effect, Encoding, Schema } from "effect";
 import { randomBytes } from "node:crypto";
-import type {
-  Message,
-  MessageReference,
-  MsgId,
-  PaginatedRequest,
-} from "../communication/index.js";
 import type { IncomingDecision } from "../firewall/service.js";
-import { Incoming } from "../communication/service.js";
+import {
+  Message,
+  type MessageReference,
+  type PaginatedRequest,
+} from "../communication/index.js";
 import {
   type Compilable,
   executeQuery,
@@ -38,7 +36,7 @@ const uncheckedRow = exactStruct({
   sequence: Schema.Number,
   delivery_token: DeliveryToken,
   address: MessageAddress,
-  unchecked: Schema.parseJson(Incoming),
+  unchecked: Schema.parseJson(Message),
 });
 const position = { sequence: Schema.Number, delivery_token: DeliveryToken };
 /** A pending entry as stored text, whose size counts toward a page's bytes. */
@@ -54,23 +52,22 @@ const inboxCursor = Schema.Struct({
 });
 
 /**
- * A received message or collective result the firewall has not yet decided,
- * with the address and delivery token its inbox entry takes.
+ * A received message the firewall has not yet decided, with the address and
+ * delivery token its inbox entry takes.
  */
 export interface Unchecked {
   readonly sequence: number;
   readonly token: DeliveryToken;
   readonly address: MessageAddress;
-  readonly incoming: Incoming;
+  readonly message: Message;
 }
 
 type InboxTables = Record<
   "inbox_entries",
   Record<
-    "agent_key" | "dedupe_key" | "delivery_token" | "address" | "kind",
+    "agent_key" | "delivery_token" | "address" | "author" | "message_id",
     string
   > &
-    Record<"author" | "message_id", string | null> &
     Record<"unchecked" | "entry", string | null> &
     Record<"sequence", Generated<number>> &
     Record<"status", "unchecked" | "withheld" | "pending" | "delivered">
@@ -110,15 +107,9 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   return {
     storeUnchecked: Effect.fn(function* (
       address: MessageAddress,
-      incoming: Incoming,
+      message: Message,
     ) {
-      const encodedIncoming = yield* encodeJson(Incoming, incoming);
-      const message =
-        incoming.kind === "collectiveResult" ? undefined : incoming.message;
-      const dedupeKey =
-        incoming.kind === "collectiveResult"
-          ? `result:${incoming.result.request.msgId}`
-          : `message:${incoming.message.author.agentId}:${incoming.message.msgId}`;
+      const encodedMessage = yield* encodeJson(Message, message);
       const token = DeliveryToken.make(
         `dlv_${randomBytes(32).toString("base64url")}`,
       );
@@ -127,18 +118,16 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .insertInto("inbox_entries")
           .values({
             agent_key: agentKey,
-            dedupe_key: dedupeKey,
             delivery_token: token,
             address,
-            kind: incoming.kind,
-            author: message?.author.agentId ?? null,
-            message_id: message?.msgId ?? null,
-            unchecked: encodedIncoming,
+            author: message.author.agentId,
+            message_id: message.msgId,
+            unchecked: encodedMessage,
             entry: null,
             status: "unchecked",
           })
           .onConflict((conflict) =>
-            conflict.columns(["agent_key", "dedupe_key"]).doNothing(),
+            conflict.columns(["agent_key", "author", "message_id"]).doNothing(),
           ),
       );
     }),
@@ -177,7 +166,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               sequence: row.sequence,
               token: row.delivery_token,
               address: row.address,
-              incoming: row.unchecked,
+              message: row.unchecked,
             }),
           ),
         ),
@@ -185,10 +174,9 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     recordDecision: Effect.fn(function* (
       unchecked: Unchecked,
       decision: IncomingDecision,
-      { expired = false }: { readonly expired?: boolean } = {},
     ) {
       let encodedEntry: string | undefined;
-      if (decision.kind === "allowed" && !expired) {
+      if (decision.kind === "allowed") {
         encodedEntry = yield* encodeJson(StoredInboxEntry, {
           address: unchecked.address,
           item: decision.item,
@@ -196,15 +184,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             ? {}
             : { guidance: decision.guidance }),
         });
-        if (
-          Buffer.byteLength(encodedEntry) > MAXIMUM_RUNTIME_ITEM_BYTES &&
-          decision.item.kind === "collectiveResult"
-        ) {
-          encodedEntry = yield* encodeJson(StoredInboxEntry, {
-            address: unchecked.address,
-            item: decision.item,
-          });
-        }
         if (Buffer.byteLength(encodedEntry) > MAXIMUM_RUNTIME_ITEM_BYTES) {
           encodedEntry = undefined;
         }
@@ -222,8 +201,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("status", "=", "unchecked"),
       );
       for (const permission of decision.visibility) {
-        const visible =
-          !expired && encodedEntry !== undefined && permission.visibleToAgent;
+        const visible = encodedEntry !== undefined && permission.visibleToAgent;
         yield* run(
           queries
             .insertInto("inbox_visibility")
@@ -253,15 +231,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         );
       }
     }),
-    withholdExpired: (token: DeliveryToken) =>
-      run(
-        queries
-          .updateTable("inbox_entries")
-          .set({ unchecked: null, status: "withheld" })
-          .where("agent_key", "=", agentKey)
-          .where("delivery_token", "=", token)
-          .where("status", "=", "unchecked"),
-      ).pipe(Effect.asVoid),
     listInbox: Effect.fn(function* (
       request: typeof PaginatedRequest.Type = {},
     ) {
@@ -332,60 +301,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("entry", "is not", null)
           .limit(1),
       ).pipe(Effect.map((rows) => rows[0]?.entry)),
-    collectiveResultHead: (address: string) =>
-      head(
-        inboxRows()
-          .where("address", "=", address)
-          .where("kind", "=", "collectiveResult")
-          .where("entry", "is not", null),
-      ),
-    collectiveResultPage: (
-      address: string,
-      after: number,
-      through: number,
-      limit: number,
-    ) =>
-      read(
-        entryRow,
-        inboxRows()
-          .select(["sequence", "delivery_token", "entry"])
-          .where("address", "=", address)
-          .where("sequence", ">", after)
-          .where("sequence", "<=", through)
-          .where("kind", "=", "collectiveResult")
-          .where("entry", "is not", null)
-          .orderBy("sequence")
-          .limit(limit + 1),
-      ).pipe(
-        Effect.map((rows) =>
-          rows.map((row) => ({
-            sequence: row.sequence,
-            token: row.delivery_token,
-            entry: row.entry,
-          })),
-        ),
-      ),
-    collectiveResultAddresses: (after = "") =>
-      read(
-        Schema.Struct({ address: MessageAddress }),
-        inboxRows()
-          .select("address")
-          .distinct()
-          .where("address", ">", after)
-          .where("kind", "=", "collectiveResult")
-          .where("entry", "is not", null)
-          .orderBy("address")
-          .limit(PAGE_SIZE + 1),
-      ).pipe(Effect.map((rows) => rows.map((row) => row.address))),
-    isCollectiveRequestVisible: (requestId: MsgId) =>
-      run(
-        inboxRows()
-          .select("sequence")
-          .where("kind", "=", "collectiveRequest")
-          .where("message_id", "=", requestId)
-          .where("entry", "is not", null)
-          .limit(1),
-      ).pipe(Effect.map((rows) => rows.length !== 0)),
     visibleMessages: (messages: readonly Message[]) =>
       Effect.forEach(
         messages,

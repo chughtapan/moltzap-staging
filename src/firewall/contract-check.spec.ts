@@ -138,7 +138,7 @@ function check(
     const decision =
       message.author.agentId === self.agentId
         ? yield* firewall.checkOutgoing(message, evidence)
-        : yield* firewall.checkIncoming({ kind: "message", message }, evidence);
+        : yield* firewall.checkIncoming(message, evidence);
     yield* decision.save;
     return decision;
   });

@@ -10,20 +10,14 @@ import {
   Schema,
 } from "effect";
 import {
-  CollectiveOp,
-  CollectiveOutcome,
-  CollectiveRequestMessage,
   Message as CommunicationMessage,
-  MsgId,
   RequestedSchema,
 } from "../communication/index.js";
 import { exactStruct } from "../encoding.js";
-import { AgentCard } from "../identity.js";
 import {
   type CheckLimits,
   type Direction,
   type FirewallRefusalReason,
-  firewallRefusalReasonSchema,
   OwnerFact,
   type ProviderRequestSettings,
   type TextRule,
@@ -74,30 +68,9 @@ const identifier = Schema.NonEmptyTrimmedString;
 
 const probability = Schema.Number.pipe(Schema.between(0, 1));
 
-const collectingOp = Schema.Literal("gather", "all_gather");
-
-/**
- * Request deadlines use epoch milliseconds. This metadata lets a text rule tell
- * collective requests and responses apart without interpreting message text.
- * `requestId` is the request's message id.
- */
-const messageOperation = Schema.Union(
-  Schema.Struct({
-    kind: Schema.Literal("request"),
-    op: collectingOp,
-    requestId: identifier,
-    deadlineAt: Schema.Int.pipe(Schema.positive()),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("answer"),
-    op: collectingOp,
-    requestId: identifier,
-  }),
-);
-
 /**
  * A message as the decision provider reads it. Requires verified attribution
- * from the caller. Plain messages omit `operation`.
+ * from the caller.
  */
 export class AssessmentText extends Schema.Class<AssessmentText>(
   "AssessmentText",
@@ -106,7 +79,6 @@ export class AssessmentText extends Schema.Class<AssessmentText>(
   sender: identifier,
   recipients: Schema.NonEmptyArray(identifier),
   text: Schema.String,
-  operation: Schema.optional(messageOperation),
 }) {}
 
 /**
@@ -310,17 +282,16 @@ interface TextCheck {
 /** An opaque check id conveys no approval or lookup authority. */
 const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
 
-/** One check's guidance: an instruction for each rule the provider could not settle for an allowed incoming message. */
-const checkedGuidance = {
+/**
+ * The guidance a host reads with one message: its check, and an instruction
+ * for each rule the provider could not settle for the allowed incoming message.
+ */
+export const LocalGuidance = exactStruct({
   checkId: checkIdSchema,
   instructions: Schema.Array(uncertainInstructionSchema),
-};
-
-/** Exact decoding of one check's guidance, wherever a host receives it. */
-const checkedGuidanceSchema = exactStruct(checkedGuidance);
-
-/** The guidance a host reads with one checked text. */
-export type CheckedGuidance = typeof checkedGuidanceSchema.Type;
+});
+/** @useDeclaredType */
+export type LocalGuidance = typeof LocalGuidance.Type;
 
 const utf8 = new TextEncoder();
 
@@ -1131,66 +1102,11 @@ function validateTextRules({
     : Effect.fail(new InvalidCheckError({ reason: "rules" }));
 }
 
-/** A part of a collective result that the message policy keeps the agent from reading. */
-export const Withheld = exactStruct({
-  kind: Schema.Literal("withheld"),
-  checkId: checkedGuidanceSchema.fields.checkId,
-  reason: firewallRefusalReasonSchema,
+/** The message the message policy permits the agent to read. */
+export const PermittedItem = exactStruct({
+  kind: Schema.Literal("message"),
+  message: CommunicationMessage,
 });
-/** @useDeclaredType */
-export type Withheld = typeof Withheld.Type;
-
-const collectiveResultGuidance = exactStruct({
-  question: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
-  responses: Schema.Array(
-    exactStruct({ recipient: AgentCard, ...checkedGuidanceSchema.fields }),
-  ),
-});
-
-/** The guidance of one message, or of the question and each recipient's response in a collective result. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
-export const LocalGuidance = Schema.Union(
-  checkedGuidanceSchema,
-  collectiveResultGuidance,
-);
-/** @useDeclaredType */
-export type LocalGuidance = typeof LocalGuidance.Type;
-
-/**
- * A collective result after applying the message policy to each part a peer
- * wrote. `requestId` is the message id the requester's send returned, which is
- * also the id of the request message an all_gather's members received.
- */
-export const CollectiveResult = exactStruct({
-  kind: Schema.Literal("collectiveResult"),
-  op: CollectiveOp,
-  requestId: MsgId,
-  closedAt: Schema.Number,
-  closedBy: Schema.Literal("settled", "deadline"),
-  question: Schema.Union(Schema.String, Withheld),
-  outcomes: Schema.NonEmptyArray(
-    exactStruct({
-      recipient: AgentCard,
-      outcome: Schema.Union(CollectiveOutcome, Withheld),
-    }),
-  ),
-});
-/** @useDeclaredType */
-export type CollectiveResult = typeof CollectiveResult.Type;
-
-/** The message or collective result the message policy permits the agent to read. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
-export const PermittedItem = Schema.Union(
-  exactStruct({
-    kind: Schema.Literal("message"),
-    message: CommunicationMessage,
-  }),
-  exactStruct({
-    kind: Schema.Literal("collectiveRequest"),
-    message: CollectiveRequestMessage,
-  }),
-  CollectiveResult,
-);
 /** @useDeclaredType */
 export type PermittedItem = typeof PermittedItem.Type;
 

@@ -148,7 +148,6 @@ function compareCodeUnits(left: string, right: string): number {
 
 /** The kind of an inbound item and its message's kind, address, sender and content. */
 function messageSummary(item: InboundItem): Readonly<Record<string, unknown>> {
-  assert(item.kind === "message");
   return {
     kind: item.kind,
     messageKind: item.message.recipients.length === 1 ? "direct" : "group",
@@ -162,10 +161,7 @@ function messageSummary(item: InboundItem): Readonly<Record<string, unknown>> {
 function conversationAddress({
   author,
   recipients,
-}: Pick<
-  Extract<InboundItem, { readonly kind: "message" }>["message"],
-  "author" | "recipients"
->): string {
+}: Pick<InboundItem["message"], "author" | "recipients">): string {
   return recipients.length === 1
     ? `agent:${author.agentName}`
     : groupOf([author, ...recipients].map(({ agentName }) => agentName));

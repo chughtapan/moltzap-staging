@@ -2,7 +2,6 @@
 
 import { Clock, Effect, Schema } from "effect";
 import type { Message } from "../communication/index.js";
-import type { Outgoing } from "../communication/service.js";
 import type { FirewallEvidence } from "./chain.js";
 import type { FirewallStore } from "./store.js";
 import { decodeJson, sameJson } from "../encoding.js";
@@ -44,7 +43,7 @@ export type ContractCheck = {
 );
 
 /** The key a check record is saved under for its message: the author's agent id and the message id. */
-export function messageKey(message: Outgoing): string {
+export function messageKey(message: Message): string {
   return `${message.author.agentId}/${message.msgId}`;
 }
 
@@ -57,7 +56,7 @@ export function messageKey(message: Outgoing): string {
 export const prepareContract = Effect.fn("prepareContract")(function* (
   contracts: readonly CompiledContract[],
   store: FirewallStore,
-  message: Outgoing,
+  message: Message,
   evidence: FirewallEvidence,
 ) {
   let view: ProtocolView = {};
@@ -127,13 +126,12 @@ export const prepareContract = Effect.fn("prepareContract")(function* (
  */
 export function contractReply(
   check: ContractCheck,
-  message: Outgoing,
   detail: string,
 ): string | undefined {
   const contract =
     check.kind === "ready" ? check.contract : check.view.instance?.contract;
   const act = contract?.onRefusal;
-  if (contract === undefined || act === undefined || "kind" in message) {
+  if (contract === undefined || act === undefined) {
     return undefined;
   }
   const form = contract.forms.find((declared) => declared.act === act);
