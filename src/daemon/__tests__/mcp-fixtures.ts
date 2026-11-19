@@ -9,10 +9,9 @@ import { type Context, Effect, Redacted, Ref } from "effect";
 import type { AgentName } from "../../identity.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { Firewall } from "../../firewall/service.js";
-import { openTestDatabase } from "../../test.js";
+import { issuerFixture, openTestDatabase, requiredScope } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
-import { issuerFixture, requiredScope } from "../testing.js";
 import { makeInboxEvents } from "../tool-server.js";
 import { AgentAddress } from "../values.js";
 
