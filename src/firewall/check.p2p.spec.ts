@@ -10,11 +10,6 @@ const configuration = {
   textRules: [
     { id: "privacy", applies: "both", text: "Keep private records private." },
   ],
-  limits: {
-    timeoutMilliseconds: 2000,
-    maximumInputBytes: 300000,
-    maximumResultBytes: 1000000,
-  },
   providerSettings: {
     minimumProbability: 0.5,
     maximumRequestBytes: 60000,

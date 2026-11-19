@@ -50,10 +50,6 @@ export function decisionResponse(
   probability = 1,
 ): DecisionResponse {
   return {
-    provider: "test",
-    model: "test",
-    raw: "private model explanation",
-    usage: {},
     answers: Object.fromEntries(
       Object.entries(request.questions).map(([id, question]) => [
         id,
@@ -106,11 +102,6 @@ export function composedPolicy(
       policy: {
         format: "org.social-harness/message-policy/v2",
         facts: [],
-        settings: {
-          timeoutMilliseconds: 10_000,
-          maximumInputBytes: 1_000_000,
-          maximumResultBytes: 100_000,
-        },
         text: {
           fixedRules: [],
           initialRules: [

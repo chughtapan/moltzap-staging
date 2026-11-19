@@ -1,17 +1,8 @@
 /** @file Checks one captured message against text rules and the evidence the check may read. */
 
-import {
-  Cause,
-  Clock,
-  Data,
-  Effect,
-  Either,
-  ParseResult,
-  Schema,
-} from "effect";
+import { Cause, Data, Effect, Either, ParseResult, Schema } from "effect";
 import type { Message, RequestedSchema } from "../communication/index.js";
 import type {
-  CheckLimits,
   Direction,
   FirewallRefusalReason,
   OwnerFact,
@@ -55,12 +46,8 @@ export interface CheckConfiguration {
   readonly revision: string;
 }
 
-/**
- * The text rules one check applies, with the limits of the whole check and
- * the decision provider that judges the rules.
- */
+/** The text rules one check applies, with the decision provider that judges them. */
 export interface CheckPolicy extends CheckConfiguration {
-  readonly limits: CheckLimits;
   readonly provider?: DecisionProvider;
 }
 
@@ -167,29 +154,24 @@ type PolicyFinding =
       readonly reason: "unresolved-evidence" | "check-unavailable";
     };
 
-interface TextAssessment {
-  readonly findings: readonly PolicyFinding[];
-  readonly trace?: { readonly format: string; readonly data: string };
-}
-
 /** The message under check and its evidence, detached before the decision provider is asked. */
 export interface CapturedMessage {
   readonly event: MessageEvent;
   readonly evidence: CheckEvidence;
 }
 
-/** Reports invalid settings, rules, messages or evidence before a judgment exists. */
+/** Reports invalid settings, rules, messages or evidence before a check concludes. */
 class InvalidCheckError extends Data.TaggedError("InvalidCheckError") {}
 
 /**
- * What one check of the text rules concludes. Provider failure produces a hold
- * judgment. Findings and traces stay private. The host receives the feedback
+ * What one check of the text rules concludes. Provider failure makes the
+ * check unavailable. Findings stay private. The host receives the feedback
  * of a refusal, and as guidance the instructions of an allowed incoming
  * message the provider was unsure about. `decidedBy` names the rules that
  * gave the reason.
  */
-export interface FirewallCheck extends TextAssessment {
-  readonly judgment: "allow" | "reject" | "hold";
+export interface FirewallCheck {
+  readonly findings: readonly PolicyFinding[];
   readonly reason: Reason;
   readonly feedback: ReadonlyArray<{ readonly text: string }>;
   readonly instructions: ReadonlyArray<typeof uncertainInstructionSchema.Type>;
@@ -214,12 +196,10 @@ export interface DecisionRequest {
   >;
 }
 
-/** Raw provider bytes and distributions survive routing unchanged. */
+/** The provider's answer to each question: its choice and the probability it gives every choice. */
 export class DecisionResponse extends Schema.Class<DecisionResponse>(
   "DecisionResponse",
 )({
-  provider: identifier,
-  model: identifier,
   answers: Schema.Record({
     key: identifier,
     value: Schema.Struct({
@@ -227,8 +207,6 @@ export class DecisionResponse extends Schema.Class<DecisionResponse>(
       probabilities: Schema.Record({ key: identifier, value: probability }),
     }),
   }),
-  usage: Schema.Record({ key: identifier, value: Schema.NonNegativeInt }),
-  raw: Schema.String,
 }) {}
 
 /** Why the decision provider gave no usable answer, with the HTTP status of a refused request. */
@@ -255,23 +233,6 @@ export interface DecisionProvider {
   ) => Effect.Effect<DecisionResponse, DecisionProviderError>;
 }
 
-/** The provider's answer, failure or absence, retained without inventing an answer. */
-type TextTrace = {
-  readonly elapsedMilliseconds: number;
-} & (
-  | {
-      readonly status: "answered";
-      readonly request: DecisionRequest;
-      readonly response: DecisionResponse;
-      readonly uncertainQuestions: readonly string[];
-    }
-  | {
-      readonly status: "failed";
-      readonly request?: DecisionRequest;
-      readonly failure: DecisionProviderError;
-    }
-);
-
 /** An opaque check id conveys no approval or lookup authority. */
 const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
 
@@ -287,13 +248,6 @@ export const LocalGuidance = exactStruct({
 export type LocalGuidance = typeof LocalGuidance.Type;
 
 const utf8 = new TextEncoder();
-
-const judgments: Readonly<Record<Reason, FirewallCheck["judgment"]>> = {
-  eligible: "allow",
-  "rule-violation": "reject",
-  "unresolved-evidence": "hold",
-  "check-unavailable": "hold",
-};
 
 /**
  * Identifies a rule that gave the check's reason. `advice` contains the rule's
@@ -347,58 +301,40 @@ export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
     yield* validateEvidence(captured);
     const selected = forDirection(policy.textRules, captured.event.direction);
     if (selected.rules.length === 0) {
-      return concludeCheck(captured.evidence, policy.textRules, {
-        findings: selected.skipped,
-      });
+      return concludeCheck(
+        captured.evidence,
+        policy.textRules,
+        selected.skipped,
+      );
     }
     const { providerSettings, provider } = policy;
     if (providerSettings === undefined || provider === undefined) {
       return yield* new InvalidCheckError();
     }
     const attempt = yield* captureResult(
-      Effect.suspend(() => {
-        if (
-          utf8.encode(JSON.stringify(captured)).byteLength >
-          policy.limits.maximumInputBytes
-        ) {
-          return Effect.fail(new DecisionProviderError({ reason: "budget" }));
-        }
-        return checkText(
-          captured,
-          { ...selected, revision: policy.revision },
-          providerSettings,
-          provider,
-        );
-      }).pipe(
-        Effect.flatMap((assessment) =>
-          utf8.encode(JSON.stringify(assessment)).byteLength >
-          policy.limits.maximumResultBytes
-            ? Effect.fail(new DecisionProviderError({ reason: "budget" }))
-            : Effect.succeed(assessment),
-        ),
-        Effect.timeoutFail({
-          duration: policy.limits.timeoutMilliseconds,
-          onTimeout: () => new DecisionProviderError({ reason: "timeout" }),
-        }),
+      checkText(
+        captured,
+        { rules: selected.rules, revision: policy.revision },
+        providerSettings,
+        provider,
       ),
       () => new DecisionProviderError({ reason: "defect" }),
     );
-    const assessment = Either.match(attempt, {
-      onLeft: (): TextAssessment => ({
-        findings: [
-          ...selected.rules.map(
-            (rule): PolicyFinding => ({
-              ruleId: rule.id,
-              kind: "hold",
-              reason: "check-unavailable",
-            }),
-          ),
-          ...selected.skipped,
-        ],
-      }),
-      onRight: (completed) => completed,
+    const asked = Either.match(attempt, {
+      onLeft: () =>
+        selected.rules.map(
+          (rule): PolicyFinding => ({
+            ruleId: rule.id,
+            kind: "hold",
+            reason: "check-unavailable",
+          }),
+        ),
+      onRight: (findings) => findings,
     });
-    return concludeCheck(captured.evidence, policy.textRules, assessment);
+    return concludeCheck(captured.evidence, policy.textRules, [
+      ...asked,
+      ...selected.skipped,
+    ]);
   },
 );
 
@@ -521,7 +457,7 @@ function validateEvidence({ event, evidence }: CapturedMessage) {
 }
 
 /**
- * The judgment and reason the findings give. Each rule with a finding that
+ * The reason the findings give. Each rule with a finding that
  * gives the reason decides, once and in rule order: an unsure answer for an
  * allowed message, and otherwise a violation or a hold for that reason. A
  * refusal's feedback is each deciding rule's registered feedback, or its
@@ -533,11 +469,11 @@ function validateEvidence({ event, evidence }: CapturedMessage) {
 function concludeCheck(
   evidence: CheckEvidence,
   rules: readonly TextRule[],
-  assessment: TextAssessment,
+  findings: readonly PolicyFinding[],
 ): FirewallCheck {
-  const reason = selectReason(evidence, assessment);
+  const reason = selectReason(evidence, findings);
   const deciding = rules.flatMap((rule) => {
-    const finding = assessment.findings.find(
+    const finding = findings.find(
       (candidate) => candidate.ruleId === rule.id && decides(candidate, reason),
     );
     const advice =
@@ -547,8 +483,7 @@ function concludeCheck(
     return finding === undefined ? [] : [{ ruleId: rule.id, finding, advice }];
   });
   return {
-    ...assessment,
-    judgment: judgments[reason],
+    findings,
     reason,
     feedback:
       reason === "eligible"
@@ -579,9 +514,8 @@ function concludeCheck(
 
 function selectReason(
   evidence: CheckEvidence,
-  assessment: TextAssessment,
+  findings: readonly PolicyFinding[],
 ): Reason {
-  const { findings } = assessment;
   if (findings.some((finding) => finding.kind === "violation")) {
     return "rule-violation";
   }
@@ -674,87 +608,39 @@ function validAnswers(
   });
 }
 
-function assessQuestions(
-  preparation: ReturnType<typeof prepareRequest>,
-  settings: ProviderRequestSettings,
-  provider: DecisionProvider,
-) {
-  return Effect.gen(function* (): Effect.fn.Return<TextTrace> {
-    if ("status" in preparation) {
-      return preparation;
-    }
-    const request = preparation;
-    const started = yield* Clock.currentTimeMillis;
-    const response = yield* captureResult(
-      decideWithinBudget(request, settings, provider),
-      () => new DecisionProviderError({ reason: "defect" }),
-    );
-    const finished = yield* Clock.currentTimeMillis;
-    const base = {
-      request,
-      elapsedMilliseconds: finished - started,
-    };
-    return Either.match(response, {
-      onLeft: (failure): TextTrace => ({
-        ...base,
-        status: "failed",
-        failure,
-      }),
-      onRight: (answered): TextTrace => ({
-        ...base,
-        status: "answered",
-        response: answered,
-        uncertainQuestions: Object.entries(answered.answers).flatMap(
-          ([id, answer]) =>
-            unsettled(answer, settings.minimumProbability) ? [id] : [],
-        ),
-      }),
-    });
-  }).pipe(Effect.withSpan("TextPolicy.assessQuestions"));
-}
-
-function unsettled(
-  answer: DecisionResponse["answers"][string],
-  minimumProbability: number,
-): boolean {
-  const selected = answer.probabilities[answer.choice] ?? 0;
-  return (
-    selected < minimumProbability ||
-    Object.values(answer.probabilities).some((value) => value > selected)
-  );
-}
-
-/** Asks the provider whether the candidate breaks each rule, in one request. */
+/**
+ * Asks the provider whether the candidate breaks each rule, in one request,
+ * and gives a finding for each. A request over the byte limit is not sent.
+ */
 function checkText(
   captured: CapturedMessage,
-  selected: RevisionRules & { readonly skipped: readonly PolicyFinding[] },
+  selected: RevisionRules,
   settings: ProviderRequestSettings,
   provider: DecisionProvider,
 ) {
-  return Effect.gen(function* (): Effect.fn.Return<TextAssessment> {
-    const trace = yield* assessQuestions(
-      prepareRequest(
-        providerState(selected, captured),
-        allQuestions(selected.rules),
-        settings.maximumRequestBytes,
-      ),
-      settings,
-      provider,
+  return Effect.gen(function* () {
+    const request = prepareRequest(
+      providerState(selected, captured),
+      allQuestions(selected.rules),
+      settings.maximumRequestBytes,
     );
-    return {
-      findings: [
-        ...traceFindings(trace, selected.rules, captured.event.direction),
-        ...selected.skipped,
-      ],
-      trace: {
-        format: "text-policy/v2",
-        data: JSON.stringify({
-          questionEdition: textQuestionEdition,
-          settings,
-          trace,
-        }),
-      },
-    };
+    if (request === undefined) {
+      return yield* new DecisionProviderError({ reason: "budget" });
+    }
+    const response = yield* decideWithinBudget(request, settings, provider);
+    return Object.entries(request.questions).flatMap(([id, question]) => {
+      const answer = response.answers[id];
+      return answer === undefined
+        ? []
+        : [
+            questionFinding(
+              question.ruleId,
+              captured.event.direction,
+              answer,
+              settings.minimumProbability,
+            ),
+          ];
+    });
   }).pipe(Effect.withSpan("TextPolicy.check"));
 }
 
@@ -777,34 +663,6 @@ function forDirection(rules: readonly TextRule[], direction: Direction) {
   });
 }
 
-function traceFindings(
-  trace: TextTrace,
-  rules: readonly TextRule[],
-  direction: Direction,
-): PolicyFinding[] {
-  switch (trace.status) {
-    case "failed":
-      return rules.map((rule) => ({
-        ruleId: rule.id,
-        kind: "hold",
-        reason: "check-unavailable",
-      }));
-    case "answered": {
-      const uncertain = new Set(trace.uncertainQuestions);
-      return Object.entries(trace.request.questions).map(([id, question]) =>
-        questionFinding(
-          question.ruleId,
-          direction,
-          uncertain.has(id),
-          trace.response.answers[id],
-        ),
-      );
-    }
-    default:
-      return trace satisfies never;
-  }
-}
-
 /**
  * A settled answer passes or breaks the rule. An unsure answer holds an
  * outgoing draft, so its agent can revise it, and allows an incoming message
@@ -813,13 +671,13 @@ function traceFindings(
 function questionFinding(
   ruleId: string,
   direction: Direction,
-  uncertain: boolean,
-  answer?: DecisionResponse["answers"][string],
+  answer: DecisionResponse["answers"][string],
+  minimumProbability: number,
 ): PolicyFinding {
-  if (!uncertain || answer === undefined) {
+  if (!unsettled(answer, minimumProbability)) {
     return {
       ruleId,
-      kind: answer?.choice === "violation" ? "violation" : "pass",
+      kind: answer.choice === "violation" ? "violation" : "pass",
     };
   }
   if (direction === "outgoing") {
@@ -832,6 +690,17 @@ function questionFinding(
     choice: answer.choice,
     probability: answer.probabilities[answer.choice] ?? 0,
   };
+}
+
+function unsettled(
+  answer: DecisionResponse["answers"][string],
+  minimumProbability: number,
+): boolean {
+  const selected = answer.probabilities[answer.choice] ?? 0;
+  return (
+    selected < minimumProbability ||
+    Object.values(answer.probabilities).some((value) => value > selected)
+  );
 }
 
 /**
@@ -851,7 +720,7 @@ function textPolicyFitsBudget(
     allQuestions(policy.rules),
     maximumBytes,
   );
-  return !("status" in request);
+  return request !== undefined;
 }
 
 /** Stops building at the byte limit without exposing a partial request. */
@@ -859,7 +728,7 @@ function prepareRequest(
   state: string,
   questions: Iterable<QuestionEntry>,
   maximumBytes: number,
-): DecisionRequest | Extract<TextTrace, { readonly status: "failed" }> {
+): DecisionRequest | undefined {
   const collected: Record<string, DecisionRequest["questions"][string]> = {};
   const request = { state, questions: collected };
   let remaining =
@@ -871,11 +740,7 @@ function prepareRequest(
       2 +
       separatorBytes;
     if (remaining < 0) {
-      return {
-        status: "failed",
-        failure: new DecisionProviderError({ reason: "budget" }),
-        elapsedMilliseconds: 0,
-      };
+      return undefined;
     }
     collected[id] = Object.freeze(question);
     separatorBytes = 1;

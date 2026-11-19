@@ -4,7 +4,6 @@ import {
   Clock,
   Context,
   Effect,
-  Exit,
   Layer,
   Schedule,
   Schema,
@@ -80,8 +79,9 @@ import {
 
 /**
  * A message policy as configured, which edits leave unchanged, and the
- * decision provider that judges its text rules. Reject and hold judgments,
- * including provider failures, refuse sends and withhold incoming messages.
+ * decision provider that judges its text rules. Every reason but
+ * `eligible`, including a provider failure, refuses a send and withholds an
+ * incoming message.
  */
 interface ConfiguredPolicy {
   readonly policy: LoadedMessagePolicy["policy"];
@@ -455,7 +455,6 @@ function checkMessageText(
       const concluded = yield* checkCapturedMessage(
         {
           textRules: active.textRules,
-          limits: configured.policy.settings,
           revision: active.revision,
           ...(configured.provider === undefined
             ? {}
@@ -469,7 +468,6 @@ function checkMessageText(
         Effect.catchTag("InvalidCheckError", () =>
           Effect.succeed(unavailable()),
         ),
-        markCheckActivity(direction),
       );
       const { check, guidance } = guidanceProjection(concluded, checkId);
       const detail =
@@ -498,7 +496,7 @@ function checkMessageText(
         }),
         allowed: check.reason === "eligible",
         resultJson: JSON.stringify({
-          check: Struct.omit(check, "trace", "decidedBy"),
+          check: Struct.omit(check, "decidedBy"),
           summaries: (direction === "outgoing"
             ? message.recipients
             : [message.author]
@@ -712,7 +710,6 @@ function decisionSummary(
   return {
     direction,
     peer,
-    judgment: check.judgment,
     reason: check.reason,
     decidedBy: check.decidedBy.map((rule) => ({
       ruleId: rule.ruleId,
@@ -751,7 +748,6 @@ function guidanceProjection(check: FirewallCheck, checkId: string) {
 /** A check that could not run holds without inventing a deciding rule. */
 function unavailable(): FirewallCheck {
   return {
-    judgment: "hold",
     reason: "check-unavailable",
     feedback: [],
     instructions: [],
@@ -858,7 +854,6 @@ function buildPolicy(
         maximumConcurrentChecks:
           policy.maximumConcurrentChecks ?? defaultConcurrentChecks,
       },
-      limits: policy.settings,
       questionEdition: textQuestionEdition,
       textRules,
       fixedRuleIds,
@@ -925,46 +920,4 @@ function saveEditablePolicy(
       store.writeEditablePolicy(editablePolicyJson, activation),
     ),
   );
-}
-
-const activityKind = "firewall-check";
-/** How a marked check ended. */
-type ActivityEnding = "checked" | "interrupted" | "failed";
-
-/** Pairs a pending and a settled span around one check, even when it fails or is cancelled. */
-function markCheckActivity(direction: Direction) {
-  return <A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    Effect.uninterruptibleMask((restore) =>
-      checkPending(direction).pipe(
-        Effect.zipRight(restore(work)),
-        Effect.onExit((exit) => {
-          if (Exit.isSuccess(exit)) {
-            return checkSettled(direction, "checked");
-          }
-          return checkSettled(
-            direction,
-            Exit.isInterrupted(exit) ? "interrupted" : "failed",
-          );
-        }),
-      ),
-    );
-}
-
-/** Opens the span that `checkSettled` closes for the same direction. */
-function checkPending(direction: Direction): Effect.Effect<void> {
-  return Effect.withSpan(Effect.void, "retry.pending", {
-    captureStackTrace: false,
-    attributes: { kind: activityKind, id: direction },
-  });
-}
-
-/** Closes the span `checkPending` opened. */
-function checkSettled(
-  direction: Direction,
-  ending: ActivityEnding,
-): Effect.Effect<void> {
-  return Effect.withSpan(Effect.void, "retry.settled", {
-    captureStackTrace: false,
-    attributes: { kind: activityKind, id: direction, outcome: ending },
-  });
 }

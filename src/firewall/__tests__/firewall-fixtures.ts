@@ -33,16 +33,10 @@ export const evidence: FirewallEvidence = {
   earlierHistoryOmitted: false,
   gaps: [],
 };
-/** The raw provider text, which no decision may expose. */
-export const privateProviderResponse = "private provider explanation";
 /** Finds `privacy` broken and every other rule followed, with certainty. */
 export const certainProvider: DecisionProvider = {
   decide: (request) =>
     Effect.succeed({
-      provider: "test",
-      model: "test",
-      raw: privateProviderResponse,
-      usage: {},
       answers: Object.fromEntries(
         Object.entries(request.questions).map(([id, question]) => {
           const choices = Object.keys(question.criteria);
@@ -153,12 +147,7 @@ export function policy(
         decodeMessagePolicy(
           JSON.stringify({
             format: "org.social-harness/message-policy/v2",
-            decisionProvider: { kind: "jev", model: "test" },
-            settings: {
-              timeoutMilliseconds: 10_000,
-              maximumInputBytes: 1_000_000,
-              maximumResultBytes: 100_000,
-            },
+            decisionProvider: { model: "test" },
             text: { fixedRules, initialRules },
             textSettings: {
               minimumProbability: 0.5,

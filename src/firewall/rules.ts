@@ -25,12 +25,11 @@ export type FirewallRefusalReason = typeof firewallRefusalReasonSchema.Type;
 /** Whether the agent received the message under check or is sending it. */
 export type Direction = "incoming" | "outgoing";
 
-/** Trusted callers supply facts. Visibility limits what guidance may reference. */
+/** A fact the owner states for every check, with where it comes from. */
 export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
   id: identifier,
   source: identifier,
   text: Schema.NonEmptyString,
-  visibility: Schema.Literal("runtime", "assessor"),
 }) {}
 
 /**
@@ -50,13 +49,6 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
-}) {}
-
-/** The time and byte limits of one check against the text rules. */
-export class CheckLimits extends Schema.Class<CheckLimits>("CheckLimits")({
-  timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
-  maximumInputBytes: Schema.Positive.pipe(Schema.int()),
-  maximumResultBytes: Schema.Positive.pipe(Schema.int()),
 }) {}
 
 /**
@@ -141,8 +133,8 @@ const firewallActivationSchema = exactStruct({
 });
 
 /**
- * Contains one row per peer without message content or provider traces.
- * `judgment` is what the check concluded. `decidedBy[].advice` contains the
+ * Contains one row per peer without message content.
+ * `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
  * allowed one. `from` identifies a contract stage as `contract`, or a fixed or
  * editable text rule. `checkedRuleIds` lists the rules the check judged: a
@@ -151,7 +143,6 @@ const firewallActivationSchema = exactStruct({
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
   peer: AgentCard,
-  judgment: Schema.Literal("allow", "reject", "hold"),
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
     exactStruct({
@@ -165,7 +156,7 @@ export const firewallDecisionSummarySchema = exactStruct({
 });
 
 /**
- * Reports each saved check with its judgment and the decision the daemon
+ * Reports each saved check with the decision the daemon
  * applied, and each policy activation. A sent message is `allowed` or
  * `refused`; a received one is `allowed` or `withheld`.
  */
@@ -283,7 +274,6 @@ const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
 /** Jev judges text rules with the key `decisionProviderKeyFile` holds. */
 const decisionProvider = Schema.Struct({
-  kind: Schema.Literal("jev"),
   model: Schema.NonEmptyTrimmedString,
 });
 
@@ -294,12 +284,6 @@ const defaultProviderRequestSettings = {
   minimumProbability: 0.8,
   maximumRequestBytes: 384_000,
   timeoutMilliseconds: 15_000,
-};
-
-const defaultCheckLimits = {
-  timeoutMilliseconds: 150_000,
-  maximumInputBytes: 512_000,
-  maximumResultBytes: 2_000_000,
 };
 
 const textDocument = Schema.Struct({
@@ -321,9 +305,6 @@ const document = Schema.Struct({
       default: () => defaultProviderRequestSettings,
     },
   ),
-  settings: Schema.optionalWith(Schema.Struct(CheckLimits.fields), {
-    default: () => defaultCheckLimits,
-  }),
   facts: Schema.optionalWith(Schema.Array(OwnerFact), {
     default: () => [],
   }),
@@ -401,7 +382,6 @@ const decisionProviderKey = Schema.Trim.pipe(
 export interface LoadedMessagePolicy {
   readonly policy: MessagePolicy;
   readonly provider?: {
-    readonly kind: "jev";
     readonly model: string;
     readonly apiKey: Redacted.Redacted;
   };
@@ -436,7 +416,7 @@ export const loadMessagePolicy = Effect.fn("loadMessagePolicy")(function* (
   const apiKey = yield* readDecisionProviderKey(paths.decisionProviderKeyFile);
   return Option.some<LoadedMessagePolicy>({
     policy: resolved,
-    provider: { kind: "jev", model: setting.model, apiKey },
+    provider: { model: setting.model, apiKey },
   });
 });
 
