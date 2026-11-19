@@ -8,7 +8,7 @@ the channel and the library's agent skills. It is not published to npm.
 ## Develop the adapter
 
 The package entry registers the channel on import. Follow the
-[contributor setup](https://docs.socialharness.org/guides/contributing), then run
+[contributor setup](../../CONTRIBUTING.md), then run
 these commands from the workspace root:
 
 ```sh
