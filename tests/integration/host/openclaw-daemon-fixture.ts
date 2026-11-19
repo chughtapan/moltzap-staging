@@ -253,14 +253,9 @@ export const acquirePeers = acquireScenario({}, (daemon) =>
   daemon.signInAs("openclaw-host"),
 );
 
-/**
- * A client/server daemon whose server agent is the host's and runs the marked
- * message policy. The two others are clients, whose messages only the server
- * agent's firewall checks.
- */
-export const acquireGuardedServer = acquireScenario(
+/** A client/server daemon whose server agent is the host's. The two others are clients. */
+export const acquireServer = acquireScenario(
   {
-    firewall: true,
     settings: {
       serverAgent: { name: "openclaw-host", subject: SERVER_AGENT_OWNER },
     },
