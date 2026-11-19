@@ -16,7 +16,7 @@ import {
   connectFromEnvironment,
   McpConnectError,
   sendMessage,
-} from "../mcp/connection.js";
+} from "../mcp/index.js";
 import { toolDefinitions } from "../mcp/tools.js";
 import { loopbackMcpFixture } from "./__tests__/mcp-fixtures.js";
 

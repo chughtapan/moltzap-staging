@@ -141,8 +141,7 @@ elsewhere require separately supplied evidence.
 ### Retained decisions
 
 Each completed check identifies the message, evidence and policy it checked.
-Only completed checks enter decision history. Private provider traces stay in
-memory. Each completed record saves its decision summary with the revision of
+Only completed checks enter decision history. Each completed record saves its decision summary with the revision of
 the policy it applied, checked and deciding rule ids, origins and registered advice.
 Reads return that saved summary without message content or private evidence.
 
@@ -156,9 +155,8 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | --- | --- |
 | `format` | Required: `org.social-harness/message-policy/v2`. |
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
-| `decisionProvider` | Required with `text` and for held norms with English rules: `{kind: "jev", model}`. |
+| `decisionProvider` | Required with `text` and for held norms with English rules: `{model}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
-| `settings` | Defaults: 150 s per check; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumHistoryRecords` | Default 256; [window bounds](#available-history). |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
@@ -187,7 +185,7 @@ then fixed and initial behaviors.
 | `text` | Trimmed body. |
 | `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
 | `guidance` | Optional `metadata.social-harness.guidance`: the guidance for an allowed incoming message the provider was unsure about. |
-| `feedback` | Optional `metadata.social-harness.feedback`: `text`. |
+| `feedback` | Optional `metadata.social-harness.feedback`. |
 | `action` | Optional `metadata.social-harness.action`: `deny` or `reply`. |
 
 Other metadata, description/license and neighboring files supply no policy.
@@ -256,7 +254,7 @@ provider, model and rule source after edits.
 
 ## Decision reasons
 
-The decision feed separates the `judgment` (`allow`, `reject`, `hold`) from
+The decision feed gives
 the `decision`: `allowed` or `refused` for a message the agent sent, `allowed`
 or `withheld` for one it received. `checkedRuleIds` lists the rules the check
 judged; a rule that does not apply to the message, by its direction, is not listed.

@@ -1,12 +1,13 @@
 /** @file Stores one agent's unchecked messages, its inbox entries and which of them are delivered. */
 
 import { SqlClient } from "@effect/sql";
-import { Effect, Encoding, Schema } from "effect";
+import { Data, Effect, Encoding, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import type { IncomingDecision } from "../firewall/service.js";
 import {
   Message,
   type MessageReference,
+  PAGE_SIZE,
   type PaginatedRequest,
 } from "../communication/index.js";
 import {
@@ -24,13 +25,14 @@ import {
 } from "../encoding.js";
 import {
   DeliveryToken,
-  type InboxEntry,
+  InboxEntry,
   InboxError,
   type InboxPage,
   MessageAddress,
-  PAGE_SIZE,
-  StoredInboxEntry,
 } from "../mcp/tools.js";
+
+/** An inbox entry as the inbox stores it: everything but its delivery token. */
+const StoredInboxEntry = InboxEntry.omit("deliveryToken");
 
 const uncheckedRow = exactStruct({
   sequence: Schema.Number,
@@ -200,7 +202,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       const position =
         request.cursor === undefined
           ? { after: 0, through: yield* head(inboxRows()) }
-          : yield* decodeCursor(inboxCursor, request.cursor);
+          : yield* decodeCursor(inboxCursor, request.cursor).pipe(
+              Effect.catchTag(
+                "CursorError",
+                () => new InboxError({ reason: "invalid-cursor" }),
+              ),
+            );
       const rows = yield* read(
         pendingRow,
         inboxRows()
@@ -287,6 +294,9 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   };
 });
 
+/** The text is not a cursor the read it was given to returned. */
+export class CursorError extends Data.TaggedError("CursorError") {}
+
 /** A cursor is its position as base64url JSON text. */
 export function encodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
@@ -305,9 +315,8 @@ export function decodeCursor<A, I>(
   return Encoding.decodeBase64UrlString(cursor).pipe(
     Effect.flatMap((text) => decodeJson(schema, text)),
     Effect.catchTags({
-      DecodeException: () => new InboxError({ reason: "invalid-cursor" }),
-      JsonRepresentationError: () =>
-        new InboxError({ reason: "invalid-cursor" }),
+      DecodeException: () => new CursorError(),
+      JsonRepresentationError: () => new CursorError(),
     }),
   );
 }

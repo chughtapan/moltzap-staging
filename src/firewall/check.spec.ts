@@ -1,4 +1,4 @@
-/** @file Message checks enforce configured limits and release only the feedback and guidance their evidence permits. */
+/** @file Message checks enforce the request limits and release only the feedback and guidance their evidence permits. */
 
 import { effect as it } from "@effect/vitest";
 import {
@@ -11,11 +11,7 @@ import {
   TestClock,
 } from "effect";
 import { expect } from "vitest";
-import type {
-  CheckLimits,
-  ProviderRequestSettings,
-  TextRule,
-} from "./rules.js";
+import type { ProviderRequestSettings, TextRule } from "./rules.js";
 import {
   type AssessmentText,
   checkCapturedMessage,
@@ -24,7 +20,7 @@ import {
   DecisionProviderError,
   type DecisionRequest,
   type DecisionResponse,
-  validateChecks,
+  validateTextRules,
 } from "./check.js";
 
 const privateEvidence = "PRIVATE: unrelated medical appointment at 14:00";
@@ -32,13 +28,13 @@ const repair =
   "Ask for acceptance of the chosen proposal. Do not claim agreement yet.";
 const registeredGuidance =
   "After proposing a time, wait for every required participant to accept that proposal.";
-const draft: typeof AssessmentText.Encoded = {
+const draft: AssessmentText = {
   id: "draft",
   sender: "organizer-agent",
   recipients: ["participant-agent"],
   text: "The meeting is confirmed; everyone agreed.",
 };
-const evidence: typeof CheckEvidence.Encoded = {
+const evidence: CheckEvidence = {
   agentId: "organizer-agent",
   principal: "organizer",
   participants: [{ agentId: "participant-agent", principal: "participant" }],
@@ -56,7 +52,6 @@ const evidence: typeof CheckEvidence.Encoded = {
       id: "private-calendar",
       source: "owner-calendar",
       text: privateEvidence,
-      visibility: "assessor",
     },
   ],
   gaps: [],
@@ -66,7 +61,7 @@ const proposalAcceptance: TextRule = {
   applies: "both",
   text: "Availability is not acceptance. Everyone must accept the same concrete proposal before it is finalized.",
   guidance: registeredGuidance,
-  feedback: { text: repair },
+  feedback: repair,
 };
 const rules: readonly TextRule[] = [
   {
@@ -83,11 +78,6 @@ const providerSettings: typeof ProviderRequestSettings.Encoded = {
   maximumRequestBytes: 60000,
   timeoutMilliseconds: 100,
 };
-const checkLimits = {
-  timeoutMilliseconds: 2000,
-  maximumInputBytes: 300000,
-  maximumResultBytes: 1000000,
-};
 /**
  * A provider's answers: the question for each rule keyed by its id in
  * `choices` takes that choice with certainty, or the full answer given there,
@@ -98,10 +88,6 @@ function responseFor(
   choices: Readonly<Record<string, string | Answer>> = {},
 ): typeof DecisionResponse.Encoded {
   return {
-    provider: "test-decisions",
-    model: "test-model",
-    raw: privateEvidence,
-    usage: {},
     answers: Object.fromEntries(
       Object.entries(request.questions).map(([id, question]) => {
         const selected = choices[question.ruleId] ?? "compliant";
@@ -138,7 +124,7 @@ function provider(
 }
 const defaultProvider = provider();
 /** A peer's message to the local agent. */
-const peerMessage: typeof AssessmentText.Encoded = {
+const peerMessage: AssessmentText = {
   id: "proposal",
   sender: "participant-agent",
   recipients: [evidence.agentId],
@@ -155,18 +141,16 @@ function check(
     readonly evidence?: CheckEvidence;
     readonly rules?: readonly TextRule[];
     readonly providerSettings?: ProviderRequestSettings;
-    readonly limits?: CheckLimits;
     readonly incoming?: boolean;
   } = {},
 ) {
   return Effect.gen(function* () {
     const configuration = {
       textRules: options.rules ?? rules,
-      limits: options.limits ?? checkLimits,
       providerSettings: options.providerSettings ?? providerSettings,
       revision: "a".repeat(64),
     };
-    yield* validateChecks(configuration);
+    yield* validateTextRules(configuration);
     return yield* checkCapturedMessage(
       { ...configuration, provider: decisionProvider },
       {
@@ -211,15 +195,13 @@ it.prop(
       expect(result).toMatchObject(
         choice === "compliant"
           ? {
-              judgment: "allow",
               reason: "eligible",
               feedback: [],
               instructions: [],
             }
           : {
-              judgment: "reject",
               reason: "rule-violation",
-              feedback: [{ text: repair }],
+              feedback: [repair],
               instructions: [],
             },
       );
@@ -244,7 +226,6 @@ it.prop(
       expect(result).toMatchObject(
         incoming
           ? {
-              judgment: "allow",
               reason: "eligible",
               feedback: [],
               instructions: [
@@ -256,9 +237,8 @@ it.prop(
               ],
             }
           : {
-              judgment: "hold",
               reason: "unresolved-evidence",
-              feedback: [{ text: repair }],
+              feedback: [repair],
               instructions: [],
             },
       );
@@ -274,7 +254,7 @@ it.each<Choice>(["compliant", "violation"])(
       );
       expect(result).toMatchObject({
         reason: "unresolved-evidence",
-        feedback: [{ text: repair }],
+        feedback: [repair],
       });
     }),
 );
@@ -286,7 +266,7 @@ it.each([
   },
   {
     registered: "feedback",
-    advice: { feedback: { text: repair } },
+    advice: { feedback: repair },
     text: repair,
   },
 ])(
@@ -306,7 +286,7 @@ it.each([
       };
       const held = yield* check(unsure, options);
       const allowed = yield* check(unsure, { ...options, incoming: true });
-      expect(held.feedback).toEqual([{ text }]);
+      expect(held.feedback).toEqual([text]);
       expect(allowed.instructions).toMatchObject([{ instruction: text }]);
     }),
 );
@@ -326,7 +306,6 @@ it.prop(
         },
       );
       expect(result).toMatchObject({
-        judgment: "reject",
         reason: "rule-violation",
         instructions: [],
       });
@@ -372,22 +351,9 @@ it.prop(
         { incoming },
       );
       expect(result).toMatchObject({
-        judgment: "hold",
         reason: "check-unavailable",
         instructions: [],
       });
-    }),
-);
-it.prop(
-  "retains any distribution the provider reports, unrounded, in the check's trace",
-  [fc.double({ min: 0.5, max: 1, noNaN: true })],
-  ([compliant]) =>
-    Effect.gen(function* () {
-      const probabilities = { compliant, violation: 1 - compliant };
-      const result = yield* check(
-        provider({ privacy: { choice: "compliant", probabilities } }),
-      );
-      expect(result.trace?.data).toContain(JSON.stringify(probabilities));
     }),
 );
 const applicability = fc.constantFrom<TextRule["applies"]>(
@@ -406,7 +372,7 @@ it.prop(
           applies,
           text: `Address open request number ${index} before changing the subject.`,
           guidance: registeredGuidance,
-          feedback: { text: repair },
+          feedback: repair,
         }),
       );
       const asked = textRules.filter(
@@ -418,7 +384,7 @@ it.prop(
         rules: textRules,
       });
       const stated = requests.map((request) => JSON.stringify(request)).join();
-      expect(result.judgment).toBe("allow");
+      expect(result.reason).toBe("eligible");
       expect(
         requests.map((request) =>
           Object.values(request.questions).map((question) => question.ruleId),
@@ -482,7 +448,7 @@ it.prop(
           ? { ...peerMessage, recipients: [stranger] }
           : { ...draft, sender: stranger },
       }).pipe(Effect.flip);
-      expect(refused.reason).toBe("message");
+      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 /** The references of a candidate, two earlier messages and two owner facts. */
@@ -515,11 +481,10 @@ it.prop(
             id: held(reference),
             source: "owner-calendar",
             text: privateEvidence,
-            visibility: "assessor",
           })),
         },
       }).pipe(Effect.flip);
-      expect(refused.reason).toBe("evidence");
+      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 it.prop(
@@ -537,7 +502,7 @@ it.prop(
           })),
         },
       }).pipe(Effect.flip);
-      expect(refused.reason).toBe("evidence");
+      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 it.prop(
@@ -552,8 +517,8 @@ it.prop(
       });
       expect(result).toMatchObject(
         gaps.length === 0
-          ? { judgment: "allow", reason: "eligible" }
-          : { judgment: "hold", reason: "unresolved-evidence" },
+          ? { reason: "eligible" }
+          : { reason: "unresolved-evidence" },
       );
     }),
 );
@@ -585,26 +550,19 @@ it.each([
   }),
 );
 it.prop(
-  "holds a message exactly when the provider answers after the total or the per-request deadline",
+  "holds a message exactly when the provider answers after the request deadline",
   [
     fc
-      .tuple(
-        fc.integer({ min: 1, max: 1000 }),
-        fc.integer({ min: 1, max: 1000 }),
-        fc.nat({ max: 1000 }),
-      )
-      .filter(
-        ([total, perRequest, delay]) => delay !== Math.min(total, perRequest),
-      ),
+      .tuple(fc.integer({ min: 1, max: 1000 }), fc.nat({ max: 1000 }))
+      .filter(([perRequest, delay]) => delay !== perRequest),
   ],
-  ([[total, perRequest, delay]]) =>
+  ([[perRequest, delay]]) =>
     Effect.gen(function* () {
       const slow: DecisionProvider = {
         decide: (request) =>
           Effect.sleep(delay).pipe(Effect.as(responseFor(request))),
       };
       const running = yield* check(slow, {
-        limits: { ...checkLimits, timeoutMilliseconds: total },
         providerSettings: {
           ...providerSettings,
           timeoutMilliseconds: perRequest,
@@ -613,12 +571,11 @@ it.prop(
       yield* TestClock.adjust(delay);
       const result = yield* Fiber.join(running);
       expect(result).toMatchObject(
-        delay < Math.min(total, perRequest)
-          ? { judgment: "allow", feedback: [] }
+        delay < perRequest
+          ? { reason: "eligible", feedback: [] }
           : {
-              judgment: "hold",
               reason: "check-unavailable",
-              feedback: [{ text: repair }],
+              feedback: [repair],
             },
       );
     }),
@@ -653,44 +610,6 @@ it.prop(
       expect(submitted.map(requestBytes)).toEqual(spare >= 0 ? [bytes] : []);
     }),
 );
-it.prop(
-  "holds a message exactly when its captured evidence or what the check found is larger than the configured bytes",
-  [
-    fc.string({ unit: "grapheme" }),
-    fc.constantFrom(
-      "maximumInputBytes" as const,
-      "maximumResultBytes" as const,
-    ),
-    fc.integer({ min: -4, max: 4 }),
-  ],
-  ([text, bound, spare]) =>
-    Effect.gen(function* () {
-      const message = { ...draft, text };
-      const bytes = (value: unknown) =>
-        new TextEncoder().encode(JSON.stringify(value)).byteLength;
-      const unbounded = yield* check(defaultProvider, { message });
-      const measured = {
-        maximumInputBytes: bytes({
-          event: { direction: "outgoing", message },
-          evidence,
-        }),
-        maximumResultBytes: bytes({
-          findings: unbounded.findings,
-          trace: unbounded.trace,
-        }),
-      };
-      const result = yield* check(defaultProvider, {
-        message,
-        limits: { ...checkLimits, [bound]: measured[bound] + spare },
-      });
-      expect(result).toMatchObject(
-        spare >= 0
-          ? { judgment: "allow", reason: "eligible" }
-          : { judgment: "hold", reason: "check-unavailable", instructions: [] },
-      );
-    }),
-);
-
 /** Schema-minimum message and evidence keep this boundary independent of variable evidence size. */
 const minimumCaptured = {
   message: {
@@ -756,16 +675,18 @@ it.prop(
         textRules,
       );
       const minimumBytes = Math.max(...captured.map(requestBytes));
-      const judgments = yield* checkMinimumRequests(
+      const reasons = yield* checkMinimumRequests(
         provider(),
         minimumBytes + spare,
         textRules,
       ).pipe(
         Effect.match({
-          onFailure: (rejected) => rejected.reason,
-          onSuccess: (results) => results.map((result) => result.judgment),
+          onFailure: (rejected) => rejected._tag,
+          onSuccess: (results) => results.map((result) => result.reason),
         }),
       );
-      expect(judgments).toEqual(spare >= 0 ? ["allow", "allow"] : "rules");
+      expect(reasons).toEqual(
+        spare >= 0 ? ["eligible", "eligible"] : "InvalidCheckError",
+      );
     }),
 );

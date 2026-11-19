@@ -6,20 +6,20 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { Context, Effect, Layer, Option, Redacted, Ref, Stream } from "effect";
+import { Context, Effect, Layer, Redacted, Ref, Stream } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { HeldNorms } from "../../norms/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../database/testing.js";
 import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
+import { MessageAddressInput } from "../../mcp/tools.js";
 import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
-import { roleOf } from "../startup.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "../subscriptions.js";
 import { issuerFixture, requiredScope } from "../testing.js";
+import { clientTools, peerTools } from "../tool-server.js";
 
 /** The Host of the fixture's resource, unless a test names another resource. */
 const mcpTestHeaders = { host: "127.0.0.1" };
@@ -74,30 +74,18 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     Effect.provideService(SocialHarness, harness),
     Effect.provideService(SqlClient.SqlClient, database.sql),
   );
-  const role = roleOf(
-    {
-      settings: {
-        serverAgent: {
-          name: options.serverAgentName ?? card.agentName,
-          subject: "server",
-        },
-        hideGroups: false,
-      },
-      serverAgentHeldNorms: yield* Ref.make(
-        Option.none<Context.Tag.Service<typeof HeldNorms>>(),
-      ),
-    },
-    card.agentName,
-    card.agentName,
-  );
+  const tools =
+    options.serverAgentName === undefined
+      ? peerTools(false, false)
+      : clientTools(
+          MessageAddressInput.make(`agent:${options.serverAgentName}`),
+        );
   const agent = {
-    tools: yield* role
-      .tools(subscription)
-      .pipe(
-        Effect.provideService(SocialHarness, harness),
-        Effect.provideService(Identity, identity),
-        Effect.provideService(Firewall, firewall),
-      ),
+    tools: yield* tools(subscription.status).pipe(
+      Effect.provideService(SocialHarness, harness),
+      Effect.provideService(Identity, identity),
+      Effect.provideService(Firewall, firewall),
+    ),
     events: subscription,
   };
   const owners = yield* Ref.make<

@@ -49,13 +49,12 @@ import { lookup } from "node:dns";
 import { isIP, type LookupFunction } from "node:net";
 import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
 import { plainUrl } from "../encoding.js";
-import {
-  callbackReasons,
-  INBOX_PENDING_EVENT,
-  type SubscriptionStatus,
-} from "../mcp/tools.js";
+import { callbackReasons, type SubscriptionStatus } from "../mcp/tools.js";
 import { SocialHarness } from "./agent.js";
 import { JsonRpcError } from "./tool-server.js";
+
+/** A wake-up to read the pending inbox. It carries no content. */
+export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
 export type WebhookFailureReason = (typeof callbackReasons)[number];
@@ -776,12 +775,6 @@ function writeSavedSubscription(
     );
   }).pipe(Effect.provideService(SqlClient.SqlClient, webhook.sql));
 }
-
-/**
- * One agent's callback subscription for inbox wake-ups: the MCP Events calls,
- * each taking a request as it arrived, and what the `status` tool reports.
- */
-export type HarnessWebhookEvents = ReturnType<typeof inboxEvents>;
 
 /** Loads the agent's subscription and posts wake-ups for it until the scope closes. */
 export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (

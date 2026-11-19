@@ -16,10 +16,8 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import type { InboxEntry } from "../mcp/tools.js";
-import type { HistoryPage } from "./agent.js";
 import { digest } from "../__tests__/agents.js";
-import { Message, MessageAddressInput, MsgId } from "../communication/index.js";
+import { Message, MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
   contractOf,
@@ -31,6 +29,11 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
+import {
+  type HistoryRecord,
+  type InboxEntry,
+  MessageAddressInput,
+} from "../mcp/tools.js";
 import {
   composedPolicy,
   decisionResponse,
@@ -593,7 +596,7 @@ it("continues history through the boundary its first page fixed", () =>
         .readHistory({ address: carolAddress, cursor: first.nextCursor })
         .pipe(Effect.flip)).reason,
     ).toBe("invalid-cursor");
-    const records: Array<HistoryPage["records"][number]> = [];
+    const records: HistoryRecord[] = [];
     let page = yield* runtime.harness.readHistory({ address: bobAddress });
     records.push(...page.records);
     while (page.nextCursor !== undefined) {
@@ -649,21 +652,23 @@ it("cancels an unaccepted draft and releases assessment capacity", () =>
     yield* subject.addConversation([subject.self, subject.bob]);
     const entered = yield* Deferred.make<undefined>();
     let first = true;
-    const policy = composedPolicy({
-      decide: (request) =>
-        Effect.suspend(() => {
-          if (first) {
-            first = false;
-            return Deferred.succeed(entered, undefined).pipe(
-              Effect.zipRight(Effect.never),
-            );
-          }
-          return Effect.succeed(decisionResponse(request));
-        }),
-    });
-    const runtime = yield* subject.open({
-      policy: { ...policy, maximumConcurrentChecks: 1 },
-    });
+    const policy = composedPolicy(
+      {
+        decide: (request) =>
+          Effect.suspend(() => {
+            if (first) {
+              first = false;
+              return Deferred.succeed(entered, undefined).pipe(
+                Effect.zipRight(Effect.never),
+              );
+            }
+            return Effect.succeed(decisionResponse(request));
+          }),
+      },
+      undefined,
+      1,
+    );
+    const runtime = yield* subject.open({ policy });
     const cancelled = yield* runtime.harness
       .send({ to: bobAddress, text: "Cancelled draft" })
       .pipe(Effect.forkScoped);

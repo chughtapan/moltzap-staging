@@ -21,19 +21,17 @@ import {
   Schema,
   Scope,
   Stream,
+  Struct,
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
 import {
-  MessageAddressInput,
-  SendError,
-  sendFailureReasons,
-} from "../communication/index.js";
-import {
   HistoryError,
   MAXIMUM_WAIT_SECONDS,
+  MessageAddressInput,
+  SendError,
   toolDefinitions,
 } from "../mcp/tools.js";
 import {
@@ -76,6 +74,16 @@ const read = {
   name: "read_conversation",
   arguments: { address: "agent:bob" },
 };
+/** Every reason a send fails with; the type refuses a missing or an unknown one. */
+const sendFailureReasons = Struct.keys({
+  "invalid-address": true,
+  "unknown-agent": true,
+  "membership-invalid": true,
+  "content-invalid": true,
+  "message-conflict": true,
+  "network-unavailable": true,
+  "outcome-unknown": true,
+} satisfies Record<SendError["reason"], true>);
 const serverAgent = MessageAddressInput.make("agent:bob");
 const sendReceipt = Schema.decodeUnknownSync(
   toolDefinitions.send_message.output,

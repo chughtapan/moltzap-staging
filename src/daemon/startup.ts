@@ -14,7 +14,6 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
-import { MessageAddressInput } from "../communication/index.js";
 import { Communication } from "../communication/service.js";
 import {
   checkDatabase,
@@ -24,17 +23,14 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
-import {
-  clientToolDefinitions,
-  directToolDefinitions,
-  toolDefinitions,
-} from "../mcp/tools.js";
-import { compiledPolicyEdit, HeldNorms } from "../norms/index.js";
+import { MessageAddressInput } from "../mcp/tools.js";
+import { HeldNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
+  identityLayer,
   listOwnedAgentKeys,
   type Owner,
 } from "./owners.js";
@@ -44,12 +40,8 @@ import {
   refused,
   spanExport,
 } from "./settings.js";
-import {
-  type HarnessWebhookEvents,
-  makeWebhookEvents,
-  webhookHttpClientLayer,
-} from "./subscriptions.js";
-import { bind } from "./tool-server.js";
+import { makeWebhookEvents, webhookHttpClientLayer } from "./subscriptions.js";
+import { clientTools, peerTools } from "./tool-server.js";
 
 /**
  * One agent's role, and everything that follows from it. In P2P mode every
@@ -58,10 +50,8 @@ import { bind } from "./tool-server.js";
  * and one client: the server agent checks its messages and holds the
  * contracts, and a client checks nothing of its own, reads the server agent's
  * norms and talks only to it.
- *
- * @internal
  */
-export function roleOf(
+function roleOf(
   daemon: {
     readonly settings: Pick<
       DaemonSettings,
@@ -201,133 +191,6 @@ function serverAgentNormsLayer(
 }
 
 /**
- * The tools of a peer and of the server agent: each addresses any agent and
- * owns its message policy. Without `groups` an address names one agent.
- */
-function peerTools(policyConfigured: boolean, groups: boolean) {
-  return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
-    const harness = yield* SocialHarness;
-    const firewall = yield* Firewall;
-    return [
-      yield* statusTool(subscription),
-      groups
-        ? bind("send_message", toolDefinitions.send_message, harness.send)
-        : bind(
-            "send_message",
-            directToolDefinitions.send_message,
-            harness.send,
-          ),
-      bind(
-        "receive_messages",
-        toolDefinitions.receive_messages,
-        harness.receive,
-      ),
-      bind(
-        "list_conversations",
-        toolDefinitions.list_conversations,
-        harness.listConversations,
-      ),
-      groups
-        ? bind(
-            "read_conversation",
-            toolDefinitions.read_conversation,
-            harness.readHistory,
-          )
-        : bind(
-            "read_conversation",
-            directToolDefinitions.read_conversation,
-            harness.readHistory,
-          ),
-      ...(policyConfigured
-        ? [
-            bind("read_policy", toolDefinitions.read_policy, () =>
-              firewall.readPolicy(),
-            ),
-            bind("update_policy", toolDefinitions.update_policy, (update) =>
-              compiledPolicyEdit(update).pipe(
-                Effect.flatMap(firewall.updatePolicy),
-              ),
-            ),
-          ]
-        : []),
-      bind(
-        "read_firewall_decisions",
-        toolDefinitions.read_firewall_decisions,
-        firewall.readDecisions,
-      ),
-      ...(yield* normsTool(toolDefinitions.read_norms)),
-    ];
-  });
-}
-
-/**
- * The tools of a client in client/server mode. It sends to and reads its
- * conversation with the server agent, and names neither.
- */
-function clientTools(serverAgentAddress: MessageAddressInput) {
-  return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
-    const harness = yield* SocialHarness;
-    return [
-      yield* statusTool(subscription),
-      bind("send_message", clientToolDefinitions.send_message, (message) =>
-        harness.send({ ...message, to: serverAgentAddress }),
-      ),
-      bind(
-        "receive_messages",
-        toolDefinitions.receive_messages,
-        harness.receive,
-      ),
-      bind(
-        "read_conversation",
-        clientToolDefinitions.read_conversation,
-        (page) => harness.readHistory({ ...page, address: serverAgentAddress }),
-      ),
-      ...(yield* normsTool(clientToolDefinitions.read_norms)),
-    ];
-  });
-}
-
-function statusTool(subscription: HarnessWebhookEvents) {
-  return Effect.map(Identity, (identity) =>
-    bind("status", toolDefinitions.status, () =>
-      Effect.map(subscription.status, (status) => ({
-        agentId: identity.me.agentId,
-        agentName: identity.me.agentName,
-        subscription: status,
-      })),
-    ),
-  );
-}
-
-/**
- * `read_norms` lists the norms held: this agent's, or for a client the server
- * agent's. An agent that holds none has no such tool.
- */
-function normsTool(
-  definition: (
-    | typeof toolDefinitions
-    | typeof clientToolDefinitions
-  )["read_norms"],
-) {
-  return Effect.gen(function* () {
-    const heldNorms = yield* Effect.serviceOption(HeldNorms);
-    if (Option.isNone(heldNorms)) {
-      return [];
-    }
-    const read = heldNorms.value.read().pipe(
-      Effect.map((held) => ({
-        norms: held.map((norm) => ({
-          name: norm.name,
-          description: norm.description,
-          document: norm.source,
-        })),
-      })),
-    );
-    return [bind("read_norms", definition, () => read)];
-  });
-}
-
-/**
  * The daemon's running agents. Every saved agent starts with the daemon, and
  * the returned function gives an owner's agent, starting it on that owner's
  * first request.
@@ -388,7 +251,7 @@ function startAgent(
   agentKey: string,
 ) {
   return Effect.gen(function* () {
-    const identity = yield* Layer.build(Identity.layer(agentKey));
+    const identity = yield* Layer.build(identityLayer(agentKey));
     const card = Context.get(identity, Identity).me;
     const role = roleOf(daemon, agentKey, card.agentName);
     const policy = daemon.settings.messagePolicy?.policy;
@@ -423,7 +286,7 @@ function startAgent(
       ),
     );
     const tools = yield* role
-      .tools(subscription)
+      .tools(subscription.status)
       .pipe(Effect.provide(services));
     return { tools, events: subscription };
   }).pipe(Effect.withSpan("startAgent"));

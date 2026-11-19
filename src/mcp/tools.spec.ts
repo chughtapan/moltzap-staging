@@ -3,8 +3,11 @@
 import { Effect, FastCheck as fc, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
-import { MessageAddressInput } from "../communication/index.js";
-import { canonicalMessageAddress, toolDefinitions } from "./tools.js";
+import {
+  canonicalMessageAddress,
+  MessageAddressInput,
+  toolDefinitions,
+} from "./tools.js";
 
 const localAgentName = testAgentCard("agent:agent-1").agentName;
 

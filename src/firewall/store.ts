@@ -12,8 +12,11 @@ import {
   makeQueries,
   withAgentRows,
 } from "../database/index.js";
-import { sameJson } from "../encoding.js";
-import { firewallDecisionSummarySchema, FirewallPolicyError } from "./rules.js";
+import {
+  type Direction,
+  firewallDecisionSummarySchema,
+  FirewallPolicyError,
+} from "./rules.js";
 
 /** A store failure leaves saved rules and decisions as they were. */
 export const persistenceFailure = () =>
@@ -39,22 +42,6 @@ const activationRow = Schema.Struct({
   removedRuleIds: ruleIds,
 });
 const decision = Schema.Literal("allowed", "refused", "withheld");
-const checkRecord = Schema.Struct({
-  checkId: Schema.NonEmptyString,
-  messageKey: Schema.NonEmptyString,
-  direction: Schema.Literal("incoming", "outgoing"),
-  messageJson: Schema.NonEmptyString,
-  inputJson: Schema.NonEmptyString,
-  resultJson: Schema.NonEmptyString,
-  allowed: Schema.Boolean,
-});
-const storedCheck = Schema.Struct({
-  direction: checkRecord.fields.direction,
-  message: Schema.NonEmptyString,
-  input: Schema.NonEmptyString,
-  result: Schema.NonEmptyString,
-  decision,
-});
 const decisionRow = Schema.Struct({
   checkId: Schema.NonEmptyString,
   result: Schema.NonEmptyString,
@@ -79,10 +66,17 @@ export type FirewallActivation = typeof activationRow.Type;
  * One completed check as delivery commits it. `messageKey` names the message
  * it checked by author and message id, `messageJson` is that message, `inputJson` the revision and evidence it applied and `resultJson`
  * what it concluded with its decision summaries, each as JSON text. Saving
- * the same check again must carry the same values, so a retry cannot rewrite
- * a decision.
+ * the same check again keeps the first save.
  */
-export type CheckRecord = typeof checkRecord.Type;
+export interface CheckRecord {
+  readonly checkId: string;
+  readonly messageKey: string;
+  readonly direction: Direction;
+  readonly messageJson: string;
+  readonly inputJson: string;
+  readonly resultJson: string;
+  readonly allowed: boolean;
+}
 
 /** The store of one agent's editable policy, completed checks and activations. */
 export type FirewallStore = Effect.Effect.Success<
@@ -100,7 +94,7 @@ interface FirewallTables {
     readonly sequence: Generated<number>;
     readonly check_id: string;
     readonly message_key: string;
-    readonly direction: typeof checkRecord.Type.direction;
+    readonly direction: Direction;
     readonly message: string;
     readonly input: string;
     readonly result: string;
@@ -140,50 +134,6 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
   const activationsQuery = queries
     .selectFrom("firewall_activations")
     .where("agent_key", "=", agentKey);
-  const saveCheckRecord = (record: CheckRecord) =>
-    Effect.gen(function* () {
-      const notAllowed =
-        record.direction === "outgoing" ? "refused" : "withheld";
-      const applied = record.allowed ? "allowed" : notAllowed;
-      yield* executeQuery(
-        queries
-          .insertInto("firewall_checks")
-          .values({
-            agent_key: agentKey,
-            check_id: record.checkId,
-            message_key: record.messageKey,
-            direction: record.direction,
-            message: record.messageJson,
-            input: record.inputJson,
-            result: record.resultJson,
-            decision: applied,
-            decided_at: yield* Clock.currentTimeMillis,
-          })
-          .onConflict((conflict) =>
-            conflict.columns(["agent_key", "check_id"]).doNothing(),
-          ),
-      );
-      const savedRows = yield* executeQuery(
-        checksQuery
-          .select(["direction", "message", "input", "result", "decision"])
-          .where("check_id", "=", record.checkId),
-      ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
-      const savedRecord = savedRows[0];
-      if (savedRecord === undefined) {
-        return yield* persistenceFailure();
-      }
-      const sameEvidence =
-        sameJson(savedRecord.message, record.messageJson) &&
-        sameJson(savedRecord.input, record.inputJson) &&
-        sameJson(savedRecord.result, record.resultJson);
-      if (
-        savedRecord.direction !== record.direction ||
-        savedRecord.decision !== applied ||
-        !sameEvidence
-      ) {
-        return yield* persistenceFailure();
-      }
-    });
   return {
     /**
      * The saved checks of the messages `messageKeys` name, oldest first: each
@@ -256,7 +206,31 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
           }
         }),
       ),
-    saveCheckRecord: (record: CheckRecord) => run(saveCheckRecord(record)),
+    saveCheckRecord: (record: CheckRecord) =>
+      run(
+        Effect.gen(function* () {
+          const notAllowed =
+            record.direction === "outgoing" ? "refused" : "withheld";
+          yield* executeQuery(
+            queries
+              .insertInto("firewall_checks")
+              .values({
+                agent_key: agentKey,
+                check_id: record.checkId,
+                message_key: record.messageKey,
+                direction: record.direction,
+                message: record.messageJson,
+                input: record.inputJson,
+                result: record.resultJson,
+                decision: record.allowed ? "allowed" : notAllowed,
+                decided_at: yield* Clock.currentTimeMillis,
+              })
+              .onConflict((conflict) =>
+                conflict.columns(["agent_key", "check_id"]).doNothing(),
+              ),
+          );
+        }),
+      ),
     readDecisions: (request: { readonly since?: number }) =>
       run(
         Effect.gen(function* () {

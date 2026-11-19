@@ -58,9 +58,7 @@ function messagePolicy(
       join(directory, "policy.json"),
       JSON.stringify({
         format: "org.social-harness/message-policy/v2",
-        ...(judged
-          ? { decisionProvider: { kind: "jev", model: "configured-model" } }
-          : {}),
+        ...(judged ? { decisionProvider: { model: "configured-model" } } : {}),
       }),
     );
     yield* test.filesystem.writeFileString(
@@ -148,7 +146,7 @@ it.prop(
       const loaded = yield* test.load;
 
       expect(
-        loaded.messagePolicy?.provider?.kind === "jev" &&
+        loaded.messagePolicy?.provider &&
           Redacted.value(loaded.messagePolicy.provider.apiKey),
       ).toBe(providerKey);
       expect(
@@ -171,7 +169,7 @@ it("loads the decision provider that judges initial norms' English rules, though
 
     expect(loaded.norms?.contracts).toHaveLength(1);
     expect(loaded.messagePolicy?.policy.text).toBeUndefined();
-    expect(loaded.messagePolicy?.provider?.kind).toBe("jev");
+    expect(loaded.messagePolicy?.provider?.model).toBe("configured-model");
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.each([

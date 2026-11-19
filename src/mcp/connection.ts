@@ -21,11 +21,11 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
-import { SendError } from "../communication/index.js";
 import { plainUrl } from "../encoding.js";
 import {
   type InboxEntry,
   MAXIMUM_WAIT_SECONDS,
+  SendError,
   toolDefinitions,
 } from "./tools.js";
 

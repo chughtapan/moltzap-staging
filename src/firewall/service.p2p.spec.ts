@@ -7,6 +7,7 @@ import { Message } from "../communication/index.js";
 import {
   contractOf,
   evidence,
+  firewallLayer,
   form,
   noFields,
   peer,
@@ -14,7 +15,6 @@ import {
   privacy,
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
-import { Firewall } from "./service.js";
 
 const group = [peer("bob", 2), peer("carol", 3)] as const;
 
@@ -48,7 +48,7 @@ it("saves the refusal of a group draft once for each recipient", () =>
           group.map((recipient) => ({ decision: "refused", peer: recipient })),
         );
       }),
-    (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+    (agentKey) => firewallLayer(agentKey, policy([privacy])),
   ));
 
 it("applies no contract to a group message, whatever its text", () =>
@@ -74,5 +74,5 @@ it("applies no contract to a group message, whatever its text", () =>
           }),
         { concurrency: 1, discard: true },
       ),
-    (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
+    (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
   ));
