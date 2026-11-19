@@ -24,7 +24,11 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
-import { clientToolDefinitions, toolDefinitions } from "../mcp/tools.js";
+import {
+  clientToolDefinitions,
+  directToolDefinitions,
+  toolDefinitions,
+} from "../mcp/tools.js";
 import { compiledPolicyEdit, HeldNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
@@ -86,26 +90,26 @@ export function roleOf(
   };
   if (serverAgentName === undefined) {
     return {
-      hideGroups: settings.hideGroups,
       withheldReply: undefined,
       firewall: checked(),
       started: () => Effect.void,
-      tools: peerTools(settings.messagePolicy !== undefined),
+      tools: peerTools(
+        settings.messagePolicy !== undefined,
+        !settings.hideGroups,
+      ),
     };
   }
   if (agentName === serverAgentName) {
     return {
-      hideGroups: true,
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       firewall: checked(),
       started: (services: Context.Context<never>) =>
         Ref.set(serverAgentHeldNorms, Context.getOption(services, HeldNorms)),
-      tools: peerTools(settings.messagePolicy !== undefined),
+      tools: peerTools(settings.messagePolicy !== undefined, false),
     };
   }
   const unchecked = Firewall.layer(agentKey);
   return {
-    hideGroups: true,
     withheldReply: undefined,
     firewall:
       norms === undefined
@@ -198,15 +202,21 @@ function serverAgentNormsLayer(
 
 /**
  * The tools of a peer and of the server agent: each addresses any agent and
- * owns its message policy.
+ * owns its message policy. Without `groups` an address names one agent.
  */
-function peerTools(policyConfigured: boolean) {
+function peerTools(policyConfigured: boolean, groups: boolean) {
   return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
     const harness = yield* SocialHarness;
     const firewall = yield* Firewall;
     return [
       yield* statusTool(subscription),
-      bind("send_message", toolDefinitions.send_message, harness.send),
+      groups
+        ? bind("send_message", toolDefinitions.send_message, harness.send)
+        : bind(
+            "send_message",
+            directToolDefinitions.send_message,
+            harness.send,
+          ),
       bind(
         "receive_messages",
         toolDefinitions.receive_messages,
@@ -217,11 +227,17 @@ function peerTools(policyConfigured: boolean) {
         toolDefinitions.list_conversations,
         harness.listConversations,
       ),
-      bind(
-        "read_conversation",
-        toolDefinitions.read_conversation,
-        harness.readHistory,
-      ),
+      groups
+        ? bind(
+            "read_conversation",
+            toolDefinitions.read_conversation,
+            harness.readHistory,
+          )
+        : bind(
+            "read_conversation",
+            directToolDefinitions.read_conversation,
+            harness.readHistory,
+          ),
       ...(policyConfigured
         ? [
             bind("read_policy", toolDefinitions.read_policy, () =>
@@ -379,7 +395,6 @@ function startAgent(
     const services = yield* Layer.build(
       SocialHarness.layer({
         agentKey,
-        hideGroups: role.hideGroups,
         withheldReply: role.withheldReply,
         maximumHistoryRecords: policy?.maximumHistoryRecords,
         maximumConcurrentChecks: policy?.maximumConcurrentChecks,

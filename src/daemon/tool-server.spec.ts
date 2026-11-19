@@ -194,9 +194,13 @@ type Arguments = Readonly<Record<string, Argument>>;
 const absent = fc.constant(undefined);
 const absentOrUnacceptable = fc.oneof(absent, unacceptable);
 
+/** The server agent's daemon offers no groups, so an address names one agent. */
 const recipient: Argument = {
   accepts: fc.stringMatching(/^agent:[a-z0-9]{3,8}$/u),
-  refuses: absentOrUnacceptable,
+  refuses: fc.oneof(
+    absentOrUnacceptable,
+    fc.stringMatching(/^group:[a-z]{3,6},[a-z]{3,6},[a-z]{3,6}$/u),
+  ),
 };
 const text: Argument = {
   accepts: fc.string(),
