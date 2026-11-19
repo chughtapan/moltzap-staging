@@ -35,25 +35,14 @@ const drivers = loaded.filter((url) =>
 if (drivers.length > 0) throw new Error("the main entry loaded " + drivers.join(", "));
 `;
 
-/** An installed consumer receives the selected preset and every shipped rule unchanged. */
+/** An installed consumer receives the shipped message policy unchanged. */
 const policyAssetScript = `
-import { readFile, readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const sourceRoot = ${JSON.stringify(`${workspaceRoot}/config/firewall`)};
-const installedRoot = fileURLToPath(new URL("../config/firewall/", import.meta.resolve("@social-harness/social-harness")));
-const entries = await readdir(sourceRoot, { recursive: true, withFileTypes: true });
-const rules = entries.filter((entry) => entry.isFile() && entry.name === "BEHAVIOR.md");
-if (rules.length === 0) throw new Error("source policy assets contain no rules");
-const assets = ["message-policy.json", ...rules.map((rule) =>
-  relative(sourceRoot, join(rule.parentPath, rule.name)),
-)];
-for (const asset of assets) {
-  const expected = await readFile(join(sourceRoot, asset), "utf8");
-  const actual = await readFile(join(installedRoot, asset), "utf8");
-  if (actual !== expected) throw new Error("packed policy asset changed: " + asset);
-}
+const expected = await readFile(${JSON.stringify(`${workspaceRoot}/config/firewall/message-policy.json`)}, "utf8");
+const actual = await readFile(fileURLToPath(new URL("../config/firewall/message-policy.json", import.meta.resolve("@social-harness/social-harness"))), "utf8");
+if (actual !== expected) throw new Error("packed message policy changed");
 `;
 
 runGate("sharness-social-harness-pack-", (temporaryRoot) =>
@@ -123,7 +112,7 @@ function verifyCommand(consumerRoot: string) {
   );
 }
 
-/** The installed package retains the preset and its shipped behavior documents. */
+/** The installed package retains the shipped message policy. */
 function verifyPolicyAssets(consumerRoot: string) {
   return runCommand(
     process.execPath,

@@ -116,7 +116,6 @@ it(
       yield* fs.writeFileString(
         messagePolicyFile,
         JSON.stringify({
-          format: "org.social-harness/message-policy/v2",
           mode: "off",
         }),
       );

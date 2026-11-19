@@ -119,13 +119,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     file.messagePolicyFile === undefined
       ? undefined
       : resolve(settingsDirectory, file.messagePolicyFile),
-  ).pipe(
-    Effect.mapError(() =>
-      refused(
-        "The configured message policy is invalid, or it names a decisionProvider and SHARNESS_DECISION_PROVIDER_KEY does not hold its key",
-      ),
-    ),
-  );
+  ).pipe(Effect.mapError((error) => refused(error.message)));
   if (
     norms !== undefined &&
     initialNormsHaveRules(norms) &&

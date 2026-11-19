@@ -190,9 +190,6 @@ importers:
       kysely:
         specifier: 'catalog:'
         version: 0.29.6
-      yaml:
-        specifier: 'catalog:'
-        version: 2.9.1
     devDependencies:
       '@chughtapan/safer-architecture-lsp':
         specifier: 'catalog:'
@@ -242,6 +239,9 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.7.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.1)
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.1
 
   images/daemon:
     dependencies:
