@@ -19,12 +19,6 @@ export default defineConfig({
           setupFiles: ["./plugins/openclaw/vitest.setup.ts"],
         },
       },
-      {
-        test: {
-          name: "nanoclaw-channel",
-          include: ["plugins/nanoclaw/src/**/*.spec.ts"],
-        },
-      },
     ],
   },
 });

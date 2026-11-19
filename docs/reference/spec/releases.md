@@ -11,8 +11,8 @@ A release identifies packages and images that were built and tested together.
 ## Publication and versions
 
 `@social-harness/social-harness` and `@social-harness/openclaw-channel` publish to npm.
-The NanoClaw channel remains private. The daemon and the OpenClaw agent ship
-as signed images. The NanoClaw agent image builds locally.
+The daemon and the OpenClaw agent ship
+as signed images.
 
 Every release publishes both packages and both images at one version,
 `YYYY.MDD.N`: the UTC date and one past the highest counter that npm or a
