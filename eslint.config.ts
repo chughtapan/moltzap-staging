@@ -367,17 +367,6 @@ const specAssertionRules = {
   rules: { "agent-code-guard/no-hardcoded-assertion-literals": "off" },
 };
 
-/** The module above the line ceiling. */
-const largeModuleRules = {
-  files: ["src/firewall/service.ts"],
-  rules: {
-    "max-lines": [
-      "error",
-      { max: 1500, skipBlankLines: true, skipComments: true },
-    ],
-  },
-};
-
 /**
  * Places a project's sections at its folder: every `files` and `ignores`
  * pattern is read relative to `folder`.
@@ -428,7 +417,6 @@ export default [
       ],
     },
   },
-  largeModuleRules,
   {
     files: [
       "src/daemon/inbox.ts",
