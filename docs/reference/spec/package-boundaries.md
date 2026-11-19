@@ -23,13 +23,6 @@ The private `@social-harness/integration-tests` workspace consumes products as d
 dependencies, outside the product graph and release set. Products cannot depend
 on it, private application components, simulators, evaluation applications or Nx tools.
 
-Connector packages live under `plugins/`, use only the library root and their
-host's supported interface, and join workspace build, lint, architecture and test
-checks.
-
-Builds and agent images may combine artifacts, but runtime dependencies must
-remain declared, including dependencies introduced by copied source or fixtures.
-
 ## Library entries
 
 Three library entries expose named exports:
@@ -45,50 +38,4 @@ or TypeDoc entry. Adapters use only the root and MCP. They cannot import
 each other, simulators or evaluation suites.
 
 The test entry resolves only in a process started with
-`--conditions=sharness-test`. A condition governs every import in the process
-and provides no isolation.
-
-## Representation ownership
-
-Each module owns its contract and the representations it exchanges:
-
-| Owning contract | Guarantees |
-|---|---|
-| [Identity](./identity/identity-and-attribution.md) | Owners, agents, names and attribution |
-| [Communication](./communication/p2p.md) | Ordered messages, delivery and history, with the [client/server](./client-server.md) rule |
-| [Firewall](./firewall/message-policy.md) | Local message policy |
-| [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the contracts the firewall checks them against |
-
-One [daemon](./daemon.md) serves every agent through one `/mcp` endpoint.
-Database access and stores remain inside the daemon. Hosts use the [messaging](./host/messaging.md)
-and [receiving](./host/receiving.md) contracts. Management remains MCP-only.
-
-Hosts own model execution, context and sessions. Native-host sessions follow
-the [adapter contract](./host/adapters.md). Host integrations use explicit destinations
-and cannot bypass the daemon's message policy or fabricate output from history.
-
-## External consumers
-
-External simulators and evaluation applications consume published capabilities.
-They own scenarios, orchestration, fault controls, run evidence, grading, reports,
-publication, integration checks and release pins. Their evidence does not
-enter conversation history. Runtime subjects use the host contract. Local fixtures check runtime behavior without adding
-evaluation policy or compatibility entry points.
-
-## Agent images
-
-Host and daemon run in separate containers sharing a network namespace. The
-[agent-image contract](../services/daemon.mdx#agent-images) defines secret mounts,
-startup order and loopback access.
-
-## Error boundaries
-
-Each boundary inside the daemon returns its owner's closed typed failures. MCP
-returns a failed tool call as a result marked as an error, with the failure's
-fields as its structured content. A host reads the result; the library gives
-it no error classes.
-Decoder and infrastructure causes remain private.
-
-## Releases
-
-The [release contract](./releases.md) owns publication.
+`--conditions=sharness-test`.

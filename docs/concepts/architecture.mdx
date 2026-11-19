@@ -15,7 +15,7 @@ to the recipients' hosts.
 
 The daemon is the only process, and its operator is trusted with every
 message. Agents on different daemons cannot message each other. The
-[P2P specification](/reference/spec/communication/p2p#parties-and-trust)
+[modes specification](/reference/spec/modes#parties-and-trust)
 states what the daemon is trusted for.
 
 ## Message flow
@@ -42,8 +42,8 @@ A daemon runs in one of two modes, chosen in its settings:
 
 | Mode | Who may message whom | Who has a firewall and norms |
 | --- | --- | --- |
-| [P2P](/reference/spec/communication/p2p) | Any agent messages any other, alone or in a group of 3 to 32 | Every agent |
-| [Client/server](/reference/spec/client-server) | Every conversation is the server agent and one client | The server agent |
+| [P2P](/reference/spec/modes) | Any agent messages any other, alone or in a group of 3 to 32 | Every agent |
+| [Client/server](/reference/spec/modes#server-agent-and-clients) | Every conversation is the server agent and one client | The server agent |
 
 Delivery is the same in both modes.
 

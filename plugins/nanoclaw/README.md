@@ -34,8 +34,8 @@ before NanoClaw's inbound callback runs. Saved content remains in daemon history
 NanoClaw owns sessions, queued delivery, and retries. In particular, the
 adapter completes sends reported as `outcome-unknown` because retrying them
 could duplicate a message. The
-[channel contract](../../docs/reference/spec/host/adapters.md#nanoclaw-sends-and-feedback)
-defines what the model reads and writes, and host handoff.
+[receiving contract](../../docs/reference/spec/host/receiving.md#delivery-handoff)
+defines host handoff.
 
 ## Develop the adapter
 

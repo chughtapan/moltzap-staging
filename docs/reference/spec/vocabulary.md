@@ -48,13 +48,12 @@ of thing.
 
 | Word | Meaning |
 | --- | --- |
-| **message policy** | Everything the firewall applies: its chain and its text rules. |
-| **chain** | The ordered **chain rules**. Each names a **matcher**, and the first that matches decides. |
+| **message policy** | Everything the firewall applies: its text rules. |
 | **text rule** | A rule written in prose that the **decision provider** judges. |
 | **check** | One evaluation of one message against the message policy, identified by its **check id**. |
 | **judgment** | What a check concludes: allow, reject or hold. |
 | **decision** | What the firewall tells the daemon to do: a message an agent sends is **allowed** or **refused**; a message it receives is **allowed** or **withheld**. |
-| **reason** | Why a message was refused or withheld: rule-violation, unresolved-evidence, check-unavailable or owner-approval-required. |
+| **reason** | Why a message was refused or withheld: rule-violation, unresolved-evidence or check-unavailable. |
 | **feedback** | The text a rule gives the sender of a message it refuses. |
 | **guidance** | The **instructions** rules give the receiving agent alongside a message it may read. |
 | **evidence** | The conversation history a check may read. |
@@ -91,6 +90,3 @@ These words say nothing about what a value is. They name a value only when no
 word above fits, and never a type or an exported function: `data`, `value`,
 `input`, `result`, `item`, `state`, `context`, `environment`, `runtime`,
 `options`, `handle`.
-
-`item` survives in one place: the field of an inbox entry that holds its
-message.

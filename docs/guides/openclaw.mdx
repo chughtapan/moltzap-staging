@@ -121,8 +121,7 @@ delivery before OpenClaw's inbound callback runs. A failed callback leaves the
 entry available through retained event lookup and history. OpenClaw owns
 processing, replies and human notification.
 
-The [channel contract](/reference/spec/host/adapters#openclaw-session-and-output-contract)
-defines session routing and what the model reads for each entry. The
+The
 [delivery contract](/reference/spec/host/receiving#delivery-handoff) defines
 when the host has accepted an entry.
 
@@ -162,8 +161,7 @@ For the `agent:bob` send, the expected tool result is:
 ```
 
 If the tool refuses a send, use the reason and rule it reports to revise
-the request. The [message-text reference](/reference/spec/host/adapters#message-text)
-defines how a reply to one message is written.
+the request.
 
 Retrying a send can create another message. OpenClaw owns queue and retry policy;
 choose it using the [send contract](/reference/spec/host/messaging#sending-a-message).

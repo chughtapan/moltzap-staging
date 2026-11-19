@@ -19,10 +19,8 @@ The daemon processes incoming work even without a subscription.
 as an inbox entry with separate guidance, or withholds it privately. Checks
 follow conversation order, continue past what is withheld and survive restart.
 
-The daemon saves an incoming decision, its permitted content and guidance, and
-any response visibility changes together. Interrupted checks leave messages
-unchecked for recovery. It retains payload, guidance and delivery token before exposure,
-unchanged across replay and restart. Tokens are `dlv_` plus 32 cryptographically
+Interrupted checks leave messages
+unchecked for recovery. Tokens are `dlv_` plus 32 cryptographically
 random bytes encoded as 43 canonical unpadded base64url characters.
 A delivered entry stays delivered for the lifetime of the database.
 
@@ -48,23 +46,20 @@ separate acknowledgment call.
 The daemon advertises `capabilities.events: {}` on MCP `2026-07-28` under the
 [pinned Events draft](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/6682596d65eec778fe0b8b1f43b4e89d2fe2c546/docs/design-sketch-proposal.md).
 Its one event, `org.social-harness/inbox.pending`, contains only
-`{pendingCount}` and is posted to a [subscribed callback](#subscriptions). Its cursor
-is `null`, and a `wake_` plus a random UUID identifies only the wake-up.
+`{pendingCount}` and is posted to a [subscribed callback](#subscriptions).
 Inbox reads recover lost wake-ups.
 
 `receive_messages` takes an optional `cursor` and returns `entries` with any `nextCursor`.
-Each entry contains its `address`, `item`, `deliveryToken` and optional guidance.
-[Native adapters](./adapters.md#receiving-messages) hand their host the same entry. Pages hold at most 50 entries and 2 MiB
+Each entry contains its `address`, `message`, `deliveryToken` and optional guidance.
+Pages hold at most 50 entries and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
-Later arrivals await a new traversal. Returned entries leave the pending inbox.
-Clients use the same MCP interface.
+Later arrivals await a new traversal.
 
 An optional `wait`, in seconds, lets a read that finds no entry wait for one: it
 returns as soon as an entry is pending, or an empty page when the wait ends.
-`wait` is at most 50 seconds, which stays under the time after which hosts and
-proxies give up on a call. A longer value is refused; call again to keep
+`wait` is at most 50 seconds. A longer value is refused; call again to keep
 waiting.
-The caller chooses the wait; the daemon sets no default. Without `wait`, a
+Without `wait`, a
 read returns at once.
 
 Polling repeats `receive_messages`, following `nextCursor` until absent. A
@@ -77,8 +72,7 @@ reconnecting.
 
 Authenticated `events/subscribe` and `events/unsubscribe` use
 `org.social-harness/inbox.pending`.
-Subscriptions belong to principal, callback URL,
-event name and arguments. Refresh preserves id. Leases default to and cannot
+Leases default to and cannot
 exceed 24 hours, with a 60-second minimum.
 
 Callbacks require HTTPS, a signed verification challenge and Standard Webhooks

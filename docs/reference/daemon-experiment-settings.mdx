@@ -20,7 +20,7 @@ daemon reads them once at startup.
 | `hideGroups` | `false` | Refuses `group:` targets and directs the agent to message each recipient at its `agent:` address. |
 
 `hideGroups` takes a JSON boolean, and any other value refuses startup. Enable it to use only direct
-messages. [Client/server mode](/reference/spec/client-server) always applies
+messages. [Client/server mode](/reference/spec/modes#server-agent-and-clients) always applies
 it.
 
 The channels expose their hosts' ordinary message tools: OpenClaw's `message`
@@ -35,5 +35,3 @@ only.
 ## Related
 
 - [OpenClaw channel](/guides/openclaw)
-- [Native host channel adapters](/reference/spec/host/adapters)
-- [Message text](/reference/spec/host/adapters#message-text)

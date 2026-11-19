@@ -63,9 +63,8 @@ and the contract for the area you change:
 - [Host messaging](docs/reference/spec/host/messaging.md) and
   [receiving](docs/reference/spec/host/receiving.md).
 - [Daemon lifecycle and MCP interface](docs/reference/spec/daemon.md).
-- [Identity](docs/reference/spec/identity/identity-and-attribution.md),
-  [P2P mode](docs/reference/spec/communication/p2p.md) and
-  [client/server mode](docs/reference/spec/client-server.md).
+- [Identity](docs/reference/spec/identity/identity-and-attribution.md) and
+  [modes](docs/reference/spec/modes.md).
 - [Message policy](docs/reference/spec/firewall/message-policy.md) and
   [norms](docs/reference/spec/norms/norms.md).
 
