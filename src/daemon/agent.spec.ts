@@ -329,6 +329,61 @@ const exchange = contractOf("exchange", [
   },
 ]);
 
+it("answers what an agent that holds norms withholds, plain text and an act out of turn alike, and the conversation goes on", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const withheldReply = "Your message was not accepted.";
+    const runtime = yield* subject.open({
+      withheldReply,
+      contracts: [exchange],
+      policy: composedPolicy({
+        decide: (request) => Effect.succeed(decisionResponse(request)),
+      }),
+    });
+    const plain = yield* subject.message("Hello, can you help?");
+    yield* subject.deliver(plain);
+    const outOfTurn = yield* subject.message("(close :ontology exchange)");
+    yield* subject.deliver(outOfTurn);
+    const { decisions } = yield* waitForDecisions(runtime, 4);
+    expect(
+      decisions
+        .map(({ direction, decision }) => `${direction} ${decision}`)
+        .sort(compareAscii),
+    ).toEqual([
+      "incoming withheld",
+      "incoming withheld",
+      "outgoing allowed",
+      "outgoing allowed",
+    ]);
+    expect(subject.submitted).toMatchObject(
+      [plain, outOfTurn].map((withheld) => ({
+        recipients: [subject.bob],
+        replyToMsgId: withheld.msgId,
+        content: [{ type: "text", text: withheldReply }],
+      })),
+    );
+    yield* subject.deliver(yield* subject.message("(open :ontology exchange)"));
+    expect((yield* waitForInbox(runtime)).entries).toHaveLength(1);
+  }));
+
+it("answers an act its text rule withholds with that rule's feedback when it holds norms", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open({
+      contracts: [exchange],
+      policy: composedPolicy(incomingViolation, "reply"),
+    });
+    const act = yield* subject.message("(open :ontology exchange)");
+    yield* subject.deliver(act);
+    yield* waitForDecisions(runtime, 2);
+    expect(subject.submitted).toMatchObject([
+      {
+        replyToMsgId: act.msgId,
+        content: [{ type: "text", text: "Keep private information private." }],
+      },
+    ]);
+  }));
+
 it.prop(
   "checks each act of a contract against the whole conversation, however short the history window",
   [fc.integer({ min: 1, max: 3 }), fc.integer({ min: 1, max: 4 })],
