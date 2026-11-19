@@ -13,9 +13,6 @@
     "erasableSyntaxOnly": true,
     "lib": [
       "ES2024"
-    ],
-    "customConditions": [
-      "sharness-test"
     ]
   },
   "include": [

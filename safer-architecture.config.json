@@ -185,7 +185,7 @@
   "allowedTestPublicSubpaths": [
     {
       "subpath": "./test",
-      "reason": "Test databases and an OAuth issuer fixture require the explicit sharness-test resolution condition"
+      "reason": "Test databases and an OAuth issuer fixture for suites outside the package"
     }
   ],
   "maxFolderChildren": 12,

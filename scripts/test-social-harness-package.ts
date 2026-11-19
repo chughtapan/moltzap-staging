@@ -79,19 +79,6 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
         env: { NODE_PATH: "" },
       },
     );
-    yield* runCommand(
-      process.execPath,
-      [
-        "--conditions=sharness-test",
-        "--input-type=module",
-        "-e",
-        'await import("@social-harness/social-harness/test");',
-      ],
-      {
-        cwd: consumerRoot,
-        env: { NODE_PATH: "" },
-      },
-    );
     yield* verifyCommand(consumerRoot);
     yield* runCommand(
       process.execPath,
@@ -103,23 +90,14 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
   }),
 );
 
-/** Source manifests select the entries an ordinary consumer can import. */
+/** Every entry the source manifest names, as a consumer imports it. */
 function publicImports(): string {
   return workspacePackages(workspaceRoot)
     .filter(({ name }) => name === "@social-harness/social-harness")
     .flatMap(({ name, exports }) =>
-      Object.entries(exports)
-        .filter(
-          ([, target]) =>
-            !(
-              typeof target === "object" &&
-              target !== null &&
-              "sharness-test" in target
-            ),
-        )
-        .map(([subpath]) =>
-          subpath === "." ? name : `${name}/${subpath.slice(2)}`,
-        ),
+      Object.keys(exports).map((subpath) =>
+        subpath === "." ? name : `${name}/${subpath.slice(2)}`,
+      ),
     )
     .map((specifier) => `await import(${JSON.stringify(specifier)});`)
     .join("\n");

@@ -36,10 +36,8 @@
       "import": "./dist/daemon/startup.js"
     },
     "./test": {
-      "sharness-test": {
-        "types": "./dist/test.d.ts",
-        "import": "./dist/test.js"
-      }
+      "types": "./dist/test.d.ts",
+      "import": "./dist/test.js"
     }
   },
   "bin": {
