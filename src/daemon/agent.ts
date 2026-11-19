@@ -33,7 +33,7 @@ import {
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import { Firewall, type IncomingDecision } from "../firewall/service.js";
-import { type AgentCard, Identity } from "../identity.js";
+import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
   addressOf,
   canonicalMessageAddress,
@@ -49,6 +49,7 @@ import {
   type ToolResult,
 } from "../mcp/tools.js";
 import {
+  type CursorError,
   decodeCursor,
   encodeCursor,
   type Inbox,
@@ -703,16 +704,31 @@ function sendFailure(
  * or a cursor this read did not return. Any other failure is one of storage
  * and ends the read as a defect.
  */
-function historyFailure(error: object) {
-  if (error instanceof HistoryError) {
+function historyFailure(
+  error:
+    | HistoryError
+    | SendError
+    | CursorError
+    | CommunicationError
+    | IdentityError
+    | {
+        readonly _tag: "SqlError" | "ParseError" | "JsonRepresentationError";
+      },
+) {
+  if (error._tag === "HistoryError") {
     return Effect.fail(error);
   }
-  if (error instanceof SendError) {
+  if (error._tag === "SendError") {
     return Effect.fail(new HistoryError({ reason: "invalid-address" }));
   }
-  const reason = "reason" in error ? error.reason : undefined;
-  return reason === "invalid-cursor" || reason === "unknown-agent"
-    ? Effect.fail(new HistoryError({ reason }))
+  if (
+    error._tag === "CursorError" ||
+    (error._tag === "CommunicationError" && error.reason === "invalid-cursor")
+  ) {
+    return Effect.fail(new HistoryError({ reason: "invalid-cursor" }));
+  }
+  return error._tag === "IdentityError" && error.reason === "unknown-agent"
+    ? Effect.fail(new HistoryError({ reason: "unknown-agent" }))
     : Effect.die(error);
 }
 
