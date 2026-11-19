@@ -27,7 +27,7 @@ import {
   makeQueries,
   transaction,
   withAgentRows,
-} from "../database/index.js";
+} from "../database.js";
 import {
   canonicalIdentifier,
   compareAscii,

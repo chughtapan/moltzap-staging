@@ -24,7 +24,6 @@ import {
   type HistoryPage,
   type HistoryQuery,
 } from "../../communication/service.js";
-import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import { compareAscii } from "../../encoding.js";
 import { Firewall } from "../../firewall/service.js";
 import {
@@ -33,6 +32,7 @@ import {
   Identity,
   IdentityError,
 } from "../../identity.js";
+import { openTestDatabase, type TestDatabase } from "../../test.js";
 import { type HarnessSettings, SocialHarness } from "../agent.js";
 import { type Inbox, makeInbox } from "../inbox.js";
 

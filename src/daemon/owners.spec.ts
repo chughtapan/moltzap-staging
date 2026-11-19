@@ -4,8 +4,8 @@ import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Exit, FastCheck as fc, Layer } from "effect";
 import { expect } from "vitest";
 import { createTestAgent } from "../__tests__/agents.js";
-import { openTestDatabase } from "../database/testing.js";
 import { AgentName, Identity } from "../identity.js";
+import { openTestDatabase } from "../test.js";
 import { getOrCreateOwnedAgentKey, identityLayer } from "./owners.js";
 
 const owner = { issuer: "https://issuer.example", subject: "owner" };

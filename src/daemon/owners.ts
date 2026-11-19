@@ -2,7 +2,7 @@
 import { SqlClient } from "@effect/sql";
 import { Data, Effect, Layer, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import { executeQuery, makeQueries } from "../database/index.js";
+import { executeQuery, makeQueries } from "../database.js";
 import {
   AgentCard,
   AgentId,

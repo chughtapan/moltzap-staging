@@ -17,8 +17,8 @@ import {
   Stream,
 } from "effect";
 import { digest } from "../../__tests__/agents.js";
-import { openTestDatabase } from "../../database/testing.js";
 import { DeliveryToken } from "../../mcp/tools.js";
+import { openTestDatabase } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { INBOX_PENDING_EVENT, makeWebhookEvents } from "../subscriptions.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;

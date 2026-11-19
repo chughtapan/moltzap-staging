@@ -26,7 +26,7 @@ import {
   type PaginatedRequest,
 } from "../communication/index.js";
 import { Communication, type HistoryPage } from "../communication/service.js";
-import { afterCommit, transaction } from "../database/index.js";
+import { afterCommit, transaction } from "../database.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import { Firewall, type IncomingDecision } from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";

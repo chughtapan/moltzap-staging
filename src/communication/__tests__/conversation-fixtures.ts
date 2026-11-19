@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Option, Queue, Record } from "effect";
 import type { AgentCard } from "../../identity.js";
 import type { Message } from "../messages.js";
 import { createTestAgent } from "../../__tests__/agents.js";
-import { openTestDatabase } from "../../database/testing.js";
+import { openTestDatabase } from "../../test.js";
 import { Communication } from "../service.js";
 
 /**
