@@ -128,16 +128,11 @@ interface Definition<A, I, B, J, E> {
   };
 }
 
-/**
- * Turns a tool definition and the operation behind it into a tool to serve.
- * `visible` is checked on every listing and call; a tool without it is
- * always offered.
- */
+/** Turns a tool definition and the operation behind it into a tool to serve. */
 export function bind<A, I, B, J, E extends { readonly message: string }>(
   name: string,
   definition: Definition<A, I, B, J, E>,
   execute: (input: A) => Effect.Effect<B, E>,
-  visible?: Effect.Effect<boolean>,
 ) {
   return {
     tool: {
@@ -151,7 +146,6 @@ export function bind<A, I, B, J, E extends { readonly message: string }>(
         ...definition.annotations,
       },
     },
-    ...(visible === undefined ? {} : { visible }),
     handle: handler(definition, execute),
   };
 }
@@ -162,20 +156,16 @@ function requestServer(
   admitted: unknown,
 ) {
   const mcp = new McpServer(implementation, {
-    capabilities: { tools: { listChanged: true }, ...eventsCapability },
+    capabilities: { tools: {}, ...eventsCapability },
   });
   if (!(admitted instanceof AdmittedRequest)) {
     return mcp;
   }
   const { agent } = admitted;
-  const visible = (tool: AgentCalls["tools"][number]) =>
-    tool.visible ?? Effect.succeed(true);
   mcp.server.setRequestHandler("tools/list", () =>
     run(
       admitted,
-      Effect.filter(agent.tools, visible).pipe(
-        Effect.map((tools) => ({ tools: tools.map(({ tool }) => tool) })),
-      ),
+      Effect.succeed({ tools: agent.tools.map(({ tool }) => tool) }),
     ),
   );
   mcp.server.setRequestHandler("tools/call", ({ params }) =>
@@ -185,7 +175,7 @@ function requestServer(
         const called = agent.tools.find(
           ({ tool }) => tool.name === params.name,
         );
-        if (called === undefined || !(yield* visible(called))) {
+        if (called === undefined) {
           return yield* Effect.fail(new JsonRpcError(-32602, "Tool not found"));
         }
         return yield* called.handle(params.arguments ?? {});
