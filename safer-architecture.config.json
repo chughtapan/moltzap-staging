@@ -108,10 +108,10 @@
     {
       "name": "database",
       "roots": [
-        "src/database"
+        "src/database.ts"
       ],
       "entrypoints": [
-        "src/database/index.ts"
+        "src/database.ts"
       ],
       "reason": "SQL connections, typed query compilation, transaction context and migrations shared by daemon domains"
     }
@@ -151,13 +151,6 @@
         "communication"
       ],
       "reason": "Delivery names agents by their cards"
-    },
-    {
-      "name": "database",
-      "folders": [
-        "database"
-      ],
-      "reason": "Database support depends on runtime libraries without importing identity, communication, firewall or daemon services"
     }
   ],
   "publicTypePackages": [

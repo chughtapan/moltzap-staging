@@ -11,7 +11,7 @@ import {
   Fiber,
 } from "effect";
 import { describe, expect } from "vitest";
-import { openTestDatabase } from "../database/testing.js";
+import { openTestDatabase } from "../test.js";
 import {
   certainProvider,
   evidence,

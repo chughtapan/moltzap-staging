@@ -4,8 +4,8 @@ import { Effect, Schema } from "effect";
 import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
-import { openTestDatabase } from "../database/testing.js";
 import { MessageAddress } from "../mcp/tools.js";
+import { openTestDatabase } from "../test.js";
 import { makeInbox } from "./inbox.js";
 
 it("stores the same message for each agent and leaves another agent's delivery token pending", () =>

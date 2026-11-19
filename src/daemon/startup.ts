@@ -14,11 +14,7 @@ import {
 } from "effect";
 import type { CompiledContract } from "../firewall/index.js";
 import { Communication } from "../communication/service.js";
-import {
-  checkDatabase,
-  databaseConnection,
-  databaseUrl,
-} from "../database/index.js";
+import { checkDatabase, databaseConnection, databaseUrl } from "../database.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
 import { MessageAddressInput } from "../mcp/tools.js";
@@ -266,4 +262,4 @@ function startAgent(
 }
 
 /** Deployment prepares the schema before the daemon starts. */
-export { prepareDatabase } from "../database/index.js";
+export { prepareDatabase } from "../database.js";
