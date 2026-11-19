@@ -1,5 +1,5 @@
 /** @file Opens the daemon's database and runs its agents independently of MCP connections. */
-import { type FileSystem, HttpClient } from "@effect/platform";
+import type { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
@@ -20,6 +20,7 @@ import { type AgentName, Identity } from "../identity.js";
 import { MessageAddressInput } from "../mcp/tools.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
+import { type InboxEvents, makeInboxEvents } from "./events.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
@@ -33,7 +34,6 @@ import {
   refused,
   spanExport,
 } from "./settings.js";
-import { makeWebhookEvents, webhookHttpClientLayer } from "./subscriptions.js";
 import { clientTools, peerTools } from "./tool-server.js";
 
 /**
@@ -123,10 +123,12 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
     }
-    const agentOfOwner = yield* runningAgents(settings);
+    const events = yield* makeInboxEvents(settings.trustedCallbackOrigins);
+    const agentOfOwner = yield* runningAgents(settings, events);
     const app = yield* makeMcpHttpApp(
       settings.authentication,
       agentOfOwner,
+      events,
     ).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
         refused(
@@ -156,7 +158,7 @@ export const runDaemon = Effect.gen(function* () {
  * the returned function gives an owner's agent, starting it on that owner's
  * first request.
  */
-function runningAgents(settings: DaemonSettings) {
+function runningAgents(settings: DaemonSettings, events: InboxEvents) {
   return Effect.gen(function* () {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
@@ -165,7 +167,7 @@ function runningAgents(settings: DaemonSettings) {
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
       lookup: (agentKey: string) =>
-        startAgent(settings, consumers, agentKey, contractsOf),
+        startAgent(settings, consumers, agentKey, contractsOf, events),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -206,7 +208,7 @@ function runningAgents(settings: DaemonSettings) {
 
 /**
  * Starts one agent: its services, which run until the scope closes, and from
- * them its tools, its Events calls and the read of the contracts it holds.
+ * them its tools, its inbox behind `events` and the read of the contracts it holds.
  * `consumers` holds the latch each agent's consumer waits on, which a send to
  * that agent opens.
  */
@@ -215,6 +217,7 @@ function startAgent(
   consumers: Map<string, Effect.Latch>,
   agentKey: string,
   contractsOf: ContractsOf,
+  events: InboxEvents,
 ) {
   return Effect.gen(function* () {
     const identity = yield* Layer.build(identityLayer(agentKey));
@@ -242,20 +245,11 @@ function startAgent(
         ),
       ),
     );
-    const callbackHttp = yield* Layer.build(webhookHttpClientLayer);
-    const subscription = yield* makeWebhookEvents(agentKey).pipe(
-      Effect.provide(services),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        Context.get(callbackHttp, HttpClient.HttpClient),
-      ),
-    );
-    const tools = yield* role
-      .tools(subscription.status)
-      .pipe(Effect.provide(services));
+    events.serve(agentKey, Context.get(services, SocialHarness).receiveAfter);
+    const tools = yield* role.tools().pipe(Effect.provide(services));
     return {
+      agentKey,
       tools,
-      events: subscription,
       readContracts: Context.get(services, Firewall).readContracts,
     };
   }).pipe(Effect.withSpan("startAgent"));

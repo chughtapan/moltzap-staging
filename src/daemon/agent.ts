@@ -35,7 +35,6 @@ import {
   canonicalMessageAddress,
   HistoryError,
   type HistoryRecord,
-  type InboxError,
   type InboxPage,
   MessageAddress,
   type MessageAddressInput,
@@ -50,6 +49,7 @@ import {
   encodeCursor,
   type Inbox,
   makeInbox,
+  type PendingEntries,
   type Unchecked,
 } from "./inbox.js";
 
@@ -73,16 +73,26 @@ interface SocialHarnessService {
   readonly send: (
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | FirewallRefusal>;
-  /** The delivery token of each pending inbox entry. */
-  readonly pendingTokens: Inbox["pendingTokens"];
   /**
-   * Hands over a page of pending inbox entries and marks each delivered. With
-   * `wait`, a read that finds nothing waits up to that many seconds, and
-   * returns as soon as an entry is pending or empty when the wait ends.
+   * Hands over a page of the pending inbox entries the host has not read, and
+   * records them read. With `wait`, a read that finds nothing waits up to that
+   * many seconds, and returns as soon as an entry is pending or empty when
+   * the wait ends.
    */
-  readonly receive: (
-    request: PaginatedRequest & { readonly wait?: number },
-  ) => Effect.Effect<InboxPage, InboxError>;
+  readonly receive: (request: {
+    readonly wait?: number;
+  }) => Effect.Effect<InboxPage>;
+  /**
+   * Hands over the pending entries after `position`, at most `limit`, and
+   * records them read. Without a position it returns no entries, only the
+   * position the host has read up to. With `wait`, a read that finds nothing
+   * waits that long for an entry.
+   */
+  readonly receiveAfter: (request: {
+    readonly position: number | null;
+    readonly limit: number;
+    readonly wait?: Duration.Duration;
+  }) => Effect.Effect<PendingEntries>;
   /**
    * Lists live canonical addresses, direct conversations before groups.
    * Omitting the cursor starts a live traversal. Follow `nextCursor` until
@@ -217,8 +227,27 @@ function makeHarness(settings: HarnessSettings) {
     );
     return SocialHarness.of({
       send: (request) => send(agent, request),
-      pendingTokens: inbox.pendingTokens,
-      receive: (request) => receive(agent, request),
+      receive: ({ wait }) =>
+        Effect.gen(function* () {
+          const page = yield* handOver(
+            agent,
+            yield* inbox.readPosition,
+            PAGE_SIZE,
+            wait === undefined ? undefined : Duration.seconds(wait),
+          );
+          return { entries: page.entries.map(({ entry }) => entry) };
+        }).pipe(Effect.orDie),
+      receiveAfter: ({ position, limit, wait }) =>
+        position === null
+          ? inbox.readPosition.pipe(
+              Effect.map((read) => ({
+                entries: [],
+                position: read,
+                hasMore: false,
+              })),
+              Effect.orDie,
+            )
+          : handOver(agent, position, limit, wait).pipe(Effect.orDie),
       listConversations: (request = {}) => listConversations(agent, request),
       readHistory: (request) => readHistory(agent, request),
       inboxChanged: Stream.fromPubSub(changes),
@@ -297,40 +326,23 @@ function outgoingFor(
   });
 }
 
-function receive(
-  agent: Agent,
-  { wait, ...request }: PaginatedRequest & { readonly wait?: number },
-) {
-  return Effect.gen(function* () {
-    const page = yield* wait === undefined
-      ? agent.inbox.listInbox(request)
-      : waitForInbox(agent, request, Duration.seconds(wait));
-    yield* agent.inbox.markDelivered(
-      page.entries.map((entry) => entry.deliveryToken),
-    );
-    return page;
-  }).pipe(
-    Effect.catchAll((error) =>
-      error._tag === "InboxError" ? Effect.fail(error) : Effect.die(error),
-    ),
-  );
-}
-
 /**
- * Reads the inbox and, while nothing is pending, rereads after each change
+ * Reads the pending entries after `after` and records that the host has read
+ * up to the last of them. While there are none it rereads after each change
  * until `wait` ends. Subscribing before the first read keeps an entry that
  * becomes pending between that read and the wait from being missed.
  */
-function waitForInbox(
+function handOver(
   agent: Agent,
-  request: PaginatedRequest,
-  wait: Duration.Duration,
+  after: number,
+  limit: number,
+  wait?: Duration.Duration,
 ) {
   return Effect.gen(function* () {
     const arrivals = yield* PubSub.subscribe(agent.changes);
-    const read = agent.inbox.listInbox(request);
+    const read = agent.inbox.pendingAfter(after, limit);
     const first = yield* read;
-    if (first.entries.length > 0) {
+    if (first.entries.length > 0 || wait === undefined) {
       return first;
     }
     const arrived = yield* Queue.take(arrivals).pipe(
@@ -338,8 +350,11 @@ function waitForInbox(
       Effect.repeat({ until: (page) => page.entries.length > 0 }),
       Effect.timeoutOption(wait),
     );
-    return Option.isSome(arrived) ? arrived.value : yield* read;
-  }).pipe(Effect.scoped);
+    return Option.isSome(arrived) ? arrived.value : first;
+  }).pipe(
+    Effect.tap((page) => agent.inbox.markRead(page.position)),
+    Effect.scoped,
+  );
 }
 
 function listConversations(agent: Agent, request: PaginatedRequest) {

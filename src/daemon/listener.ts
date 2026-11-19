@@ -21,6 +21,7 @@ import type { Owner } from "./owners.js";
 import type { DaemonSettings } from "./settings.js";
 import { plainUrl } from "../encoding.js";
 import { packageVersion } from "../version.js";
+import { AGENT_KEY_EXTRA, type InboxEvents } from "./events.js";
 import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
 
 /** What a request gets when its agent cannot serve it. */
@@ -47,8 +48,16 @@ type AgentOfOwner<E> = (
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
   E extends { readonly _tag: string },
->(authentication: McpAuthentication, agentOfOwner: AgentOfOwner<E>) {
-  const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
+>(
+  authentication: McpAuthentication,
+  agentOfOwner: AgentOfOwner<E>,
+  events: InboxEvents,
+) {
+  const mcp = makeMcpHandler(
+    { name: "sharnessd", version: packageVersion },
+    [events.extension],
+    AGENT_KEY_EXTRA,
+  );
   const admit = yield* tokenAdmission(authentication);
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;

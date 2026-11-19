@@ -80,6 +80,9 @@ const settingsFile = exactStruct({
     exactStruct({ name: AgentName, subject: Schema.NonEmptyString }),
   ),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  trustedCallbackOrigins: Schema.optionalWith(Schema.Array(Schema.String), {
+    default: () => [],
+  }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),

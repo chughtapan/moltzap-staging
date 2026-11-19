@@ -9,6 +9,7 @@ import {
   createMcpHandler,
   McpServer,
   ProtocolError,
+  type ServerExtension,
 } from "@modelcontextprotocol/server";
 import {
   Cause,
@@ -29,26 +30,18 @@ import {
   clientToolDefinitions,
   directToolDefinitions,
   type MessageAddressInput,
-  type SubscriptionStatus,
   toolDefinitions,
 } from "../mcp/tools.js";
 import { compiledPolicyEdit } from "../norms/index.js";
 import { SocialHarness } from "./agent.js";
 
-/** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
+/** What a request is answered from: the agent's key and its tools, in listing order. */
 export interface AgentCalls {
+  readonly agentKey: string;
   readonly tools: ReadonlyArray<ReturnType<typeof bind>>;
-  readonly events: Readonly<
-    Record<
-      "list" | "subscribe" | "unsubscribe",
-      (
-        params: unknown,
-      ) => Effect.Effect<Readonly<Record<string, unknown>>, JsonRpcError>
-    >
-  >;
 }
 
-/** The JSON-RPC error a tool call or an Events call is answered with. */
+/** The JSON-RPC error a tool call is answered with. */
 export class JsonRpcError extends Data.TaggedError("JsonRpcError")<{
   readonly code: number;
   readonly message: string;
@@ -71,13 +64,8 @@ class AdmittedRequest extends Data.Class<{
   readonly signal: AbortSignal;
 }> {}
 
-/** The Events capability, which the SDK's capability type does not name. */
-const eventsCapability = { events: {} };
-
-const anyParams = Schema.standardSchemaV1(Schema.Unknown);
-
 /** A tool's arguments and its result are objects, which is the JSON Schema MCP lists a tool with. */
-const objectSchema = Schema.decodeUnknownSync(
+export const objectSchema = Schema.decodeUnknownSync(
   Schema.Struct(
     { type: Schema.Literal("object") },
     Schema.Record({ key: Schema.String, value: Schema.Unknown }),
@@ -85,18 +73,24 @@ const objectSchema = Schema.decodeUnknownSync(
 );
 
 /**
- * The daemon's one MCP handler. The returned function gives the HTTP app that
- * answers the current request from `agent`; the SDK parses the request,
+ * The daemon's one MCP handler, which serves `extensions` beside the tools and
+ * names the admitted agent to them under `agentKeyExtra`. The returned function
+ * gives the HTTP app that answers the current request from `agent`; the SDK
+ * parses the request,
  * negotiates the protocol revision, dispatches the method and frames the
  * response, and no MCP server outlives a request. The app is interruptible so
  * that an aborted request ends a call in flight.
  */
-export function makeMcpHandler(implementation: {
-  readonly name: string;
-  readonly version: string;
-}) {
+export function makeMcpHandler(
+  implementation: {
+    readonly name: string;
+    readonly version: string;
+  },
+  extensions: readonly ServerExtension[],
+  agentKeyExtra: string,
+) {
   const handler = createMcpHandler(({ authInfo }) =>
-    requestServer(implementation, authInfo?.extra?.admitted),
+    requestServer(implementation, extensions, authInfo?.extra?.admitted),
   );
   return (agent: AgentCalls) =>
     Effect.runtime().pipe(
@@ -108,6 +102,7 @@ export function makeMcpHandler(implementation: {
               clientId: "",
               scopes: [],
               extra: {
+                [agentKeyExtra]: agent.agentKey,
                 admitted: new AdmittedRequest({
                   agent,
                   runtime,
@@ -150,13 +145,11 @@ export function peerTools(
   groups: boolean,
   holdsNorms: boolean,
 ) {
-  return Effect.fnUntraced(function* (
-    status: Effect.Effect<SubscriptionStatus>,
-  ) {
+  return Effect.fnUntraced(function* () {
     const harness = yield* SocialHarness;
     const firewall = yield* Firewall;
     return [
-      yield* statusTool(status),
+      yield* statusTool(),
       groups
         ? bind("send_message", toolDefinitions.send_message, harness.send)
         : bind(
@@ -218,12 +211,10 @@ export function clientTools(
   serverAgentAddress: MessageAddressInput,
   serverAgentContracts?: Effect.Effect<readonly CompiledContract[]>,
 ) {
-  return Effect.fnUntraced(function* (
-    status: Effect.Effect<SubscriptionStatus>,
-  ) {
+  return Effect.fnUntraced(function* () {
     const harness = yield* SocialHarness;
     return [
-      yield* statusTool(status),
+      yield* statusTool(),
       bind("send_message", clientToolDefinitions.send_message, (message) =>
         harness.send({ ...message, to: serverAgentAddress }),
       ),
@@ -286,15 +277,14 @@ function bind<A, I, B, J, E extends { readonly message: string }>(
   };
 }
 
-/** `status` names this agent and reports its subscription as `status` reads it. */
-function statusTool(status: Effect.Effect<SubscriptionStatus>) {
+/** `status` names this agent. */
+function statusTool() {
   return Effect.map(Identity, (identity) =>
     bind("status", toolDefinitions.status, () =>
-      Effect.map(status, (subscription) => ({
+      Effect.succeed({
         agentId: identity.me.agentId,
         agentName: identity.me.agentName,
-        subscription,
-      })),
+      }),
     ),
   );
 }
@@ -302,10 +292,12 @@ function statusTool(status: Effect.Effect<SubscriptionStatus>) {
 /** The MCP server for one request, answering from the agent `admitted` names. */
 function requestServer(
   implementation: { readonly name: string; readonly version: string },
+  extensions: readonly ServerExtension[],
   admitted: unknown,
 ) {
   const mcp = new McpServer(implementation, {
-    capabilities: { tools: {}, ...eventsCapability },
+    capabilities: { tools: {} },
+    extensions,
   });
   if (!(admitted instanceof AdmittedRequest)) {
     return mcp;
@@ -331,13 +323,6 @@ function requestServer(
       }),
     ),
   );
-  for (const call of ["list", "subscribe", "unsubscribe"] as const) {
-    mcp.server.setRequestHandler(
-      `events/${call}`,
-      { params: anyParams },
-      (params) => run(admitted, agent.events[call](params)),
-    );
-  }
   return mcp;
 }
 
@@ -474,7 +459,8 @@ function failed(message: string, structuredContent?: unknown) {
   };
 }
 
-function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
+/** The JSON Schema of what `schema` encodes to. */
+export function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
   const definitions: Record<string, JSONSchema.JsonSchema7> = {};
   const root = JSONSchema.fromAST(schema.ast, {
     definitions,

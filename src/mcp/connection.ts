@@ -9,21 +9,23 @@ import {
   StreamableHTTPClientTransport,
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/client";
+import { EventsClientExtension } from "@modelcontextprotocol/client/ext/events";
 import {
   Config,
   Data,
   Effect,
   Fiber,
   Redacted,
-  Ref,
   Schema,
   Scope,
+  Stream,
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
 import { plainUrl } from "../encoding.js";
 import {
-  type InboxEntry,
+  INBOX_PENDING_EVENT,
+  InboxEntry,
   MAXIMUM_WAIT_SECONDS,
   SendError,
   toolDefinitions,
@@ -34,9 +36,9 @@ export class McpConnectError extends Data.TaggedError("McpConnectError")<{
   readonly reason: "transport-failed" | "incompatible-daemon";
 }> {}
 
-/** Reception ended: the daemon could not be read, or the connection already has a reader. */
+/** Reception ended: the daemon could not be read. */
 export class McpReceiveError extends Data.TaggedError("McpReceiveError")<{
-  readonly reason: "transport-failed" | "already-listening";
+  readonly reason: "transport-failed";
 }> {}
 
 /** The host's environment does not say how to reach the daemon. `message` names the variable to set. */
@@ -53,9 +55,9 @@ export interface McpConnectionSettings {
 }
 
 /**
- * Allows one inbox consumer at a time. Reading marks entries delivered before
- * the callback runs. Callback failure stops reception; saved history retains
- * the entry.
+ * `consumeInbox` hands over each inbox entry as the daemon's inbox event
+ * delivers it, starting where the agent's last reader stopped. Callback
+ * failure stops reception; saved history retains the entry.
  */
 export interface McpConnection {
   /** The MCP SDK's connected `Client`, which a host calls tools on. */
@@ -86,11 +88,13 @@ export function acquireMcpConnection(
     if (!safeCredentialEndpoint(endpoint, settings.allowHttp)) {
       return yield* new McpConnectError({ reason: "transport-failed" });
     }
+    const events = new EventsClientExtension();
     const mcp = new Client(
       { ...implementation },
       {
         capabilities: {},
         versionNegotiation: { mode: { pin: "2026-07-28" } },
+        extensions: [events],
       },
     );
     const close = Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore);
@@ -112,13 +116,12 @@ export function acquireMcpConnection(
       }).pipe(Effect.onError(() => close)),
       () => close,
     );
-    const receiving = yield* Ref.make(false);
     const scope = yield* Scope.Scope;
     return {
       mcp,
       consumeInbox: (accept) =>
         Effect.acquireUseRelease(
-          receiveInbox(mcp, receiving, accept).pipe(
+          receiveInbox(events, accept).pipe(
             Effect.interruptible,
             Effect.forkIn(scope),
           ),
@@ -226,53 +229,6 @@ function requestNotSent(cause: unknown): boolean {
   );
 }
 
-/**
- * Hands over everything pending. The first read waits for a message when the
- * inbox is empty, so calling this in a loop neither spins nor misses one.
- */
-function readPending<E, R>(
-  mcp: Pick<Client, "callTool">,
-  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-): Effect.Effect<void, E | McpReceiveError, R> {
-  return Effect.gen(function* () {
-    let cursor: string | undefined;
-    do {
-      const page = yield* receivePage(mcp, cursor);
-      for (const entry of page.entries) {
-        yield* accept(entry);
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
-  });
-}
-
-/** One page of the pending inbox. A read without a cursor waits for a message when the inbox is empty. */
-function receivePage(mcp: Pick<Client, "callTool">, cursor?: string) {
-  const unreadable = () =>
-    Effect.fail(new McpReceiveError({ reason: "transport-failed" }));
-  return Effect.tryPromise((signal) =>
-    mcp.callTool(
-      {
-        name: "receive_messages",
-        arguments:
-          cursor === undefined ? { wait: MAXIMUM_WAIT_SECONDS } : { cursor },
-      },
-      { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
-    ),
-  ).pipe(
-    Effect.filterOrFail(
-      (result) => result.isError !== true,
-      () => new McpReceiveError({ reason: "transport-failed" }),
-    ),
-    Effect.flatMap((result) =>
-      Schema.decodeUnknown(toolDefinitions.receive_messages.output)(
-        result.structuredContent,
-      ),
-    ),
-    Effect.catchTags({ UnknownException: unreadable, ParseError: unreadable }),
-  );
-}
-
 function connectionRefused(cause: unknown): boolean {
   if (!(cause instanceof Error) || !(cause.cause instanceof Error)) {
     return false;
@@ -280,25 +236,26 @@ function connectionRefused(cause: unknown): boolean {
   return "code" in cause.cause && cause.cause.code === "ECONNREFUSED";
 }
 
-/** Reads the inbox until interrupted or a read fails. A connection has one reader at a time. */
+/** Follows the inbox event until interrupted or the subscription ends. Leaving it cancels the subscription. */
 function receiveInbox<E, R>(
-  mcp: Pick<Client, "callTool">,
-  receiving: Ref.Ref<boolean>,
+  events: EventsClientExtension,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      yield* Effect.acquireRelease(
-        Ref.getAndSet(receiving, true).pipe(
-          Effect.filterOrFail(
-            (active) => !active,
-            () => new McpReceiveError({ reason: "already-listening" }),
+): Effect.Effect<void, E | McpReceiveError, R> {
+  const unreadable = () => new McpReceiveError({ reason: "transport-failed" });
+  return Effect.tryPromise({
+    try: () => events.subscribe({ name: INBOX_PENDING_EVENT }),
+    catch: unreadable,
+  }).pipe(
+    Effect.flatMap((subscription) =>
+      Stream.fromAsyncIterable(subscription, unreadable).pipe(
+        Stream.mapEffect((event) =>
+          Schema.decodeUnknown(InboxEntry)(event.data).pipe(
+            Effect.mapError(unreadable),
           ),
         ),
-        () => Ref.set(receiving, false),
-      );
-      return yield* Effect.forever(readPending(mcp, accept));
-    }),
+        Stream.runForEach(accept),
+      ),
+    ),
   );
 }
 

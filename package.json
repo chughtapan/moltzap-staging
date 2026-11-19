@@ -209,7 +209,6 @@
     "ajv": "catalog:",
     "ajv-formats": "catalog:",
     "effect": "catalog:",
-    "ipaddr.js": "catalog:",
     "jose": "catalog:",
     "kysely": "catalog:",
     "yaml": "catalog:"

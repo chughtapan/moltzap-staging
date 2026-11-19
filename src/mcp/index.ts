@@ -21,7 +21,7 @@ export {
 /** What a host sends, the addresses it names an agent or a group by, and the inbox entries it reads. */
 export {
   AgentAddress,
-  DeliveryToken,
+  INBOX_PENDING_EVENT,
   InboxEntry,
   MessageAddressInput,
   SendRequest,
