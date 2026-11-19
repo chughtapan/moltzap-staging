@@ -196,13 +196,11 @@ it.prop(
       expect(result).toMatchObject(
         choice === "compliant"
           ? {
-              judgment: "allow",
               reason: "eligible",
               feedback: [],
               instructions: [],
             }
           : {
-              judgment: "reject",
               reason: "rule-violation",
               feedback: [{ text: repair }],
               instructions: [],
@@ -229,7 +227,6 @@ it.prop(
       expect(result).toMatchObject(
         incoming
           ? {
-              judgment: "allow",
               reason: "eligible",
               feedback: [],
               instructions: [
@@ -241,7 +238,6 @@ it.prop(
               ],
             }
           : {
-              judgment: "hold",
               reason: "unresolved-evidence",
               feedback: [{ text: repair }],
               instructions: [],
@@ -311,7 +307,6 @@ it.prop(
         },
       );
       expect(result).toMatchObject({
-        judgment: "reject",
         reason: "rule-violation",
         instructions: [],
       });
@@ -357,7 +352,6 @@ it.prop(
         { incoming },
       );
       expect(result).toMatchObject({
-        judgment: "hold",
         reason: "check-unavailable",
         instructions: [],
       });
@@ -391,7 +385,7 @@ it.prop(
         rules: textRules,
       });
       const stated = requests.map((request) => JSON.stringify(request)).join();
-      expect(result.judgment).toBe("allow");
+      expect(result.reason).toBe("eligible");
       expect(
         requests.map((request) =>
           Object.values(request.questions).map((question) => question.ruleId),
@@ -525,8 +519,8 @@ it.prop(
       });
       expect(result).toMatchObject(
         gaps.length === 0
-          ? { judgment: "allow", reason: "eligible" }
-          : { judgment: "hold", reason: "unresolved-evidence" },
+          ? { reason: "eligible" }
+          : { reason: "unresolved-evidence" },
       );
     }),
 );
@@ -580,9 +574,8 @@ it.prop(
       const result = yield* Fiber.join(running);
       expect(result).toMatchObject(
         delay < perRequest
-          ? { judgment: "allow", feedback: [] }
+          ? { reason: "eligible", feedback: [] }
           : {
-              judgment: "hold",
               reason: "check-unavailable",
               feedback: [{ text: repair }],
             },
@@ -684,18 +677,18 @@ it.prop(
         textRules,
       );
       const minimumBytes = Math.max(...captured.map(requestBytes));
-      const judgments = yield* checkMinimumRequests(
+      const reasons = yield* checkMinimumRequests(
         provider(),
         minimumBytes + spare,
         textRules,
       ).pipe(
         Effect.match({
           onFailure: (rejected) => rejected._tag,
-          onSuccess: (results) => results.map((result) => result.judgment),
+          onSuccess: (results) => results.map((result) => result.reason),
         }),
       );
-      expect(judgments).toEqual(
-        spare >= 0 ? ["allow", "allow"] : "InvalidCheckError",
+      expect(reasons).toEqual(
+        spare >= 0 ? ["eligible", "eligible"] : "InvalidCheckError",
       );
     }),
 );

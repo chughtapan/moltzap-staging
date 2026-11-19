@@ -160,19 +160,18 @@ export interface CapturedMessage {
   readonly evidence: CheckEvidence;
 }
 
-/** Reports invalid settings, rules, messages or evidence before a judgment exists. */
+/** Reports invalid settings, rules, messages or evidence before a check concludes. */
 class InvalidCheckError extends Data.TaggedError("InvalidCheckError") {}
 
 /**
- * What one check of the text rules concludes. Provider failure produces a hold
- * judgment. Findings stay private. The host receives the feedback
+ * What one check of the text rules concludes. Provider failure makes the
+ * check unavailable. Findings stay private. The host receives the feedback
  * of a refusal, and as guidance the instructions of an allowed incoming
  * message the provider was unsure about. `decidedBy` names the rules that
  * gave the reason.
  */
 export interface FirewallCheck {
   readonly findings: readonly PolicyFinding[];
-  readonly judgment: "allow" | "reject" | "hold";
   readonly reason: Reason;
   readonly feedback: ReadonlyArray<{ readonly text: string }>;
   readonly instructions: ReadonlyArray<typeof uncertainInstructionSchema.Type>;
@@ -249,13 +248,6 @@ export const LocalGuidance = exactStruct({
 export type LocalGuidance = typeof LocalGuidance.Type;
 
 const utf8 = new TextEncoder();
-
-const judgments: Readonly<Record<Reason, FirewallCheck["judgment"]>> = {
-  eligible: "allow",
-  "rule-violation": "reject",
-  "unresolved-evidence": "hold",
-  "check-unavailable": "hold",
-};
 
 /**
  * Identifies a rule that gave the check's reason. `advice` contains the rule's
@@ -465,7 +457,7 @@ function validateEvidence({ event, evidence }: CapturedMessage) {
 }
 
 /**
- * The judgment and reason the findings give. Each rule with a finding that
+ * The reason the findings give. Each rule with a finding that
  * gives the reason decides, once and in rule order: an unsure answer for an
  * allowed message, and otherwise a violation or a hold for that reason. A
  * refusal's feedback is each deciding rule's registered feedback, or its
@@ -492,7 +484,6 @@ function concludeCheck(
   });
   return {
     findings,
-    judgment: judgments[reason],
     reason,
     feedback:
       reason === "eligible"

@@ -135,7 +135,7 @@ const firewallActivationSchema = exactStruct({
 
 /**
  * Contains one row per peer without message content.
- * `judgment` is what the check concluded. `decidedBy[].advice` contains the
+ * `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
  * allowed one. `from` identifies a contract stage as `contract`, or a fixed or
  * editable text rule. `checkedRuleIds` lists the rules the check judged: a
@@ -144,7 +144,6 @@ const firewallActivationSchema = exactStruct({
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
   peer: AgentCard,
-  judgment: Schema.Literal("allow", "reject", "hold"),
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
     exactStruct({
@@ -158,7 +157,7 @@ export const firewallDecisionSummarySchema = exactStruct({
 });
 
 /**
- * Reports each saved check with its judgment and the decision the daemon
+ * Reports each saved check with the decision the daemon
  * applied, and each policy activation. A sent message is `allowed` or
  * `refused`; a received one is `allowed` or `withheld`.
  */

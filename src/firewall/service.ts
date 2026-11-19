@@ -79,8 +79,9 @@ import {
 
 /**
  * A message policy as configured, which edits leave unchanged, and the
- * decision provider that judges its text rules. Reject and hold judgments,
- * including provider failures, refuse sends and withhold incoming messages.
+ * decision provider that judges its text rules. Every reason but
+ * `eligible`, including a provider failure, refuses a send and withholds an
+ * incoming message.
  */
 interface ConfiguredPolicy {
   readonly policy: LoadedMessagePolicy["policy"];
@@ -709,7 +710,6 @@ function decisionSummary(
   return {
     direction,
     peer,
-    judgment: check.judgment,
     reason: check.reason,
     decidedBy: check.decidedBy.map((rule) => ({
       ruleId: rule.ruleId,
@@ -748,7 +748,6 @@ function guidanceProjection(check: FirewallCheck, checkId: string) {
 /** A check that could not run holds without inventing a deciding rule. */
 function unavailable(): FirewallCheck {
   return {
-    judgment: "hold",
     reason: "check-unavailable",
     feedback: [],
     instructions: [],

@@ -254,7 +254,7 @@ provider, model and rule source after edits.
 
 ## Decision reasons
 
-The decision feed separates the `judgment` (`allow`, `reject`, `hold`) from
+The decision feed gives
 the `decision`: `allowed` or `refused` for a message the agent sent, `allowed`
 or `withheld` for one it received. `checkedRuleIds` lists the rules the check
 judged; a rule that does not apply to the message, by its direction, is not listed.
