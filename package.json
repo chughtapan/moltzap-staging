@@ -220,7 +220,6 @@
     "@effect/vitest": "catalog:",
     "@eslint-community/eslint-plugin-eslint-comments": "catalog:",
     "@mermaid-js/mermaid-cli": "catalog:",
-    "@types/estree": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
