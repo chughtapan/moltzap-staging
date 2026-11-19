@@ -12,7 +12,7 @@ import {
   compiledContractSchema,
   type MessageForm,
   RequestedSchema,
-} from "../firewall/contract.js";
+} from "../firewall/index.js";
 
 /** Source diagnostics identify a declaration without echoing private document text. */
 class NormDocumentError extends Data.TaggedError("NormDocumentError")<{

@@ -11,9 +11,6 @@ import {
 import { RequestedSchema, validateResponseContent } from "./forms.js";
 import { TextRule } from "./rules.js";
 
-/** The form-mode schema a form declares its fields in. */
-export { RequestedSchema };
-
 const name = Schema.String.pipe(
   Schema.pattern(/^[a-zA-Z][a-zA-Z0-9-]{0,63}$/u),
 );

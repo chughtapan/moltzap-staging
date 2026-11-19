@@ -8,8 +8,14 @@ export {
   FirewallRefusal,
   LocalGuidance,
 } from "./check.js";
-/** A compiled norm, which the norms layer produces and the firewall checks messages against. */
-export type { CompiledContract } from "./contract.js";
+/** A compiled norm and the form of one of its acts, which the norms layer produces and the firewall checks messages against. */
+export {
+  type CompiledContract,
+  compiledContractSchema,
+  type MessageForm,
+} from "./contract.js";
+/** The form-mode schema a norm's act form declares its fields in. */
+export { RequestedSchema } from "./forms.js";
 /** One edit of an agent's editable policy, with each norm document it adds compiled. */
 export type { PolicyEdit } from "./editable-policy.js";
 /** Text rules, message-policy loading from its file, and the schemas of policy reads, updates and decisions. */

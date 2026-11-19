@@ -60,8 +60,7 @@
       ],
       "entrypoints": [
         "src/firewall/index.ts",
-        "src/firewall/service.ts",
-        "src/firewall/contract.ts"
+        "src/firewall/service.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },
@@ -180,12 +179,6 @@
     {
       "subpath": "./test",
       "reason": "Test databases and an OAuth issuer fixture for suites outside the package"
-    }
-  ],
-  "facadeFiles": [
-    {
-      "file": "firewall/contract.ts",
-      "reason": "The contract grammar the norms layer compiles to; hosts load the firewall index, which stays free of the form validator"
     }
   ],
   "maxFolderChildren": 12,
