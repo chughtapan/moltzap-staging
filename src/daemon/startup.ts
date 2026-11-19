@@ -78,7 +78,6 @@ export function roleOf(
     const firewall = Firewall.layer(
       agentKey,
       settings.messagePolicy,
-      undefined,
       norms?.contracts,
     );
     return norms === undefined

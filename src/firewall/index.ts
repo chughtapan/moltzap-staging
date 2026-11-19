@@ -1,12 +1,11 @@
-/** @file The message firewall's values: the chain other layers extend, message-policy loading and what a host reads of a check. Its service is `service.ts`. */
+/** @file The message firewall's values: message-policy loading and what a host reads of a check. Its service is `service.ts`. */
 
-/** The evidence a check may read. */
-export { type FirewallEvidence } from "./chain.js";
-/** Guidance read with a checked message, what a check permits or refuses, and the decision provider that judges text rules. */
+/** The evidence a check may read, guidance read with a checked message, what a check permits or refuses, and the decision provider that judges text rules. */
 export {
   type DecisionProvider,
   type DecisionRequest,
   type DecisionResponse,
+  type FirewallEvidence,
   FirewallRefusal,
   LocalGuidance,
   PermittedItem,

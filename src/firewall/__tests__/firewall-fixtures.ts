@@ -2,8 +2,7 @@
 
 import { SqlClient } from "@effect/sql";
 import { type Context, Effect, Encoding, Layer, Schema } from "effect";
-import type { FirewallEvidence, Matcher } from "../chain.js";
-import type { DecisionProvider } from "../check.js";
+import type { DecisionProvider, FirewallEvidence } from "../check.js";
 import type { TextRule } from "../rules.js";
 import { Message } from "../../communication/index.js";
 import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
@@ -156,15 +155,6 @@ export function policy(
     },
   };
 }
-
-/** A matcher that matches every message. */
-export const always: Matcher = {
-  match: () => Effect.succeed({ matched: true }),
-};
-/** A matcher that matches no message. */
-export const never: Matcher = {
-  match: () => Effect.succeed({ matched: false }),
-};
 
 /** A form of one string field, `value`. */
 export const valueField = {
