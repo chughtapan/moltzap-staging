@@ -40,7 +40,6 @@ import {
   type InboxEntry,
   type McpConnection,
   MessageAddressInput,
-  type PermittedItem,
   SendRequest,
   toolDefinitions,
   type ToolName,
@@ -569,17 +568,17 @@ export const joinParticipants = Effect.fn("joinParticipants")(
     ),
 );
 
-/** Takes the participant's next received item. */
+/** Takes the message of the participant's next inbox entry. */
 export const nextItem = (participant: Participant) =>
   Queue.take(participant.inbox).pipe(
-    Effect.map((delivery): PermittedItem => delivery.item),
+    Effect.map((delivery) => delivery.message),
   );
 
 /** The identifiers of the next `count` messages the participant receives, in order. */
 export const receivedOrder = (participant: Participant, count: number) =>
   Effect.forEach(
     Array.from({ length: count }),
-    () => nextItem(participant).pipe(Effect.map((item) => item.message.msgId)),
+    () => nextItem(participant).pipe(Effect.map((message) => message.msgId)),
     { concurrency: 1 },
   );
 

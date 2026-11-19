@@ -44,10 +44,7 @@ it(
         message: GROUP_REPLY,
       });
       expect(replied.details).toMatchObject({ ok: true });
-      const reply = {
-        kind: "message",
-        message: { author: target.agent, content: textContent(GROUP_REPLY) },
-      };
+      const reply = { author: target.agent, content: textContent(GROUP_REPLY) };
       expect(yield* nextItem(caller)).toMatchObject(reply);
       expect(yield* nextItem(peer)).toMatchObject(reply);
       yield* stopGateway(hosted);

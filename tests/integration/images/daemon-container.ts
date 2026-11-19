@@ -1,5 +1,5 @@
 /** @file One daemon in the daemon image under test, and promise access to its agents for node:test suites. */
-import type { PermittedItem, SendResult } from "@social-harness/social-harness";
+import type { Message, SendResult } from "@social-harness/social-harness";
 import { Chunk, Duration, Effect, Exit, Option, Scope, Stream } from "effect";
 import { execFile } from "node:child_process";
 import { chmod } from "node:fs/promises";
@@ -35,7 +35,7 @@ export interface AgentAccess {
   /** A file any container user can read, holding the bearer the agent signed in with. */
   readonly mcpCredentialFile: string;
   readonly send: (input: unknown) => Promise<SendResult>;
-  readonly next: (count: number) => Promise<readonly PermittedItem[]>;
+  readonly next: (count: number) => Promise<readonly Message[]>;
 }
 
 /** One scope owns the daemon container and every agent's connection. */
@@ -94,8 +94,9 @@ function nextItems(signedIn: SignedIn, count: number) {
     Stream.runHead,
     Effect.map(
       Option.match({
-        onNone: (): readonly PermittedItem[] => [],
-        onSome: (batch) => Chunk.toReadonlyArray(batch).map(({ item }) => item),
+        onNone: (): readonly Message[] => [],
+        onSome: (batch) =>
+          Chunk.toReadonlyArray(batch).map(({ message }) => message),
       }),
     ),
     Effect.timeoutFail({

@@ -68,12 +68,11 @@ test(
       );
 
       const received = await callerReceived;
-      for (const item of received) {
-        assert.equal(item.kind, "message");
-        assert.equal(item.message.author.agentId, target.agent.agentId);
+      for (const message of received) {
+        assert.equal(message.author.agentId, target.agent.agentId);
       }
       assert.deepEqual(
-        inAnyOrder(received.map((item) => item.message.content)),
+        inAnyOrder(received.map((message) => message.content)),
         inAnyOrder([textContent(TOOL_REPLY), textContent(FINAL_REPLY)]),
       );
     } finally {

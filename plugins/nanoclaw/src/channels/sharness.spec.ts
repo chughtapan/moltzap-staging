@@ -57,23 +57,17 @@ const group = Schema.decodeUnknownSync(GroupAddress)("group:alice,bob,carol");
 /** Reads an entry as `receive_messages` returns it. */
 const readEntry = Schema.decodeUnknownSync(Schema.typeSchema(InboxEntry));
 const message = {
-  kind: "message",
-  message: {
-    msgId,
-    author: alice,
-    recipients: [bob],
-    content: [{ type: "text", text: messageText }],
-  },
+  msgId,
+  author: alice,
+  recipients: [bob],
+  content: [{ type: "text", text: messageText }],
 };
-const plainEntry = readEntry({ deliveryToken, address, item: message });
+const plainEntry = readEntry({ deliveryToken, address, message });
 /** Alice's message to the group, in Bob's inbox with guidance. */
 const guidedEntry = readEntry({
   deliveryToken,
   address: group,
-  item: {
-    ...message,
-    message: { ...message.message, recipients: [bob, carol] },
-  },
+  message: { ...message, recipients: [bob, carol] },
   guidance: {
     checkId: `chk_${"a".repeat(64)}`,
     instructions: [

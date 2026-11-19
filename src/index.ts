@@ -23,8 +23,6 @@ export {
   type ToolRequest,
   type ToolResult,
 } from "./mcp/index.js";
-/** The content policy permits an agent to read. */
-export { PermittedItem } from "./firewall/index.js";
 /** Messages, their identifiers and addresses. */
 export {
   AgentAddress,

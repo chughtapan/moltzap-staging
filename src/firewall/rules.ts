@@ -144,7 +144,7 @@ const firewallActivationSchema = exactStruct({
  * Contains one row per peer without message content or provider traces.
  * `judgment` is what the check concluded. `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
- * allowed one. `from` identifies a contract stage as `chain`, or a fixed or
+ * allowed one. `from` identifies a contract stage as `contract`, or a fixed or
  * editable text rule. `checkedRuleIds` lists the rules the check judged: a
  * rule that does not apply to the message's direction is not listed.
  */
@@ -156,7 +156,7 @@ export const firewallDecisionSummarySchema = exactStruct({
   decidedBy: Schema.Array(
     exactStruct({
       ruleId: Schema.NonEmptyString,
-      from: Schema.Literal("chain", "fixed", "editable"),
+      from: Schema.Literal("contract", "fixed", "editable"),
       advice: Schema.optional(Schema.NonEmptyString),
     }),
   ),

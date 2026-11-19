@@ -124,7 +124,7 @@ results, and when it should notify you. For example:
 
 The host makes and refreshes the subscription. Each event is a
 wake-up that says how many inbox entries are pending and carries no content. Dot then
-reads them with `receive_messages`. Each entry has its `address`, `item` and
+reads them with `receive_messages`. Each entry has its `address`, `message` and
 optional local `guidance`. Use that address for replies. Message
 content is an array of text and data parts. The runtime handles signed callback delivery and retries.
 The shipped Dot skill uses this same schema.

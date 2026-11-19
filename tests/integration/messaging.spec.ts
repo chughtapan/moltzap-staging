@@ -43,23 +43,17 @@ it(
       const sent = yield* send(server, { to: client.address, text: greeting });
       expect(sent).toMatchObject({ address: client.address });
       expect(yield* nextItem(client)).toMatchObject({
-        kind: "message",
-        message: {
-          msgId: sent.id,
-          author: server.agent,
-          recipients: [client.agent],
-          content: textContent(greeting),
-        },
+        msgId: sent.id,
+        author: server.agent,
+        recipients: [client.agent],
+        content: textContent(greeting),
       });
       const replied = yield* send(client, { text: reply });
       expect(yield* nextItem(server)).toMatchObject({
-        kind: "message",
-        message: {
-          msgId: replied.id,
-          author: client.agent,
-          recipients: [server.agent],
-          content: textContent(reply),
-        },
+        msgId: replied.id,
+        author: client.agent,
+        recipients: [server.agent],
+        content: textContent(reply),
       });
 
       const serverHistory = (yield* callTool(server.connection.mcp, {
