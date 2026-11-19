@@ -26,7 +26,7 @@ import {
   Schema,
 } from "effect";
 import type { CompiledContract } from "../firewall/index.js";
-import { PAGE_SIZE } from "../communication/index.js";
+import { Cursor, PAGE_SIZE } from "../communication/index.js";
 import { issuesText } from "../encoding.js";
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity.js";
@@ -34,7 +34,6 @@ import {
   type AgentAddress,
   clientToolDefinitions,
   INBOX_EVENT,
-  InboxCursor,
   InboxEntry,
   toolDefinitions,
 } from "../mcp/tools.js";
@@ -158,9 +157,7 @@ export const makeInboxEvents = Effect.gen(function* () {
           const inbox = yield* makeInbox(yield* Effect.fromNullable(principal));
           const page = yield* inbox.listInbox(
             Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-            cursor === null
-              ? undefined
-              : yield* Schema.decode(InboxCursor)(cursor),
+            cursor === null ? undefined : yield* Schema.decode(Cursor)(cursor),
           );
           return {
             events: (yield* Schema.encode(Schema.Array(InboxEntry))(

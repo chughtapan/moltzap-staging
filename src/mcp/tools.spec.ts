@@ -32,12 +32,9 @@ it("addresses one agent as agent:<name>, and refuses the address that names only
 });
 
 describe("management and history contracts", () => {
-  describe("conversation pagination", () => {
-    it("preserves canonical address order and the next cursor", () => {
-      const page = {
-        addresses: ["agent:bob", "agent:carol"],
-        nextCursor: "opaque-position",
-      };
+  describe("conversation listing", () => {
+    it("accepts addresses only in canonical order", () => {
+      const page = { addresses: ["agent:bob", "agent:carol"] };
       const decode = Schema.decodeUnknownSync(
         toolDefinitions.list_conversations.output,
       );

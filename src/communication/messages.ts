@@ -17,8 +17,7 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
     | "membership-invalid"
     | "content-invalid"
     | "persistence-failed"
-    | "message-conflict"
-    | "invalid-cursor";
+    | "message-conflict";
 }> {}
 
 /** The byte limit of one message's content as JSON text. */
@@ -108,9 +107,14 @@ const mintMsgId = (): Effect.Effect<MsgId, JsonRepresentationError> =>
     Effect.mapError(representationFailure),
   );
 
+/** A place in an ordered read, as decimal text. A read returns what follows it. */
+export const Cursor = Schema.String.pipe(
+  Schema.pattern(/^\d{1,15}$/u),
+).annotations({ description: "the nextCursor of an earlier result" });
+
 /** Omit cursor to begin and pass the returned nextCursor unchanged. */
 export const PaginatedRequest = exactStruct({
-  cursor: Schema.optional(Schema.String),
+  cursor: Schema.optional(Cursor),
 });
 /** Selection arguments remain unchanged between pages.
  * @useDeclaredType
@@ -118,11 +122,9 @@ export const PaginatedRequest = exactStruct({
 export type PaginatedRequest = typeof PaginatedRequest.Type;
 /** Absence of nextCursor marks the end of the listing. */
 export const Page = exactStruct({
-  nextCursor: Schema.optional(Schema.String),
+  nextCursor: Schema.optional(Cursor),
 });
-/** Cursors confer no access and are valid only for the read that returned them.
- * @useDeclaredType
- */
+/** @useDeclaredType */
 export type Page = typeof Page.Type;
 
 /** The most inbox entries, history records or conversation addresses one page holds. */

@@ -1,7 +1,7 @@
 /** @file Stores one agent's unchecked messages and its inbox entries in the order they were allowed. */
 
 import { SqlClient } from "@effect/sql";
-import { Data, Effect, Encoding, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import type { IncomingDecision } from "../firewall/service.js";
 import { Message, type MessageReference } from "../communication/index.js";
 import {
@@ -12,12 +12,11 @@ import {
   withAgentRows,
 } from "../database.js";
 import {
-  decodeJson,
   encodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import { AgentAddress, type InboxCursor, InboxEntry } from "../mcp/tools.js";
+import { AgentAddress, InboxEntry } from "../mcp/tools.js";
 
 const uncheckedRow = exactStruct({
   address: AgentAddress,
@@ -177,10 +176,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
      * cursor to read on from and whether more entries follow. Without a
      * cursor the read starts from the newest entry and returns none.
      */
-    listInbox: Effect.fn(function* (
-      limit: number,
-      cursor?: typeof InboxCursor.Type,
-    ) {
+    listInbox: Effect.fn(function* (limit: number, cursor?: string) {
       const from = Number(
         cursor ?? (yield* run(newest(inboxRows())))[0]?.newest ?? 0,
       );
@@ -231,30 +227,3 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       ),
   };
 });
-
-/** The text is not a cursor the read it was given to returned. */
-export class CursorError extends Data.TaggedError("CursorError") {}
-
-/** A cursor is its position as base64url JSON text. */
-export function encodeCursor<A, I>(
-  schema: Schema.Schema<A, I>,
-  position: NoInfer<A>,
-) {
-  return encodeJson(schema, position).pipe(
-    Effect.map((text) => Encoding.encodeBase64Url(text)),
-  );
-}
-
-/** The position a cursor holds, when it is one `schema` describes. */
-export function decodeCursor<A, I>(
-  schema: Schema.Schema<A, I>,
-  cursor: string,
-) {
-  return Encoding.decodeBase64UrlString(cursor).pipe(
-    Effect.flatMap((text) => decodeJson(schema, text)),
-    Effect.catchTags({
-      DecodeException: () => new CursorError(),
-      JsonRepresentationError: () => new CursorError(),
-    }),
-  );
-}

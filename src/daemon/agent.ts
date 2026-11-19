@@ -33,7 +33,7 @@ import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
   addressedAgent,
   addressOf,
-  AgentAddress,
+  type AgentAddress,
   HistoryError,
   type HistoryRecord,
   SendError,
@@ -41,19 +41,7 @@ import {
   type SendResult,
   type ToolResult,
 } from "../mcp/tools.js";
-import {
-  type CursorError,
-  decodeCursor,
-  encodeCursor,
-  type Inbox,
-  makeInbox,
-  type Unchecked,
-} from "./inbox.js";
-
-const conversationsCursor = Schema.Struct({
-  operation: Schema.Literal("conversations"),
-  address: AgentAddress,
-});
+import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
@@ -78,18 +66,14 @@ interface SocialHarnessService {
   readonly receive: (request: {
     readonly cursor?: string;
   }) => Effect.Effect<ToolResult<"receive_messages">>;
+  /** The address of every conversation of the agent, in order. */
+  readonly listConversations: () => Effect.Effect<
+    ToolResult<"list_conversations">,
+    HistoryError
+  >;
   /**
-   * Lists the addresses of the agent's conversations.
-   * Omitting the cursor starts a live traversal. Follow `nextCursor` until
-   * absent. New conversations before the cursor require a fresh traversal.
-   */
-  readonly listConversations: (
-    request?: PaginatedRequest,
-  ) => Effect.Effect<ToolResult<"list_conversations">, HistoryError>;
-  /**
-   * Pages include only history available at the first read. Rule edits leave
-   * stored inbox entries as they are. Start a new traversal after reconnecting
-   * or restarting.
+   * A page of a conversation's records, oldest first, after the cursor an
+   * earlier page returned. Rule edits leave stored inbox entries as they are.
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
@@ -206,7 +190,7 @@ function makeHarness(settings: HarnessSettings) {
           Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
           Effect.orDie,
         ),
-      listConversations: (request = {}) => listConversations(agent, request),
+      listConversations: () => listConversations(agent),
       readHistory: (request) => readHistory(agent, request),
     });
   }).pipe(Effect.withSpan("SocialHarness.layer"));
@@ -286,30 +270,15 @@ function outgoingFor(
   });
 }
 
-function listConversations(agent: Agent, request: PaginatedRequest) {
-  return Effect.gen(function* () {
-    const after =
-      request.cursor === undefined
-        ? ""
-        : (yield* decodeCursor(conversationsCursor, request.cursor)).address;
-    const addresses = (yield* agent.communication.listConversations)
-      .map((members) => addressOf(members, agent.card.agentId))
-      .filter((address) => address > after)
-      .sort(compareAscii);
-    const selected = addresses.slice(0, PAGE_SIZE);
-    const last = selected.at(-1);
-    return {
-      addresses: selected,
-      ...(last !== undefined && addresses.length > PAGE_SIZE
-        ? {
-            nextCursor: yield* encodeCursor(conversationsCursor, {
-              operation: "conversations",
-              address: last,
-            }),
-          }
-        : {}),
-    };
-  }).pipe(Effect.catchAll(historyFailure));
+function listConversations(agent: Agent) {
+  return agent.communication.listConversations.pipe(
+    Effect.map((conversations) => ({
+      addresses: conversations
+        .map((members) => addressOf(members, agent.card.agentId))
+        .sort(compareAscii),
+    })),
+    Effect.catchAll(historyFailure),
+  );
 }
 
 function readHistory(agent: Agent, request: ReadHistoryRequest) {
@@ -603,22 +572,19 @@ function sendFailure(
     return Effect.fail(error);
   }
   return error._tag !== "CommunicationError" ||
-    error.reason === "persistence-failed" ||
-    error.reason === "invalid-cursor"
+    error.reason === "persistence-failed"
     ? Effect.die(error)
     : Effect.fail(new SendError({ reason: error.reason }));
 }
 
 /**
- * Fails with what the reader can correct: a wrong address, an unknown agent
- * or a cursor this read did not return. Any other failure is one of storage
- * and ends the read as a defect.
+ * Fails with what the reader can correct: a wrong address or an unknown
+ * agent. Any other failure is one of storage and ends the read as a defect.
  */
 function historyFailure(
   error:
     | HistoryError
     | SendError
-    | CursorError
     | CommunicationError
     | IdentityError
     | {
@@ -630,12 +596,6 @@ function historyFailure(
   }
   if (error._tag === "SendError") {
     return Effect.fail(new HistoryError({ reason: "invalid-address" }));
-  }
-  if (
-    error._tag === "CursorError" ||
-    (error._tag === "CommunicationError" && error.reason === "invalid-cursor")
-  ) {
-    return Effect.fail(new HistoryError({ reason: "invalid-cursor" }));
   }
   return error._tag === "IdentityError" && error.reason === "unknown-agent"
     ? Effect.fail(new HistoryError({ reason: "unknown-agent" }))
