@@ -343,9 +343,7 @@ function roleOf(instance: Instance, author: string) {
 }
 
 function enabled(form: MessageForm, instance: Instance) {
-  const facts =
-    form.when.every((fact) => instance.facts.has(fact)) &&
-    form.unless.every((fact) => !instance.facts.has(fact));
+  const facts = form.when.every((fact) => instance.facts.has(fact));
   const count =
     form.maximum === undefined ||
     (instance.counts.get(form.act) ?? 0) < form.maximum;
@@ -372,20 +370,19 @@ function referencedAct(
   act: MessageForm["relations"][number]["source"]["act"],
   ancestry: ReadonlySet<string>,
 ) {
-  if (typeof act !== "string" && "fact" in act) {
+  if (typeof act !== "string") {
     const anchor = instance.facts.get(act.fact);
     return anchor === undefined || !ancestry.has(anchor.message.msgId)
       ? undefined
       : anchor;
   }
-  const acts = typeof act === "string" ? [act] : act;
   return [...instance.acts]
     .reverse()
     .find(
       (entry) =>
         entry.protocol !== undefined &&
         ancestry.has(entry.message.msgId) &&
-        acts.includes(entry.protocol.act.name),
+        entry.protocol.act.name === act,
     );
 }
 
@@ -396,7 +393,7 @@ function permittedTime(
   const fact = instance.facts.get(delay.fact);
   const duration = fact?.protocol?.act.fields[delay.field];
   return fact !== undefined && typeof duration === "number"
-    ? fact.at + duration * delay.millisecondsPerUnit
+    ? fact.at + duration * 1000
     : undefined;
 }
 
@@ -454,11 +451,7 @@ function sourceValue(
       source.kind === "field-values"
         ? source.fields.filter((field) => Object.hasOwn(fields, field))
         : yield* sourceValue(instance, source.keys, ancestry);
-    if (
-      typeof keys === "string" ||
-      typeof keys === "number" ||
-      typeof keys === "boolean"
-    ) {
+    if (typeof keys === "string" || typeof keys === "number") {
       return yield* unavailable(
         "A selected-values relation needs a list of field names.",
       );
