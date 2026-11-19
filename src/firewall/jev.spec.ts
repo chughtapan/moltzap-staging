@@ -9,7 +9,9 @@ import { makeJevDecisionProvider } from "./jev.js";
 
 const secret = "unit-test-credential";
 const model = "jev-1.13.0";
+const endpoint = "https://provider.example/decide";
 const provider = makeJevDecisionProvider({
+  endpoint,
   apiKey: Redacted.make(secret),
   model,
 });
@@ -46,6 +48,7 @@ it.each([
 ])("rejects invalid provider configuration", ({ key, selectedModel }) =>
   Effect.gen(function* () {
     const invalid = makeJevDecisionProvider({
+      endpoint,
       apiKey: Redacted.make(key),
       model: selectedModel,
     });
@@ -65,6 +68,7 @@ it.prop(
     Effect.gen(function* () {
       const credential = `key-${key}`;
       const decisionProvider = makeJevDecisionProvider({
+        endpoint,
         apiKey: Redacted.make(credential),
         model,
       });

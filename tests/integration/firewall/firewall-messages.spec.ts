@@ -3,7 +3,7 @@
  * firewall: two agents whose firewalls hold a rule, beside an open member
  * whose firewall holds none.
  *
- * The daemon runs `firewall-daemon.ts`, and each of its agents starts with the
+ * The marked provider judges text rules, and each agent starts with the
  * marked rule among the rules it can edit; the open member removes it. Under
  * that rule a firewall withholds an incoming text carrying `[in]`, refuses an
  * outgoing text carrying `[out]`, and is unsure about a text carrying
@@ -28,7 +28,7 @@ import {
   writeMessagePolicy,
 } from "./policy-fixture.js";
 
-/** The test starts one daemon under `tsx`. */
+/** The test starts one daemon. */
 const FIREWALL_TEST_TIMEOUT_MS = 120_000;
 
 const uncertainAdvice = {

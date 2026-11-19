@@ -50,7 +50,6 @@ import {
   type Scope,
 } from "effect";
 import { type ChildProcess, spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,8 +82,8 @@ export interface DaemonOptions {
    */
   readonly settings?: Readonly<Record<string, unknown>>;
   /**
-   * Runs `firewall/firewall-daemon.ts`, whose text rules the marked provider
-   * judges, with the marked message policy unless the settings name another.
+   * Gives the daemon the marked message policy, whose text rules the marked
+   * provider judges, unless the settings name another.
    */
   readonly firewall?: true;
 }
@@ -147,22 +146,9 @@ const WORKSPACE_ROOT = resolve(
 /** Children use the current Node installation and system executables. */
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 
-/** Resolves the tsx loader independently of a child's working directory. */
-const require = createRequire(import.meta.url);
-
 const DAEMON_COMMAND: readonly [string, readonly string[]] = [
   process.execPath,
   [join(WORKSPACE_ROOT, "dist/main.js")],
-];
-
-const FIREWALL_DAEMON_COMMAND: readonly [string, readonly string[]] = [
-  process.execPath,
-  [
-    "--conditions=sharness-test",
-    "--import",
-    require.resolve("tsx"),
-    join(WORKSPACE_ROOT, "tests/integration/firewall/firewall-daemon.ts"),
-  ],
 ];
 
 const failed =
@@ -441,10 +427,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
     SHARNESS_DATABASE_URL: Redacted.value(database.url),
   });
   const spawned = (changes: Readonly<Record<string, string>>) =>
-    managedProcess(
-      ...(options.firewall === true ? FIREWALL_DAEMON_COMMAND : DAEMON_COMMAND),
-      { ...environment, ...changes },
-    );
+    managedProcess(...DAEMON_COMMAND, { ...environment, ...changes });
   const bearer = (owner: string) =>
     issuer
       .token(owner, resource)

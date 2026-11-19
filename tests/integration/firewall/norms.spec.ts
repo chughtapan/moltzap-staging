@@ -21,7 +21,7 @@ import {
   writeNorms,
 } from "./policy-fixture.js";
 
-/** Each test starts one daemon under `tsx`. */
+/** Each test starts one daemon. */
 const NORMS_TEST_TIMEOUT_MS = 120_000;
 
 const ask = `(ask :ontology ${exchangeName} :text "A request")`;

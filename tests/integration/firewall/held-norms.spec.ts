@@ -34,7 +34,7 @@ import {
   writeNorms,
 } from "./policy-fixture.js";
 
-/** Each test starts one daemon under `tsx`. */
+/** Each test starts one daemon. */
 const HELD_NORMS_TEST_TIMEOUT_MS = 180_000;
 
 const policyTool = "update_policy";

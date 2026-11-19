@@ -6,7 +6,6 @@ import {
   Effect,
   Exit,
   Layer,
-  Option,
   Schedule,
   Schema,
   Struct,
@@ -195,15 +194,6 @@ interface FirewallService {
     readonly since?: number;
   }) => Effect.Effect<typeof firewallDecisionsSchema.Type, FirewallPolicyError>;
 }
-
-/**
- * A decision provider that replaces the one a message policy configures.
- * Tests provide it around the daemon's own composition, so a process built
- * exactly as `sharnessd` judges text rules without network credentials.
- */
-export class DecisionProviderOverride extends Context.Tag(
-  "SocialHarness/DecisionProviderOverride",
-)<DecisionProviderOverride, DecisionProvider>() {}
 
 /** One agent's firewall: it checks messages against the message policy, edits that policy and reads its saved decisions. */
 export class Firewall extends Context.Tag("SocialHarness/Firewall")<
@@ -727,7 +717,6 @@ function composedPolicy(loaded: LoadedMessagePolicy) {
     if (messagePolicy.text !== undefined && provider === undefined) {
       return yield* new FirewallPolicyError({ reason: "build-failed" });
     }
-    const override = yield* Effect.serviceOption(DecisionProviderOverride);
     return {
       limits: messagePolicy.settings,
       facts: messagePolicy.facts,
@@ -740,8 +729,8 @@ function composedPolicy(loaded: LoadedMessagePolicy) {
               fixedRules: messagePolicy.text?.fixedRules ?? [],
               initialRules: messagePolicy.text?.initialRules ?? [],
               providerSettings: messagePolicy.textSettings,
-              provider: Option.getOrElse(override, () =>
-                retryingTransientFailures(makeJevDecisionProvider(provider)),
+              provider: retryingTransientFailures(
+                makeJevDecisionProvider(provider),
               ),
             },
     } satisfies ComposedMessagePolicy;

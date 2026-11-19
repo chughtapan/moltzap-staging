@@ -62,7 +62,3 @@ policy they captured.
 `Firewall.layer` loads saved editable rules and contracts, seeding them
 from configuration on the first startup. It obtains the daemon's shared `SqlClient` and identity
 through Effect.
-
-The test-only entry exports `DecisionProviderOverride`, which replaces the
-provider a message policy configures, so tests run the daemon's own composition
-without provider credentials.
