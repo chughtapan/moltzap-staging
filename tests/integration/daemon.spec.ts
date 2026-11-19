@@ -1,27 +1,14 @@
 /** @file How the `sharnessd` binary starts and refuses to start and what it keeps across a restart. */
 
-import { FileSystem, HttpClient } from "@effect/platform";
-import { NodeContext, NodeHttpClient } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
-import {
-  databaseConnection,
-  databaseUrl,
-} from "@social-harness/social-harness/test";
-import {
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Redacted,
-  Schedule,
-} from "effect";
+import { FileSystem } from "@effect/platform";
+import { NodeContext } from "@effect/platform-node";
+import { Effect, Schedule } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { runProcess } from "../../scripts/packed-workspace.js";
 import {
   callTool,
-  type Daemon,
   processTrace,
   send,
   SERVER_AGENT_NAME,
@@ -34,7 +21,6 @@ import {
 const BINARY = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";
 const SECRET = "secret-path-value";
-const AGENT_UNAVAILABLE = 503;
 
 /** Each trace starts one daemon, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 180_000;
@@ -160,36 +146,8 @@ const readInbox = (agent: SignedIn, cursor?: string) =>
     Effect.retry(Schedule.spaced("50 millis")),
   );
 
-/** The daemon's database, opened as the daemon opens it. */
-function openDatabase(daemon: Daemon) {
-  return Effect.gen(function* () {
-    const url = yield* databaseUrl.pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(daemon.environment))),
-      ),
-    );
-    return Context.get(
-      yield* Layer.build(databaseConnection(url)),
-      SqlClient.SqlClient,
-    );
-  });
-}
-
-/** The status the daemon answers a request that presents `bearer`. */
-function requestStatus(daemon: Daemon, bearer: Redacted.Redacted) {
-  return HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) =>
-      client.post(daemon.endpoint.href, {
-        headers: { authorization: `Bearer ${Redacted.value(bearer)}` },
-      }),
-    ),
-    Effect.map((response) => response.status),
-    Effect.provide(NodeHttpClient.layer),
-  );
-}
-
 it(
-  "keeps each owner's agent, history and inbox across a restart, where a cursor from before it reads the same entries, and serves the server agent when a client's record is lost",
+  "keeps each owner's agent, history and inbox across a restart, where a cursor from before it reads the same entries",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
@@ -224,7 +182,7 @@ it(
         }),
       );
       yield* stopProcess(original);
-      const restarted = yield* daemon.start();
+      yield* daemon.start();
 
       const client = yield* daemon.signInAs("bob");
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
@@ -246,18 +204,6 @@ it(
       expect(history.records.map((record) => record.message.msgId)).toEqual(
         sent.ids,
       );
-
-      const sql = yield* openDatabase(daemon);
-      yield* sql`DELETE FROM agent_cards WHERE agent_name = ${client.agent.agentName}`;
-      yield* stopProcess(restarted);
-      const serving = yield* daemon.start();
-      expect((yield* daemon.signInAs(SERVER_AGENT_OWNER)).agent).toEqual(
-        sent.server,
-      );
-      expect(yield* requestStatus(daemon, yield* daemon.bearer("bob"))).toBe(
-        AGENT_UNAVAILABLE,
-      );
-      expect(serving.child.exitCode).toBeNull();
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

@@ -1,4 +1,4 @@
-/** @file Each owner is bound to one agent, which keeps its identifiers across connections and interrupted setup, has its own card and resolves the names of the daemon's other agents. */
+/** @file Each owner has one agent, which keeps its identifiers across connections, has its own card and resolves the names of the daemon's other agents. */
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Exit, FastCheck as fc, Layer } from "effect";
@@ -68,23 +68,10 @@ it.prop(
       ]) {
         expect(new Set(identifiers).size).toBe(distinct);
       }
-      expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(distinct);
+      expect(yield* sql`SELECT * FROM agent_cards`).toHaveLength(distinct);
     }).pipe(Effect.provide(database)),
   { fastCheck: { numRuns: 25 } },
 );
-
-it("rolls back the owner binding when saving its card fails", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`ALTER TABLE agent_cards ADD CONSTRAINT reject_card CHECK (false) NOT VALID`;
-    expect(
-      Exit.isFailure(yield* getOrCreateOwnedAgentKey(owner).pipe(Effect.exit)),
-    ).toBeTruthy();
-    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-    yield* sql`ALTER TABLE agent_cards DROP CONSTRAINT reject_card`;
-    const recovered = yield* getOrCreateOwnedAgentKey(owner);
-    expect((yield* cardOf(recovered)).agentName).toMatch(/^agent-/u);
-  }).pipe(Effect.provide(database)));
 
 it("refuses to rename a saved agent", () =>
   Effect.gen(function* () {
