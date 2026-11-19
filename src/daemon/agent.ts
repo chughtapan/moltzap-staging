@@ -43,7 +43,6 @@ import {
   type InboxError,
   type InboxPage,
   MessageAddress,
-  otherMemberNames,
   PAGE_SIZE,
   type SendRequest,
   type SendResult,
@@ -253,11 +252,7 @@ function send(agent: Agent, input: SendRequest) {
         agent.card.agentName,
         agent.settings.hideGroups,
       );
-      const outgoing = yield* outgoingFor(
-        agent,
-        request,
-        otherMemberNames(destination, agent.card.agentName),
-      );
+      const outgoing = yield* outgoingFor(agent, request, destination.others);
       const evidence = yield* evidenceFor(agent, [
         outgoing.author,
         ...outgoing.recipients,
@@ -442,7 +437,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (position !== undefined && position.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-cursor" });
     }
-    const names = otherMemberNames(destination, card.agentName);
+    const names = destination.others;
     const members = yield* communication.getConversation([
       card.agentName,
       ...names,

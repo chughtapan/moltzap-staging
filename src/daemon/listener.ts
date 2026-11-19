@@ -31,16 +31,8 @@ const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
 /** Request admission uses the validated authentication settings without translating them. */
 export type McpAuthentication = DaemonSettings["authentication"];
 
-/** The verified owner selects an agent; expiry bounds the admitted response stream. */
-interface AdmittedCaller {
-  readonly owner: Owner;
-  readonly expiresAt?: number;
-}
-
 /** Admission failures expose no bearer, provider response or identity claims. */
-export class AuthenticationRefused extends Data.TaggedError(
-  "AuthenticationRefused",
-) {}
+class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
 
 /** The running agent of an owner: its tools and its Events calls. */
 type AgentOfOwner<E> = (
@@ -97,12 +89,10 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
           agentOfOwner(owner).pipe(
             Effect.flatMap(mcp),
             Effect.flatMap((response) =>
-              expiresAt === undefined
-                ? response
-                : limitResponseStream(
-                    response,
-                    Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
-                  ),
+              limitResponseStream(
+                response,
+                Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
+              ),
             ),
             Effect.catchAll((error) =>
               Effect.logWarning("Agent unavailable").pipe(
@@ -178,11 +168,6 @@ function protectedResourceResponse(oauth: McpAuthentication): Response {
   );
 }
 
-/** Decides whether a request is admitted, and as which owner. */
-type Admit = (
-  authorization: string,
-) => Effect.Effect<AdmittedCaller, AuthenticationRefused>;
-
 /** Rejected requests disclose only the standard discovery challenge. */
 function authenticationChallenge(authentication: McpAuthentication): Response {
   return new Response("Unauthorized", {
@@ -195,12 +180,11 @@ function authenticationChallenge(authentication: McpAuthentication): Response {
 }
 
 /**
- * Admission of the owner an access token for the resource names. One cached
- * verifier serves every request, including Events and receipts.
+ * Admission of the owner an access token for the resource names, until the
+ * token expires. One cached verifier serves every request, including Events
+ * and receipts.
  */
-function tokenAdmission(
-  oauth: McpAuthentication,
-): Effect.Effect<Admit, AuthenticationRefused> {
+function tokenAdmission(oauth: McpAuthentication) {
   return discoverKeys(oauth).pipe(
     Effect.map(
       (keys) => (authorization: string) =>
