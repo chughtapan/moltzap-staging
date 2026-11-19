@@ -148,6 +148,9 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 0.53.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
+      '@modelcontextprotocol/client':
+        specifier: 'catalog:'
+        version: 2.4.0
       '@modelcontextprotocol/server':
         specifier: 'catalog:'
         version: 2.4.0
@@ -209,9 +212,6 @@ importers:
       '@eslint-community/eslint-plugin-eslint-comments':
         specifier: 'catalog:'
         version: 4.7.2(eslint@9.39.4(jiti@2.7.0))
-      '@modelcontextprotocol/client':
-        specifier: 'catalog:'
-        version: 2.4.0
       '@types/node':
         specifier: 'catalog:'
         version: 25.5.0

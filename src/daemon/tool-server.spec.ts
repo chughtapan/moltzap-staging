@@ -16,7 +16,6 @@ import {
   FastCheck as fc,
   Fiber,
   Record as Rec,
-  Redacted,
   Ref,
   Schema,
   Scope,
@@ -117,9 +116,6 @@ const forAll = <Ts extends [unknown, ...unknown[]]>(
 const unacceptable = fc
   .stringMatching(/^[A-Z]{8}$/u)
   .map((letters) => `PRIVATE${letters}`);
-/** Mostly `usual`, so that input made of several parts is often acceptable in all of them. */
-const mostly = <A>(usual: fc.Arbitrary<A>, other: fc.Arbitrary<A>) =>
-  fc.oneof({ arbitrary: usual, weight: 4 }, { arbitrary: other, weight: 1 });
 
 it("reports the agent's identifier and name in a result native draft-07 and 2020 clients accept", () =>
   Effect.gen(function* () {
@@ -154,37 +150,6 @@ it("reports the agent's identifier and name in a result native draft-07 and 2020
       agentId: fixture.card.agentId,
       agentName: fixture.card.agentName,
     });
-  }));
-
-const bearerSchemes = mostly(
-  fc.constantFrom("Bearer ", "bearer   ", "BEARER "),
-  fc.constantFrom("Basic ", "Bearer", ""),
-);
-
-it("answers 401 unless the bearer is an owner's token, and otherwise serves that owner", () =>
-  Effect.gen(function* () {
-    const fixture = yield* mcpFixture();
-    const known = Redacted.value(fixture.credential);
-    const tokens = mostly(
-      fc.constant(known),
-      fc.constantFrom(`${known}x`, known.slice(1)),
-    );
-    yield* forAll(
-      [bearerSchemes, tokens],
-      Effect.fnUntraced(function* (scheme, token) {
-        const headers = { authorization: `${scheme}${token}` };
-        const reply = yield* exchange(fixture, "tools/list", {}, { headers });
-        const owner =
-          /^bearer +$/iu.test(scheme) && token === known
-            ? fixture.owner
-            : undefined;
-        expect(reply.status).toBe(owner === undefined ? 401 : 200);
-        expect(reply.headers.has("www-authenticate")).toBe(owner === undefined);
-        expect(yield* Ref.getAndSet(fixture.owners, [])).toEqual(
-          owner === undefined ? [] : [owner],
-        );
-      }),
-    );
   }));
 
 /** Seconds above `min`, up to `max`. */

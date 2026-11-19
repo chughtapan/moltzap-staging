@@ -39,8 +39,14 @@ export const issuerFixture = Effect.fn("issuerFixture")(function* (
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       return yield* HttpServerResponse.json(
-        request.url === "/.well-known/openid-configuration"
-          ? { issuer, jwks_uri: `${issuer}jwks` }
+        request.url.startsWith("/.well-known/")
+          ? {
+              issuer,
+              jwks_uri: `${issuer}jwks`,
+              authorization_endpoint: `${issuer}authorize`,
+              token_endpoint: `${issuer}token`,
+              response_types_supported: ["code"],
+            }
           : { keys: [{ ...publicKey, kid, alg: "RS256" }] },
       ).pipe(Effect.orDie);
     }),

@@ -54,8 +54,8 @@ OAuth authentication takes these properties:
 | `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
 | `scope` | Required access-token scope |
 
-Requests require the configured resource Host. Requests
-with an Origin header are refused.
+A request's Host header names the resource's hostname, and so does its Origin
+header when it sends one.
 
 The exact issuer and subject select one agent. A host
 that runs unattended presents a token the identity provider issued to it, and
