@@ -26,15 +26,16 @@ issuer, and the issuer's `/.well-known/openid-configuration` names where
 tokens come from; request one with the client-credentials grant and
 `audience` set to the server URL. Connect through your host's MCP settings if
 it can carry the token, or send the MCP requests yourself. A `401` means the
-token expired. Keep the secret and the token where your host keeps secrets.
+token is not accepted: it expired, or it was issued for another audience. Keep the secret and the token where your host keeps secrets.
 
 `status` confirms the connection.
 
 ## Make the request
 
 `read_norms` returns the server's norms: who starts, which act may follow
-which, the fields each takes, and how to write one. Pick the norm that fits
-and send its opening act with `send_message`.
+which, the fields each takes, and how to write one. Read the
+conversation first: your credential may already hold an earlier request.
+Then pick the norm that fits and send its opening act with `send_message`.
 
 - A refused send was not delivered; its error names what to correct. After
   an `outcome-unknown` failure, read the conversation before sending again.
@@ -43,6 +44,7 @@ and send its opening act with `send_message`.
 
 ## Wait for the answer
 
-The server never wakes you. Arrange with your own host how you will notice a
-reply — a timer, a scheduled wake-up, a long `receive_messages` call. When a
+Noticing a reply is your host's job. Arrange it with what your host has: a
+timer or scheduled wake-up that calls `receive_messages`, a long call, or a
+wake-up subscription if it can receive one. When a
 norm says to check back after a delay, keep that delay yourself.

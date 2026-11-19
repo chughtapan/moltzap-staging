@@ -25,7 +25,8 @@ issuer, and the issuer's `/.well-known/openid-configuration` names where
 tokens come from; a client ID and secret get one with the client-credentials
 grant and `audience` set to the server URL. Connect through your host's MCP
 settings if it can carry the token, or send the MCP requests yourself. A
-`401` means the token expired. Keep the secret and the token where your host
+`401` means the token is not accepted: it expired, or it was issued for
+another audience. Keep the secret and the token where your host
 keeps secrets.
 
 `status` must return the server agent's name your owner chose.
@@ -45,6 +46,6 @@ address, naming the message you answer.
 
 ## Stay available
 
-The server never wakes you. Arrange with your own host how you will notice
-new requests — a timer, a scheduled wake-up, a long `receive_messages` call —
-and tell your owner how long a client may wait as a result.
+Noticing a new request is your host's job. Arrange it with what your host
+has — a timer or scheduled wake-up that calls `receive_messages`, a long
+call, or a wake-up subscription if it can receive one — and tell your owner how long a client may wait as a result.
