@@ -104,13 +104,7 @@
       "typecheck": {
         "command": "tsc -p tsconfig.check.json",
         "dependsOn": [
-          "build",
-          {
-            "projects": [
-              "@social-harness/openclaw-channel"
-            ],
-            "target": "build"
-          }
+          "build"
         ]
       },
       "test:pack": {

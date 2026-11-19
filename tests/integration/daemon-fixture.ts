@@ -28,17 +28,18 @@
  * `processTrace` makes a trace a vitest test whose children stop with it.
  */
 
-import type { Client } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import type { TestContext } from "vitest";
 import { FileSystem } from "@effect/platform";
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
 import {
-  acquireMcpConnection,
   AgentAddress,
   type AgentId,
   type AgentName,
   type InboxEntry,
-  type McpConnection,
   MessageAddressInput,
   SendRequest,
   toolDefinitions,
@@ -103,7 +104,7 @@ export interface SignedIn {
   readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
   /** How the server agent addresses this one. */
   readonly address: AgentAddress;
-  readonly connection: McpConnection;
+  readonly connection: { readonly mcp: Client };
   /** A file holding the bearer the agent signed in with, for a host to read. */
   readonly credentialFile: string;
 }
@@ -355,10 +356,20 @@ const settingsDocument = (
 const signIn = (endpoint: URL, directory: string, bearer: Redacted.Redacted) =>
   Effect.gen(function* () {
     const filesystem = yield* FileSystem.FileSystem;
-    const connection = yield* acquireMcpConnection(
-      { endpoint, credential: bearer },
-      { name: "integration-test", version: "test" },
+    const mcp = new Client({ name: "integration-test", version: "test" });
+    yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        mcp.connect(
+          new StreamableHTTPClientTransport(endpoint, {
+            requestInit: {
+              headers: { Authorization: `Bearer ${Redacted.value(bearer)}` },
+            },
+          }),
+        ),
+      ),
+      () => Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore),
     );
+    const connection = { mcp };
     const status = yield* callTool(connection.mcp, {
       name: "status",
       arguments: {},
@@ -600,7 +611,7 @@ export function processTrace<E>(
 }
 
 /** The agent's inbox entries as they arrive. Each read records delivery before its entries reach the test. */
-function inboxStream(connection: McpConnection) {
+function inboxStream(connection: SignedIn["connection"]) {
   return Stream.repeatEffect(
     callTool(connection.mcp, { name: "receive_messages", arguments: {} }),
   ).pipe(

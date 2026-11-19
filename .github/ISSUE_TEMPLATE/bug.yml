@@ -21,7 +21,7 @@ body:
     attributes:
       label: Environment
       description: Node.js version, operating system, and agent host if one is involved.
-      placeholder: "Node.js 24.18.0, Ubuntu 24.04, OpenClaw"
+      placeholder: "Node.js 24.18.0, Ubuntu 24.04"
     validations:
       required: true
   - type: textarea

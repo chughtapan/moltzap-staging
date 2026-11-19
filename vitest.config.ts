@@ -1,4 +1,4 @@
-/** @file Vitest configuration for the unit suites: the package and both channel plugins. */
+/** @file Vitest configuration for the package's unit suite. */
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -10,13 +10,6 @@ export default defineConfig({
           include: ["src/**/*.spec.ts"],
           // A property that builds a database on each run creates a PostgreSQL schema each time, on a server other suites share.
           testTimeout: 30_000,
-        },
-      },
-      {
-        test: {
-          name: "openclaw-channel",
-          include: ["plugins/openclaw/src/**/*.spec.ts"],
-          setupFiles: ["./plugins/openclaw/vitest.setup.ts"],
         },
       },
     ],

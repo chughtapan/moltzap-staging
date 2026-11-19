@@ -253,9 +253,9 @@ export const packProductClosure = Effect.fn(
 });
 
 /**
- * Consumer installs use the workspace's Effect override and its TypeScript and
- * OpenClaw catalog entries, including npm aliases, so they exercise the
- * versions the workspace builds.
+ * Consumer installs use the workspace's Effect override and its TypeScript
+ * catalog entry, including its npm alias, so they exercise the versions the
+ * workspace builds.
  * @param workspaceRoot Source workspace root.
  * @returns Dependency specifiers for the isolated consumer.
  */
@@ -265,7 +265,6 @@ export const readConsumerPins = Effect.fn("packedWorkspace.readConsumerPins")(
       workspaceRoot,
       Schema.Struct({
         catalog: Schema.Struct({
-          openclaw: Schema.String,
           typescript: Schema.String,
         }),
         overrides: Schema.Struct({ effect: Schema.String }),
@@ -273,7 +272,6 @@ export const readConsumerPins = Effect.fn("packedWorkspace.readConsumerPins")(
     );
     return {
       effect: workspace.overrides.effect,
-      openclaw: workspace.catalog.openclaw,
       typescript: workspace.catalog.typescript,
     };
   },
