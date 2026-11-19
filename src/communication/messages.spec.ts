@@ -14,9 +14,9 @@ import {
 } from "effect";
 import { expect, it as vitestIt } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
+import { GroupAddress } from "./groups.js";
 import {
   Content,
-  GroupAddress,
   Message,
   MessageAddressInput,
   messageWithId,

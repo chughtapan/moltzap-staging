@@ -4,9 +4,6 @@
 export {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  GROUP_ADDRESS_PREFIX,
-  GroupAddress,
-  maximumMembers,
   Message,
   MessageAddressInput,
   MessageReference,
@@ -18,6 +15,14 @@ export {
   validateResponseContent,
   wellFormedString,
 } from "./messages.js";
+/** Group addresses, which only P2P mode offers. */
+export {
+  GROUP_ADDRESS_PREFIX,
+  GroupAddress,
+  groupAddressOf,
+  groupMembers,
+  maximumMembers,
+} from "./groups.js";
 /** Why a send or a read was refused. */
 export {
   CommunicationError,
