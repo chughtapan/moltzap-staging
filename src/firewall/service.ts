@@ -95,7 +95,6 @@ import {
 export interface ComposedMessagePolicy {
   readonly limits: CheckLimits;
   readonly facts: CheckEvidence["facts"];
-  readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
   readonly text?: {
     readonly fixedRules?: readonly TextRule[];
@@ -613,7 +612,6 @@ function composedPolicy(loaded: LoadedMessagePolicy) {
     return {
       limits: messagePolicy.settings,
       facts: messagePolicy.facts,
-      maximumHistoryRecords: messagePolicy.maximumHistoryRecords,
       maximumConcurrentChecks: messagePolicy.maximumConcurrentChecks,
       text:
         provider === undefined
@@ -634,7 +632,6 @@ function capturePolicy(composed: ComposedMessagePolicy) {
   return Effect.gen(function* () {
     const configuration = yield* decodeFrozen(firewallConfigurationSchema, {
       facts: composed.facts,
-      maximumHistoryRecords: composed.maximumHistoryRecords ?? 256,
       maximumConcurrentChecks: composed.maximumConcurrentChecks ?? 4,
     });
     const limits = yield* decodeFrozen(CheckLimits, composed.limits);

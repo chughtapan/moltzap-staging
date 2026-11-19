@@ -526,15 +526,14 @@ interface BehaviorLoad {
   readonly initialRuleCount: number;
 }
 
-/** Operational evidence limits are part of the installed policy identity. */
+/** The owner facts and the check concurrency limit are part of the installed policy identity. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Installing a policy validates fixed settings with the same grammar saved checks decode.
 export const firewallConfigurationSchema = Schema.Struct({
   facts: Schema.Array(OwnerFact),
-  maximumHistoryRecords: Schema.Int.pipe(Schema.between(1, 1024)),
   maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
 });
 
-/** Evidence limits and fixed facts are immutable for a process installation. */
+/** The fixed facts and the concurrency limit are immutable for a process installation. */
 export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
