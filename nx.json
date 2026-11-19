@@ -16,6 +16,11 @@
       "default",
       "!{projectRoot}/safer-architecture.config.json"
     ],
+    "lintConfiguration": [
+      "{workspaceRoot}/eslint.config.ts",
+      "{workspaceRoot}/knip.json",
+      "{workspaceRoot}/tsconfig.check.json"
+    ],
     "workspaceFiles": [
       "{workspaceRoot}/**/*"
     ],
@@ -83,9 +88,7 @@
       "inputs": [
         "default",
         "^production",
-        "{workspaceRoot}/eslint.config.ts",
-        "{workspaceRoot}/knip.json",
-        "{workspaceRoot}/tsconfig.check.json"
+        "lintConfiguration"
       ],
       "cache": true
     },

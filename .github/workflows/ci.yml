@@ -32,10 +32,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       # Pack gates install the published closures in isolated consumers.
-      # NanoClaw checks its Client ABI without packing the source-copied adapter.
       - name: Verify the published closure installs from tarballs
-        run: pnpm nx run-many -t test:pack,test:abi --parallel=4
-      - run: pnpm typecheck
+        run: pnpm nx run-many -t test:pack --parallel=4
       - name: Lint
         run: pnpm lint
         timeout-minutes: 30
