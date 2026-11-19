@@ -5,7 +5,7 @@
  * issuer and returns it without starting it:
  *
  * - `endpoint`, `directory`, `environment`: where the daemon listens, the
- *   directory holding its settings file and credential files, and the
+ *   directory holding its settings file, and the
  *   environment its process reads.
  * - `start(environment?)`: runs the process until its scope closes or
  *   `stopProcess` stops it. Starting again serves the same database.
@@ -28,17 +28,18 @@
  * `processTrace` makes a trace a vitest test whose children stop with it.
  */
 
-import type { Client } from "@modelcontextprotocol/client";
 import type { TestContext } from "vitest";
 import { FileSystem } from "@effect/platform";
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
 import {
-  acquireMcpConnection,
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import {
   AgentAddress,
   type AgentId,
   type AgentName,
   type InboxEntry,
-  type McpConnection,
   MessageAddressInput,
   SendRequest,
   toolDefinitions,
@@ -103,9 +104,7 @@ export interface SignedIn {
   readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
   /** How the server agent addresses this one. */
   readonly address: AgentAddress;
-  readonly connection: McpConnection;
-  /** A file holding the bearer the agent signed in with, for a host to read. */
-  readonly credentialFile: string;
+  readonly connection: { readonly mcp: Client };
 }
 
 /** A prepared daemon. The file comment lists what each member is for. */
@@ -350,32 +349,35 @@ const settingsDocument = (
 
 /**
  * Connects to the daemon at `endpoint` as the holder of `bearer`, reads its
- * agent from `status` and saves the bearer in `directory`.
+ * agent from `status`.
  */
-const signIn = (endpoint: URL, directory: string, bearer: Redacted.Redacted) =>
+const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   Effect.gen(function* () {
-    const filesystem = yield* FileSystem.FileSystem;
-    const connection = yield* acquireMcpConnection(
-      { endpoint, credential: bearer },
-      { name: "integration-test", version: "test" },
+    const mcp = new Client({ name: "integration-test", version: "test" });
+    yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        mcp.connect(
+          new StreamableHTTPClientTransport(endpoint, {
+            requestInit: {
+              headers: { Authorization: `Bearer ${Redacted.value(bearer)}` },
+            },
+          }),
+        ),
+      ),
+      () => Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore),
     );
+    const connection = { mcp };
     const status = yield* callTool(connection.mcp, {
       name: "status",
       arguments: {},
-    });
-    const credentialFile = join(directory, `${status.agentName}.credential`);
-    yield* filesystem.writeFileString(credentialFile, Redacted.value(bearer), {
-      mode: 0o600,
     });
     return {
       agent: { agentId: status.agentId, agentName: status.agentName },
       address: AgentAddress.make(`agent:${status.agentName}`),
       connection,
-      credentialFile,
     };
   }).pipe(
     Effect.mapError(failed("could not sign in to the daemon")),
-    Effect.provide(NodeFileSystem.layer),
     Effect.withSpan("signIn"),
   );
 
@@ -452,9 +454,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
     configure,
     bearer,
     signInAs: (owner) =>
-      Effect.flatMap(bearer(owner), (presented) =>
-        signIn(endpoint, directory, presented),
-      ),
+      Effect.flatMap(bearer(owner), (presented) => signIn(endpoint, presented)),
   };
   return daemon;
 }, Effect.provide(NodeFileSystem.layer));
@@ -600,7 +600,7 @@ export function processTrace<E>(
 }
 
 /** The agent's inbox entries as they arrive. Each read records delivery before its entries reach the test. */
-function inboxStream(connection: McpConnection) {
+function inboxStream(connection: SignedIn["connection"]) {
   return Stream.repeatEffect(
     callTool(connection.mcp, { name: "receive_messages", arguments: {} }),
   ).pipe(

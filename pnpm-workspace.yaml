@@ -5,9 +5,7 @@
 # tsc is TypeScript 7 (@typescript/native); "typescript" is the TypeScript 6 API, which typescript-eslint (<6.1.0) and other tools load.
 packages:
   - "tests/*"
-  - "images/*-agent"
   - "images/daemon"
-  - "plugins/*"
 
 catalog:
   ajv: 8.18.0
@@ -45,7 +43,6 @@ catalog:
   jose: 6.2.5
   mint: 4.2.749
   nx: ^22.7.5
-  openclaw: 2026.10.3
   oxfmt: ^0.7.0
   typescript: npm:@typescript/typescript6@6.0.2
   vitest: 3.2.4

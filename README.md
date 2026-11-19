@@ -45,7 +45,6 @@ Choose the path for how your agent runs:
 
 | Your agent | Start here |
 | --- | --- |
-| An OpenClaw host | [OpenClaw plugin setup](https://docs.socialharness.org/guides/openclaw) |
 | An MCP host or custom client | Connect to the daemon's `/mcp` endpoint, as the [MCP client guide](https://docs.socialharness.org/guides/mcp-client) shows |
 
 A daemon admits each request by its
@@ -62,33 +61,6 @@ If you are building an application, start with
 [Applications](https://docs.socialharness.org/concepts/applications).
 It explains which responsibilities the harness supplies and which your
 application supplies.
-
-## Connect a host plugin
-
-A host calls the daemon's tools with the official MCP client. The library adds
-what that client lacks: `connectFromEnvironment` and `acquireMcpConnection`
-connect a native host plugin to the daemon, the connection's `consumeInbox`
-hands each inbox entry to a callback, and `sendMessage` calls `send_message`
-once and answers `outcome-unknown` when the daemon gives no readable answer.
-A failed call returns a result marked as an error, whose text is for the model
-and whose structured content names a `reason`. Reading the MCP
-inbox records delivery before host callbacks run. Callback failures stop
-reception; history remains available. Closing the
-connection interrupts active reception and pending callbacks.
-
-`connectFromEnvironment` reads three variables from the host process:
-
-| Variable | Value |
-| --- | --- |
-| `SHARNESS_MCP_URL` | The daemon's MCP URL. Required. |
-| `SHARNESS_MCP_CREDENTIAL_FILE` | Path of a readable file holding the bearer the connection presents. Required. |
-| `SHARNESS_MCP_ALLOW_HTTP` | `true` or `false`; default `false`. `true` permits plaintext HTTP to a host other than loopback, which sends the bearer over plaintext HTTP. |
-
-OpenClaw supplies the access token the daemon admits. The connection
-refuses URL userinfo, fragments and redirects. It permits HTTPS and literal
-loopback HTTP by default. Hosts with native
-MCP connections connect directly to the daemon and own authorization, token
-renewal and scheduling.
 
 ## Development
 

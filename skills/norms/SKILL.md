@@ -27,9 +27,6 @@ the shared `send_message` input to answer a request is:
 }
 ```
 
-With OpenClaw's native `message` tool, the destination is `target`, the act
-text is `message`, and the reference is `replyTo`; select channel `sharness`.
-
 An error describes the attempted message's failed check. Assess the error
 against what you intended to communicate. A refused attempt does not undo
 earlier admitted messages.

@@ -114,13 +114,14 @@ export const runCommand = Effect.fn("packedWorkspace.runCommand")(
  * @param path File to read.
  * @param schema Shape the parsed JSON must have.
  */
-export const readJsonFile = Effect.fn("packedWorkspace.readJsonFile")(
-  function* <A, I>(path: string, schema: Schema.Schema<A, I>) {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs.readFileString(path);
-    return yield* Schema.decodeUnknown(Schema.parseJson(schema))(text);
-  },
-);
+const readJsonFile = Effect.fn("packedWorkspace.readJsonFile")(function* <A, I>(
+  path: string,
+  schema: Schema.Schema<A, I>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(path);
+  return yield* Schema.decodeUnknown(Schema.parseJson(schema))(text);
+});
 
 /**
  * Run a pack gate as the process entry point: provide the Node services and a
@@ -253,9 +254,8 @@ export const packProductClosure = Effect.fn(
 });
 
 /**
- * Consumer installs use the workspace's Effect override and its TypeScript and
- * OpenClaw catalog entries, including npm aliases, so they exercise the
- * versions the workspace builds.
+ * Consumer installs use the workspace's Effect override, so they exercise the
+ * version the workspace builds.
  * @param workspaceRoot Source workspace root.
  * @returns Dependency specifiers for the isolated consumer.
  */
@@ -264,73 +264,14 @@ export const readConsumerPins = Effect.fn("packedWorkspace.readConsumerPins")(
     const workspace = yield* readWorkspaceSettings(
       workspaceRoot,
       Schema.Struct({
-        catalog: Schema.Struct({
-          openclaw: Schema.String,
-          typescript: Schema.String,
-        }),
         overrides: Schema.Struct({ effect: Schema.String }),
       }),
     );
     return {
       effect: workspace.overrides.effect,
-      openclaw: workspace.catalog.openclaw,
-      typescript: workspace.catalog.typescript,
     };
   },
 );
-
-/**
- * Read one text file, failing with `missing` when the file system refuses.
- * @param path File to read.
- * @param missing Failure message when the file is absent or unreadable.
- */
-export const readText = Effect.fn("packedWorkspace.readText")(function* (
-  path: string,
-  missing: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  return yield* fs
-    .readFileString(path)
-    .pipe(
-      Effect.catchTag("SystemError", () =>
-        Effect.fail(new PackGateError({ message: missing })),
-      ),
-    );
-});
-
-/**
- * Invoke the installed compiler through its declared executable; catalog aliases
- * may expose a versioned command name.
- * @param consumerRoot Isolated consumer with TypeScript installed.
- */
-export const checkConsumerTypes = Effect.fn(
-  "packedWorkspace.checkConsumerTypes",
-)(function* (consumerRoot: string) {
-  const compilerRoot = join(consumerRoot, "node_modules", "typescript");
-  const compiler = yield* readJsonFile(
-    join(compilerRoot, "package.json"),
-    Schema.Struct({
-      bin: Schema.Record({ key: Schema.String, value: Schema.String }),
-    }),
-  );
-  const target = Object.entries(compiler.bin).find(([name]) =>
-    /^tsc\d*$/u.test(name),
-  )?.[1];
-  if (target === undefined) {
-    return yield* new PackGateError({
-      message: "TypeScript declares no compiler executable",
-    });
-  }
-  yield* runCommand(
-    process.execPath,
-    [
-      join(compilerRoot, target),
-      "--project",
-      join(consumerRoot, "tsconfig.json"),
-    ],
-    { cwd: consumerRoot },
-  );
-});
 
 /**
  * Create a consumer project under `temporaryRoot/consumer` that depends on

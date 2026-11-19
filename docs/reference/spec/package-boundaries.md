@@ -11,12 +11,11 @@ host integrations under the [constitution](../constitution.md#the-constitution).
 
 ## Package dependencies
 
-Production dependencies among the three product packages are:
+The one product package is:
 
 | Package | May depend on | Owns |
 |---|---|---|
 | `@social-harness/social-harness` | none | Identity, communication, history, firewalls, norms, daemon MCP and `sharnessd` |
-| `@social-harness/openclaw-channel` | `@social-harness/social-harness` | OpenClaw host integration |
 
 The private `@social-harness/integration-tests` workspace consumes products as development
 dependencies, outside the product graph and release set. Products cannot depend
@@ -28,7 +27,7 @@ Three library entries expose named exports:
 
 | Entry | Audience and boundary |
 |---|---|
-| `@social-harness/social-harness` | For a host that calls the daemon with the official MCP client: the tool contracts and the values they carry, a connection made from the host's environment with its inbox reader, a send whose outcome is always stated, and the identifiers and name of an agent |
+| `@social-harness/social-harness` | For a host that calls the daemon with the official MCP client: the tool contracts and the values they carry, and the identifiers and name of an agent |
 | `@social-harness/social-harness/service` | Daemon composition and database preparation |
 | `@social-harness/social-harness/test` | A test database, its restricted login and an OAuth issuer on this machine |
 

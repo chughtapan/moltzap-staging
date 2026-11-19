@@ -1,8 +1,0 @@
-{
-  "apps": {
-    "sharness": {
-      "id": "REPLACE_WITH_REGISTERED_MCP_APP_ID",
-      "required": true
-    }
-  }
-}

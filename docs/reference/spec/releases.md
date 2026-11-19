@@ -10,14 +10,13 @@ A release identifies packages and images that were built and tested together.
 
 ## Publication and versions
 
-`@social-harness/social-harness` and `@social-harness/openclaw-channel` publish to npm.
-The daemon and the OpenClaw agent ship
-as signed images.
+`@social-harness/social-harness` publishes to npm.
+The daemon ships
+as a signed image.
 
-Every release publishes both packages and both images at one version,
+Every release publishes the package and the image at one version,
 `YYYY.MDD.N`: the UTC date and one past the highest counter that npm or a
-`v<version>` tag already holds for that day. The OpenClaw channel depends on
-the exact Social Harness package version released with it. The package version
+`v<version>` tag already holds for that day. The package version
 and the MCP protocol revision advance independently.
 
 The [release workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/release.yml)
@@ -31,7 +30,6 @@ pull requests and the image digests.
 Image names are:
 
 - `ghcr.io/social-harness/daemon`
-- `ghcr.io/social-harness/openclaw-agent`
 
 Each is an OCI index for `linux/amd64` and `linux/arm64`, built from the
 release commit and tagged `<version>` and `sha-<commit>`.
@@ -54,8 +52,7 @@ After the GitHub release exists, dispatch
 ```json
 {
   "version": "<calendar version>",
-  "daemon": "ghcr.io/social-harness/daemon@sha256:<digest>",
-  "openclaw-agent": "ghcr.io/social-harness/openclaw-agent@sha256:<digest>"
+  "daemon": "ghcr.io/social-harness/daemon@sha256:<digest>"
 }
 ```
 

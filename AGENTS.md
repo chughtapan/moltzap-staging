@@ -39,7 +39,7 @@ and delivers their messages. npm packages use the `@social-harness` scope.
 Executables use `sharness*`, environment variables use `SHARNESS_*`, and
 protocol namespaces use `org.social-harness/*`.
 
-The daemon and OpenClaw images live under
+The daemon image lives under
 `images/`; private product overlays stay in deployment. Image publication follows
 [Publication and versions](docs/reference/spec/releases.md#publication-and-versions).
 
@@ -152,7 +152,6 @@ Dockerfile `FROM`, or the manifest of something built outside the workspace.
 | Supported Node.js range | `engines.node` in the root `package.json` |
 | Node.js for development and CI | `.node-version` |
 | pnpm | `packageManager` in the root `package.json` |
-| OpenClaw support floor | `peerDependencies.openclaw` in `plugins/openclaw/package.json` |
 | GitHub Action | its one `uses:` ref; pnpm and Node setup live in `.github/actions/setup-toolchain` |
 
 ## Code

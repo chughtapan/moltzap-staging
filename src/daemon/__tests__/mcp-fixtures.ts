@@ -1,14 +1,11 @@
 /** @file MCP tests substitute service behavior while exercising the real protocol and HTTP boundary. */
 import { HttpApp, HttpClient } from "@effect/platform";
-import { NodeHttpServer } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Redacted, Ref, Stream } from "effect";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
-import { createServer } from "node:http";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
@@ -123,29 +120,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     },
     card,
   };
-});
-
-/**
- * An `mcpFixture` served at `endpoint` on this machine. The listener and
- * every in-flight request belong to the calling scope.
- */
-export const loopbackMcpFixture = Effect.fn(function* (
-  options: Omit<Parameters<typeof mcpFixture>[0], "resource">,
-) {
-  const server = yield* NodeHttpServer.make(createServer, {
-    host: "127.0.0.1",
-    port: 0,
-  });
-  if (server.address._tag !== "TcpAddress") {
-    return yield* Effect.dieMessage("Expected TCP listener");
-  }
-  const host = `127.0.0.1:${server.address.port}`;
-  const fixture = yield* mcpFixture({
-    ...options,
-    resource: new URL(`https://${host}/mcp`),
-  });
-  yield* server.serve(fixture.app);
-  return { ...fixture, endpoint: new URL(`http://${host}/mcp`) };
 });
 
 /** A stock client connects through HTTP encoding and closes with the test scope. */
