@@ -27,6 +27,7 @@ import {
 } from "../encoding.js";
 import { AGENT_NAME_RULE, AgentCard, AgentId, AgentName } from "../identity.js";
 import { CommunicationError, issuesText } from "./errors.js";
+import { groupMemberNames, maximumMembers } from "./groups.js";
 
 /** The byte limit of one message's content as JSON text. */
 const maximumContentBytes = 32_768;
@@ -112,9 +113,6 @@ export const Content = contentStructure.pipe(
 /** Validated nonempty semantic content. */
 export type Content = typeof Content.Type;
 
-/** The largest group membership a conversation address or descriptor admits. */
-export const maximumMembers = 32;
-
 const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
 const ConversationMembers = exactStruct({
   kind: Schema.Literal("conversation_identity"),
@@ -149,8 +147,6 @@ export const deriveConversationId = (
 
 /** The scheme of an address naming one agent. */
 export const AGENT_ADDRESS_PREFIX = "agent:";
-/** The scheme of an address listing a group's members. */
-export const GROUP_ADDRESS_PREFIX = "group:";
 
 const isAgentName = Schema.is(AgentName);
 
@@ -167,26 +163,11 @@ const parseAgentAddress = (value: string): string | undefined => {
   return isAgentName(name) ? name : undefined;
 };
 
-/**
- * The names a `group:` address lists, in the order given.
- * @param value A candidate address.
- * @returns The names, or undefined when the value is not a group address.
- */
-const parseGroupAddress = (value: string): readonly string[] | undefined => {
-  if (!value.startsWith(GROUP_ADDRESS_PREFIX)) {
-    return undefined;
-  }
-  const names = value.slice(GROUP_ADDRESS_PREFIX.length).split(",");
-  return names.length > 0 && names.every((name) => isAgentName(name))
-    ? names
-    : undefined;
-};
-
 const addressInput = Schema.String.pipe(
   Schema.filter(
     (value) =>
       parseAgentAddress(value) !== undefined ||
-      parseGroupAddress(value) !== undefined,
+      groupMemberNames(value) !== undefined,
     {
       identifier: "MessageAddressInput",
       description: `agent:<name>, or group: then agent names separated by commas, with no spaces and no agent: prefix; a name is ${AGENT_NAME_RULE}`,
@@ -206,18 +187,6 @@ export const AgentAddress = addressInput.pipe(
  * @useDeclaredType
  */
 export type AgentAddress = typeof AgentAddress.Type;
-
-/** A complete fixed-member group address in unsigned ASCII name order. */
-export const GroupAddress = addressInput.pipe(
-  Schema.filter(isCanonicalGroupAddress),
-  Schema.brand("GroupAddress"),
-  Schema.annotations({ identifier: "GroupAddress" }),
-);
-/**
- * A validated canonical group address.
- * @useDeclaredType
- */
-export type GroupAddress = typeof GroupAddress.Type;
 
 /** Either address as a host may write it, with a group's names in any order. */
 export const MessageAddressInput = addressInput;
@@ -766,18 +735,6 @@ function contentFits(
         utf8Encoder.encode(text).byteLength <= maximumContentBytes,
     },
   );
-}
-
-function isCanonicalGroupAddress(value: string): boolean {
-  const names = parseGroupAddress(value);
-  if (
-    names === undefined ||
-    names.length < 3 ||
-    names.length > maximumMembers
-  ) {
-    return false;
-  }
-  return isStrictlyAscending(names, compareAscii);
 }
 
 function keyword<A, I>(schema: Schema.Schema<A, I>, expected: string) {

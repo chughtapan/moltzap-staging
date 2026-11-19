@@ -17,9 +17,9 @@
  * - `signIn(bearer)` and `signInAs(owner)`: an MCP connection, and the agent
  *   `status` reports for it.
  *
- * The options are settings that replace the fixture's, and the firewall
- * variant of the daemon. `managedProcess`, `awaitReady` and `daemonListening`
- * start and await a daemon that runs some other way, such as in a container.
+ * The options are settings that replace the fixture's. `managedProcess`,
+ * `awaitReady` and `daemonListening` start and await a daemon that runs some
+ * other way, such as in a container.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -53,10 +53,6 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  markedPolicy,
-  writeMessagePolicy,
-} from "../firewall/policy-fixture.js";
 import { callTool } from "../tool-call.js";
 
 /** A fixture failure, with the child's output when it has any. */
@@ -81,11 +77,6 @@ export interface RunningProcess {
 export interface DaemonOptions {
   /** Settings that replace the fixture's: a message policy, norms. */
   readonly settings?: Readonly<Record<string, unknown>>;
-  /**
-   * Gives the daemon the marked message policy, whose text rules the marked
-   * provider judges, unless the settings name another.
-   */
-  readonly firewall?: true;
 }
 
 /** A signed-in owner: its agent and an MCP connection as that agent. */
@@ -415,12 +406,6 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
       scope: requiredScope,
     },
     serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
-    ...(options.firewall === true &&
-    options.settings?.messagePolicyFile === undefined
-      ? yield* writeMessagePolicy(directory, markedPolicy()).pipe(
-          Effect.mapError(failed("could not write the message policy")),
-        )
-      : {}),
     ...options.settings,
   });
   yield* prepare({

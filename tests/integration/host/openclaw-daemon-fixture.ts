@@ -252,14 +252,9 @@ export const acquireScenario = Effect.fn("acquireScenario")(function* (
   return scenario;
 });
 
-/**
- * A daemon whose server agent is the host's and runs the marked message
- * policy. The two others are clients, whose messages only the server agent's
- * firewall checks.
- */
-export const acquireGuardedServer = acquireScenario(
-  { firewall: true },
-  (daemon) => daemon.signInAs(SERVER_AGENT_OWNER),
+/** A daemon whose server agent is the host's. The two others are clients. */
+export const acquireServer = acquireScenario({}, (daemon) =>
+  daemon.signInAs(SERVER_AGENT_OWNER),
 );
 
 /** Loads the real plugin and validates its host-facing registration hooks. */

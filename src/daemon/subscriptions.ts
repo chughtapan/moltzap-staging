@@ -38,6 +38,7 @@ import {
   type Scope,
   Stream,
 } from "effect";
+import ipaddr from "ipaddr.js";
 import {
   createHash,
   createHmac,
@@ -45,7 +46,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { lookup } from "node:dns";
-import { BlockList, isIP, type LookupFunction } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
 import { plainUrl } from "../encoding.js";
 import {
@@ -77,48 +78,12 @@ export interface WebhookPost {
   readonly timestamp: number;
 }
 
-/* eslint-disable sonarjs/no-hardcoded-ip -- These are excluded address ranges for callback SSRF defense, never configured endpoints. */
-const blockedV4 = new BlockList();
-for (const [address, prefix] of [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.0.2.0", 24],
-  ["192.88.99.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["198.51.100.0", 24],
-  ["203.0.113.0", 24],
-  ["224.0.0.0", 4],
-  ["240.0.0.0", 4],
-] satisfies ReadonlyArray<readonly [string, number]>) {
-  blockedV4.addSubnet(address, prefix, "ipv4");
-}
-const globalV6 = new BlockList();
-globalV6.addSubnet("2000::", 3, "ipv6");
-const blockedV6 = new BlockList();
-blockedV6.addSubnet("2001::", 23, "ipv6");
-blockedV6.addSubnet("2001:db8::", 32, "ipv6");
-blockedV6.addSubnet("2002::", 16, "ipv6");
-blockedV6.addSubnet("3fff::", 20, "ipv6");
-/* eslint-enable sonarjs/no-hardcoded-ip -- Restore endpoint address checks outside the exclusion table. */
-
 /**
- * Accepts a resolved IP address only if it is public. Excludes local, mapped,
- * transition, reserved and documentation ranges.
+ * Accepts a resolved IP address only if it is public: one outside every
+ * local, mapped, transition, reserved and documentation range.
  */
-export const isPublicWebhookAddress = (address: string): boolean => {
-  const family = isIP(address);
-  return family === 4
-    ? !blockedV4.check(address, "ipv4")
-    : family === 6 &&
-        globalV6.check(address, "ipv6") &&
-        !blockedV6.check(address, "ipv6");
-};
+export const isPublicWebhookAddress = (address: string): boolean =>
+  ipaddr.isValid(address) && ipaddr.process(address).range() === "unicast";
 
 /** Requires `whsec_` followed by canonical base64 encoding of 24–64 bytes. */
 const validWebhookSecret = (secret: string): boolean => {
