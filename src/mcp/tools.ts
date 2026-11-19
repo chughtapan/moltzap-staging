@@ -1,12 +1,12 @@
 /** @file The tool contract: the values a host sends and receives, the address grammar, and the MCP tools, Events and wire errors built from them. */
 
-import { Effect, Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 import {
+  maximumMembers,
   Message,
   MsgId,
   Page,
   PaginatedRequest,
-  SendError,
   wellFormedString,
 } from "../communication/index.js";
 import {
@@ -31,12 +31,7 @@ import {
   AgentId,
   AgentName,
 } from "../identity.js";
-import {
-  GroupAddress,
-  groupAddressOf,
-  groupMemberNames,
-  groupMembers,
-} from "./groups.js";
+import { GroupAddress, groupAddressOf, groupMemberNames } from "./groups.js";
 
 /** The scheme of an address naming one agent. */
 const AGENT_ADDRESS_PREFIX = "agent:";
@@ -82,6 +77,41 @@ export const AgentAddress = MessageAddressInput.pipe(
  * @useDeclaredType
  */
 export type AgentAddress = typeof AgentAddress.Type;
+
+/** What a send and a history read both say of an address they cannot use. */
+const addressFailureText = {
+  "invalid-address": "the address is not a valid agent: or group: address",
+  "unknown-agent": "an agent the address names is not a known agent",
+} as const;
+
+/**
+ * What the agent is told for each reason a send fails with. A send with an
+ * unknown outcome may already have happened, so a new send can duplicate it.
+ */
+const sendFailureText = {
+  ...addressFailureText,
+  "membership-invalid": "the address does not name a valid set of agents",
+  "content-invalid": "the message content is invalid",
+  "message-conflict":
+    "the message id already belongs to different content or recipients",
+  "network-unavailable": "Social Harness is unavailable (network unavailable)",
+  "outcome-unknown":
+    "the send did not complete; the message may or may not have been sent",
+} as const;
+
+/**
+ * Check `reason` before retrying. A send with `outcome-unknown` may already
+ * have happened, so a new send can duplicate it. The host may show `message`
+ * to its agent.
+ */
+export class SendError extends Data.TaggedError("SendError")<{
+  readonly reason: keyof typeof sendFailureText;
+  readonly detail?: string;
+}> {
+  override get message(): string {
+    return `send failed: ${this.detail ?? sendFailureText[this.reason]}`;
+  }
+}
 
 /** Canonical host address of a direct or group conversation. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
@@ -216,8 +246,7 @@ export type SendResult = typeof SendResultSchema.Type;
 export const PAGE_SIZE = 50;
 
 const historyFailureText = {
-  "invalid-address": "the address is not a valid agent: or group: address",
-  "unknown-agent": "an agent the address names is not a known agent",
+  ...addressFailureText,
   "invalid-cursor":
     "the cursor is not one this conversation returned; call again without a cursor",
 } as const;
@@ -549,4 +578,33 @@ export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
 
 function addressesAreOrdered(addresses: readonly string[]): boolean {
   return isStrictlyAscending(addresses, compareAscii);
+}
+
+/**
+ * The members a `group:` destination names, with the local agent among them.
+ * A name given twice, no agent but the local one, and more than
+ * `maximumMembers` members are refused.
+ */
+function groupMembers(
+  to: string,
+  localAgentName: AgentName,
+): Effect.Effect<readonly AgentName[], SendError> {
+  const names = groupMemberNames(to);
+  if (names === undefined) {
+    return Effect.fail(new SendError({ reason: "invalid-address" }));
+  }
+  const refused = (detail: string) =>
+    Effect.fail(new SendError({ reason: "membership-invalid", detail }));
+  if (new Set(names).size !== names.length) {
+    return refused("the address names an agent more than once");
+  }
+  const members = names.includes(localAgentName)
+    ? names
+    : [...names, localAgentName];
+  if (members.length === 1) {
+    return refused("the address names only you");
+  }
+  return members.length > maximumMembers
+    ? refused(`a group has at most ${String(maximumMembers)} members`)
+    : Effect.succeed(members);
 }

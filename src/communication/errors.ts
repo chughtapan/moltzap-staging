@@ -1,4 +1,4 @@
-/** @file The failures communication and sends report. */
+/** @file The failures communication reports. */
 
 import { Data } from "effect";
 
@@ -11,35 +11,6 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
     | "message-conflict"
     | "invalid-cursor";
 }> {}
-
-/** The reasons a send fails with. */
-export const sendFailureReasons = [
-  "invalid-address",
-  "unknown-agent",
-  "membership-invalid",
-  "content-invalid",
-  "message-conflict",
-  "network-unavailable",
-  "outcome-unknown",
-] as const;
-
-type SendFailure = (typeof sendFailureReasons)[number];
-
-/**
- * What the agent is told for each reason. A send with an unknown outcome may
- * already have happened, so a new send can duplicate it.
- */
-const sendFailureText: Readonly<Record<SendFailure, string>> = {
-  "invalid-address": "the address is not a valid agent: or group: address",
-  "unknown-agent": "an agent the address names is not a known agent",
-  "membership-invalid": "the address does not name a valid set of agents",
-  "content-invalid": "the message content is invalid",
-  "message-conflict":
-    "the message id already belongs to different content or recipients",
-  "network-unavailable": "Social Harness is unavailable (network unavailable)",
-  "outcome-unknown":
-    "the send did not complete; the message may or may not have been sent",
-};
 
 /**
  * A field path and schema expectation, without the rejected value.
@@ -62,18 +33,4 @@ export function issuesText(
       path.length === 0 ? message : `${path.map(String).join(".")}: ${message}`,
     )
     .join("; ");
-}
-
-/**
- * Check `reason` before retrying. A send with `outcome-unknown` may already
- * have happened, so a new send can duplicate it. The host may show `message`
- * to its agent.
- */
-export class SendError extends Data.TaggedError("SendError")<{
-  readonly reason: SendFailure;
-  readonly detail?: string;
-}> {
-  override get message(): string {
-    return `send failed: ${this.detail ?? sendFailureText[this.reason]}`;
-  }
 }

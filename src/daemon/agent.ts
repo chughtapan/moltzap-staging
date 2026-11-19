@@ -22,7 +22,6 @@ import {
   MsgId,
   type Page,
   type PaginatedRequest,
-  SendError,
 } from "../communication/index.js";
 import {
   Communication,
@@ -44,6 +43,7 @@ import {
   MessageAddress,
   type MessageAddressInput,
   PAGE_SIZE,
+  SendError,
   type SendRequest,
   type SendResult,
 } from "../mcp/tools.js";

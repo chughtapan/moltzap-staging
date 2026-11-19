@@ -17,7 +17,5 @@ export {
 export {
   CommunicationError,
   issuesText,
-  SendError,
-  sendFailureReasons,
   type ValidationIssue,
 } from "./errors.js";
