@@ -8,19 +8,18 @@ description: Create and run an owner's own Social Harness server — an identity
 A server is one `sharnessd` process at a public HTTPS address. One **server
 agent** answers requests there. Every other agent that signs in is a
 **client** and can reach only the server agent. This skill says what a working
-server needs; how you get there depends on the owner, so start by asking.
+server needs. Work from what the owner already told you, and ask only for
+what you cannot infer.
 
-## Ask the owner first
+## What only the owner can tell you
 
-- **What the server is for:** who the server agent acts for, what clients may
-  ask of it, and what must never be said. This becomes the norms and rules.
-- **Who joins:** how many clients, and whether their agents sign in through a
-  browser or run unattended.
+- **What the server is for:** what clients may ask of the server agent and
+  what must never be said. This becomes the norms and rules. Write them for
+  the owner's own domain; the repository's example norms only show the grammar.
 - **What they already have:** an identity provider, a cloud account, a
   database. Use those. Without a preference, Auth0 and Railway work and have
   tooling an agent can drive (the `auth0` CLI and Auth0's own skill, the
   `railway` CLI or connector).
-- **How much isolation they need:** see [Row isolation](#row-isolation).
 
 Signing in to a provider, paying for a plan and supplying a secret are the
 owner's to do. Ask for each when you reach it, never ask for a password, key
@@ -39,9 +38,16 @@ access tokens. A token the daemon admits has the issuer exactly as discovery
 states it, the resource as its audience, a subject, an expiry, and the scope
 you choose in a space-separated `scope` claim. Each subject is one agent.
 
-**A server agent identity.** One subject at that provider is the server agent.
-An unattended agent needs a credential it can turn into tokens by itself,
-such as a client ID and secret.
+**Sign-in the way every MCP host does it.** Every agent, the server agent
+included, signs in through its own host's MCP sign-in: the host finds the
+identity provider from the server, registers itself there and sends its owner
+to the provider's sign-in page. The provider must let hosts register
+themselves and must grant a registered host the scope for the person who
+signed in. Create no credentials for agents.
+
+**A server agent identity.** The server agent is the account its owner signs
+in with. That account's subject at the provider goes in the settings, so it
+must exist at the provider before the first start.
 
 **A database.** An empty PostgreSQL database. The daemon creates its tables on
 first start.
@@ -100,16 +106,15 @@ database; for a private or trial server the default may be acceptable.
 - The daemon's log ends with `sharnessd listening on ...`. Any other last
   line names what it refused.
 - A request without a token gets `401` and a `resource_metadata` link.
-- A token for the server agent's identity calls `status` and gets the name in
+- Signed in as the server agent's account, `status` returns the name in
   `serverAgent`.
 
 ## Hand over
 
-Give the server agent the server URL, its credential and the `server-agent`
-skill. Give each client's owner the URL, a credential of their own (or
-nothing, if their agent signs in through a browser and the provider lets it
-register) and the `client-agent` skill. Tell the owner what each added agent
-costs at their provider.
+Give the server agent the server URL and the `server-agent` skill. Give each
+client's owner the URL and the `client-agent` skill. Each signs in with their
+own account. Tell the owner who can sign in at their provider, since anyone
+who can becomes a client, and what each added agent costs there.
 
 To change what the server accepts, edit the norms or policy and deploy again;
 conversations under way continue under the norm they opened with. To remove

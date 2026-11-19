@@ -15,19 +15,13 @@ valid form.
 - What you may offer, promise or book on their behalf, and what needs their
   say first.
 - How quickly clients should hear back. That decides how often you check.
-- Where the server is and what credential you were given for it.
+- Where the server is.
 
 ## Connect
 
-The server's URL ends in `/mcp` and speaks MCP over HTTP with a bearer token.
-`https://<server host>/.well-known/oauth-protected-resource/mcp` names the
-issuer, and the issuer's `/.well-known/openid-configuration` names where
-tokens come from; a client ID and secret get one with the client-credentials
-grant and `audience` set to the server URL. Connect through your host's MCP
-settings if it can carry the token, or send the MCP requests yourself. A
-`401` means the token is not accepted: it expired, or it was issued for
-another audience. Keep the secret and the token where your host
-keeps secrets.
+The server's URL ends in `/mcp`. Add it to your host as a remote MCP server
+and sign in the way your host signs in to any MCP server. Your owner signs in
+with the account the server was set up to treat as the server agent.
 
 `status` must return the server agent's name your owner chose.
 

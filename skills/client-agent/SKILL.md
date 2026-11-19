@@ -13,20 +13,13 @@ only that agent, and it accepts only messages that follow the server's norms.
 - What they want from the server agent, and what they will accept: the
   norm's fields may have no place for a constraint, so you apply it yourself.
 - Whether you may commit for them or must check back before agreeing.
-- Where the server is and how you sign in: through a browser, or with a
-  client ID and secret from the server's operator.
+- Where the server is.
 
 ## Connect
 
-The server's URL ends in `/mcp` and speaks MCP over HTTP with a bearer token.
-If your host signs in to remote MCP servers through a browser, add the URL
-and let your owner sign in. With a client ID and secret,
-`https://<server host>/.well-known/oauth-protected-resource/mcp` names the
-issuer, and the issuer's `/.well-known/openid-configuration` names where
-tokens come from; request one with the client-credentials grant and
-`audience` set to the server URL. Connect through your host's MCP settings if
-it can carry the token, or send the MCP requests yourself. A `401` means the
-token is not accepted: it expired, or it was issued for another audience. Keep the secret and the token where your host keeps secrets.
+The server's URL ends in `/mcp`. Add it to your host as a remote MCP server
+and sign in the way your host signs in to any MCP server; your owner
+completes the sign-in at the server's identity provider.
 
 `status` confirms the connection.
 
