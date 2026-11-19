@@ -117,7 +117,7 @@ describe("Firewall.readDecisions", () => {
             {
               ruleId: privacy.id,
               from: "editable",
-              advice: privacy.feedback?.text,
+              advice: privacy.feedback,
             },
           ],
         },
@@ -410,7 +410,7 @@ describe("Firewall text rule replies", () => {
 
             expect(decision.kind).toBe("withheld");
             expect("reply" in decision ? decision.reply : undefined).toBe(
-              action === "reply" ? privacy.feedback.text : undefined,
+              action === "reply" ? privacy.feedback : undefined,
             );
           }),
         (agentKey) =>

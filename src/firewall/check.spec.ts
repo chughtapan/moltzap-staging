@@ -61,7 +61,7 @@ const proposalAcceptance: TextRule = {
   applies: "both",
   text: "Availability is not acceptance. Everyone must accept the same concrete proposal before it is finalized.",
   guidance: registeredGuidance,
-  feedback: { text: repair },
+  feedback: repair,
 };
 const rules: readonly TextRule[] = [
   {
@@ -201,7 +201,7 @@ it.prop(
             }
           : {
               reason: "rule-violation",
-              feedback: [{ text: repair }],
+              feedback: [repair],
               instructions: [],
             },
       );
@@ -238,7 +238,7 @@ it.prop(
             }
           : {
               reason: "unresolved-evidence",
-              feedback: [{ text: repair }],
+              feedback: [repair],
               instructions: [],
             },
       );
@@ -254,7 +254,7 @@ it.each<Choice>(["compliant", "violation"])(
       );
       expect(result).toMatchObject({
         reason: "unresolved-evidence",
-        feedback: [{ text: repair }],
+        feedback: [repair],
       });
     }),
 );
@@ -266,7 +266,7 @@ it.each([
   },
   {
     registered: "feedback",
-    advice: { feedback: { text: repair } },
+    advice: { feedback: repair },
     text: repair,
   },
 ])(
@@ -286,7 +286,7 @@ it.each([
       };
       const held = yield* check(unsure, options);
       const allowed = yield* check(unsure, { ...options, incoming: true });
-      expect(held.feedback).toEqual([{ text }]);
+      expect(held.feedback).toEqual([text]);
       expect(allowed.instructions).toMatchObject([{ instruction: text }]);
     }),
 );
@@ -372,7 +372,7 @@ it.prop(
           applies,
           text: `Address open request number ${index} before changing the subject.`,
           guidance: registeredGuidance,
-          feedback: { text: repair },
+          feedback: repair,
         }),
       );
       const asked = textRules.filter(
@@ -575,7 +575,7 @@ it.prop(
           ? { reason: "eligible", feedback: [] }
           : {
               reason: "check-unavailable",
-              feedback: [{ text: repair }],
+              feedback: [repair],
             },
       );
     }),

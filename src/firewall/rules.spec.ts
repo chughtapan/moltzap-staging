@@ -346,8 +346,7 @@ metadata:
     guidance: |
       Ask first.
       Wait for permission.
-    feedback:
-      text: Wait until working hours.
+    feedback: Wait until working hours.
 ---
 
 ${behaviorBody}
@@ -389,9 +388,9 @@ ${behaviorBody}
       "    applies: both",
       "    private-invalid-behavior: true\n    applies: both",
     ),
-    "an unknown feedback key": behaviorDocument.replace(
-      "      text: Wait until working hours.",
-      "      text: Wait until working hours.\n      private-invalid-behavior: true",
+    "feedback that is not text": behaviorDocument.replace(
+      "    feedback: Wait until working hours.",
+      "    feedback:\n      text: Wait until working hours.",
     ),
     "no body": behaviorDocument.replace(behaviorBody, ""),
   } as const;
@@ -473,7 +472,7 @@ ${behaviorBody}
           applies,
           text: behaviorBody,
           guidance: "Ask first.\nWait for permission.\n",
-          feedback: { text: "Wait until working hours." },
+          feedback: "Wait until working hours.",
         });
       }),
   );

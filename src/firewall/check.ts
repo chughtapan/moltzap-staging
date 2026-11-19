@@ -173,7 +173,7 @@ class InvalidCheckError extends Data.TaggedError("InvalidCheckError") {}
 export interface FirewallCheck {
   readonly findings: readonly PolicyFinding[];
   readonly reason: Reason;
-  readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly feedback: readonly string[];
   readonly instructions: ReadonlyArray<typeof uncertainInstructionSchema.Type>;
   readonly decidedBy: readonly DecidingRule[];
 }
@@ -478,8 +478,8 @@ function concludeCheck(
     );
     const advice =
       reason === "eligible"
-        ? (rule.guidance ?? rule.feedback?.text)
-        : (rule.feedback?.text ?? rule.guidance);
+        ? (rule.guidance ?? rule.feedback)
+        : (rule.feedback ?? rule.guidance);
     return finding === undefined ? [] : [{ ruleId: rule.id, finding, advice }];
   });
   return {
@@ -489,7 +489,7 @@ function concludeCheck(
       reason === "eligible"
         ? []
         : deciding.flatMap(({ advice }) =>
-            advice === undefined ? [] : [{ text: advice }],
+            advice === undefined ? [] : [advice],
           ),
     instructions: deciding.flatMap(({ ruleId, finding, advice }) =>
       advice === undefined || !("choice" in finding)
@@ -834,7 +834,7 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly checkId: string;
   readonly refusal: FirewallRefusalReason;
   readonly rule?: string;
-  readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly feedback: readonly string[];
   readonly detail?: unknown;
 }> {
   override get message(): string {
@@ -842,10 +842,8 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
     return [
       ...(this.feedback.length === 0
         ? [`Error: ${refusalText[this.refusal]}`]
-        : this.feedback.map((entry) =>
-            entry.text.startsWith("Error:")
-              ? entry.text
-              : `Error: ${entry.text}`,
+        : this.feedback.map((text) =>
+            text.startsWith("Error:") ? text : `Error: ${text}`,
           )),
       `Check: ${this.checkId}${rule}; ${this.refusal}.`,
     ].join(" ");
