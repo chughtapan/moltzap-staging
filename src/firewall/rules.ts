@@ -217,7 +217,6 @@ const policyReasonText: Readonly<
   "invalid-rule": "the update is invalid",
   "fixed-rule":
     "it is a fixed rule of the owner's policy, which update_policy cannot add, remove or replace",
-  "approval-refused": "the host did not approve this policy update",
   "build-failed": "the new rules could not be installed",
   "persistence-failed": "the rules could not be stored",
 };
@@ -239,7 +238,6 @@ export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>
       "not-configured",
       "invalid-rule",
       "fixed-rule",
-      "approval-refused",
       "build-failed",
       "persistence-failed",
     ),

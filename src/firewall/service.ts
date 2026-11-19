@@ -97,10 +97,6 @@ export interface ComposedMessagePolicy {
   readonly facts: CheckEvidence["facts"];
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
-  /** Host approval completes before an edit can replace the active policy. */
-  readonly approvePolicyUpdate?: (
-    request: PolicyEdit,
-  ) => Effect.Effect<void, FirewallPolicyError>;
   readonly text?: {
     readonly fixedRules?: readonly TextRule[];
     readonly initialRules?: readonly TextRule[];
@@ -174,10 +170,7 @@ interface FirewallService {
    * instance outlives the removal of its contract.
    */
   readonly requiresProtocolHistory: () => boolean;
-  /**
-   * Validates and approves each edit before saving and activating it.
-   * Retries validate again and may repeat approval.
-   */
+  /** Validates each edit before saving and activating it. */
   readonly updatePolicy: (
     request: PolicyEdit,
   ) => Effect.Effect<typeof policyRevisionSchema.Type, FirewallPolicyError>;
@@ -649,13 +642,10 @@ function capturePolicy(composed: ComposedMessagePolicy) {
       composed.text === undefined
         ? undefined
         : yield* captureText(composed.text);
-    const approvePolicyUpdate =
-      composed.approvePolicyUpdate?.bind(composed) ?? (() => Effect.void);
     return {
       configuration,
       limits,
       text,
-      approvePolicyUpdate,
     };
   });
 }
@@ -957,7 +947,7 @@ function unavailable(): FirewallCheck {
 function updatePolicy(policy: InstalledPolicy, request: PolicyEdit) {
   return policy.edits.withPermits(1)(
     Effect.gen(function* () {
-      const { request: frozenRequest, change } = yield* resolvedChange(request);
+      const change = yield* resolvedChange(request);
       const editableRules = yield* editedRules(
         policy.active.editableRules,
         policy.active.fixedRuleIds,
@@ -973,7 +963,6 @@ function updatePolicy(policy: InstalledPolicy, request: PolicyEdit) {
       const removedContracts = new Set(
         change.removeContracts.map(({ name }) => name),
       );
-      yield* policy.captured.approvePolicyUpdate(frozenRequest);
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
           yield* saveEditablePolicy(policy.store, replacement, {

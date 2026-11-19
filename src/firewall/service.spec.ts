@@ -31,7 +31,7 @@ import {
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
 import { type Direction, FirewallPolicyError, type TextRule } from "./rules.js";
-import { type ComposedMessagePolicy, Firewall } from "./service.js";
+import { Firewall } from "./service.js";
 
 const initial = {
   id: "brief",
@@ -251,29 +251,6 @@ describe("Firewall.checkOutgoing", () => {
 });
 
 describe("Firewall.updatePolicy", () => {
-  it("preserves the policy when the host refuses an update", () =>
-    Effect.gen(function* () {
-      const configuration: ComposedMessagePolicy = {
-        ...policy([initial], [privacy]),
-        approvePolicyUpdate: () =>
-          Effect.fail(new FirewallPolicyError({ reason: "approval-refused" })),
-      };
-      yield* withFirewall(
-        {},
-        (firewall) =>
-          Effect.gen(function* () {
-            const before = yield* firewall.readPolicy();
-            const error = yield* firewall
-              .updatePolicy({ remove: [initial.id] })
-              .pipe(Effect.flip);
-            expect(error.reason).toBe("approval-refused");
-            expect(yield* firewall.readPolicy()).toEqual(before);
-            expect((yield* firewall.readDecisions({})).activations).toEqual([]);
-          }),
-        (agentKey) => Firewall.layer(agentKey, configuration),
-      );
-    }));
-
   it.prop(
     "applies an edit and records its activation, or refuses it and keeps the policy and its activations",
     [edits],

@@ -37,13 +37,11 @@ if checking is interrupted. Daemon-generated results have no firewall check.
 ```mermaid
 flowchart LR
   A[Requested rule change] --> B[Validate replacement]
-  B --> C[Approval placeholder approves]
-  C --> D[Save rules and change record]
+  B --> D[Save rules and change record]
   D --> E[Activate replacement]
 ```
 
-Approval currently always succeeds. The placeholder can later use host
-elicitation. Fixed rules come from configuration and cannot be edited.
+Fixed rules come from configuration and cannot be edited.
 
 The editable policy also holds the agent's contracts. The norms layer compiles
 a norm document before an edit reaches the firewall, and each activation adds

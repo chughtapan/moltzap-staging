@@ -1,7 +1,7 @@
 /**
  * @file Edits to an agent's editable policy: the text rules and contracts an
  * update leaves the policy holding, checked one addition and removal at a
- * time before the firewall builds, approves and activates the replacement.
+ * time before the firewall builds and activates the replacement.
  */
 
 import { Effect } from "effect";
@@ -107,7 +107,7 @@ export const resolvedChange = Effect.fn("resolvedChange")(function* (
       typeof removal === "string" ? [] : [{ index, name: removal.norm }],
     ),
   };
-  return { request: frozenRequest, change };
+  return change;
 });
 
 /**
