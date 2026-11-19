@@ -14,14 +14,14 @@ import {
   DecisionResponse,
 } from "./check.js";
 
-/** The endpoint Jev is called at, its model, and the key sent as the bearer. */
+/** Jev's model and the key sent as the bearer. */
 interface JevOptions {
-  readonly endpoint: string;
   readonly apiKey: Redacted.Redacted;
   readonly model: string;
 }
 
 const jevVendorName = "typesafe";
+const jevUrl = "https://api.typesafe.ai/v1/systemone";
 const maximumChoices = 255;
 /** Bounds response bodies retained in audits. */
 const maximumResponseBytes = 1_048_576;
@@ -47,7 +47,7 @@ const wireResponse = Schema.Struct({
 
 const prepareJevRequest = Effect.fn("MessagePolicy.Jev.prepareRequest")(
   function* (request: DecisionRequest, options: JevOptions) {
-    return yield* HttpClientRequest.post(options.endpoint).pipe(
+    return yield* HttpClientRequest.post(jevUrl).pipe(
       HttpClientRequest.bearerToken(options.apiKey),
       HttpClientRequest.bodyJson({
         model: options.model,
@@ -171,9 +171,9 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
 });
 
 /**
- * Uses the configured endpoint and a pinned model. The caller owns retries
- * and timeouts. Calls remain interruptible while consuming response bodies.
- * Credentials stay out of serialized diagnostics.
+ * Uses a pinned model. The caller owns retries and timeouts. Calls remain
+ * interruptible while consuming response bodies. Credentials stay out of
+ * serialized diagnostics.
  */
 export function makeJevDecisionProvider(options: JevOptions): DecisionProvider {
   const configuration = Object.freeze({ ...options });

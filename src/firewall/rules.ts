@@ -7,7 +7,7 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { parseDocument } from "yaml";
-import { exactStruct, plainUrl } from "../encoding.js";
+import { exactStruct } from "../encoding.js";
 import { AgentCard } from "../identity.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
@@ -319,23 +319,10 @@ const failureMessages: Readonly<
 
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
-/**
- * Jev judges text rules with the key `decisionProviderKeyFile` holds. The key
- * is sent to `endpoint`, so plaintext HTTP is accepted only for this machine.
- */
+/** Jev judges text rules with the key `decisionProviderKeyFile` holds. */
 const decisionProvider = Schema.Struct({
   kind: Schema.Literal("jev"),
   model: Schema.NonEmptyTrimmedString,
-  endpoint: Schema.optionalWith(
-    Schema.String.pipe(
-      Schema.filter(
-        (value) =>
-          plainUrl(value, ["https:"]) !== undefined ||
-          plainUrl(value, ["http:"])?.hostname === "127.0.0.1",
-      ),
-    ),
-    { default: () => "https://api.typesafe.ai/v1/systemone" },
-  ),
 });
 
 const textRules = Schema.optionalWith(Schema.Array(TextRule), {
@@ -454,7 +441,6 @@ export interface LoadedMessagePolicy {
   readonly provider?: {
     readonly kind: "jev";
     readonly model: string;
-    readonly endpoint: string;
     readonly apiKey: Redacted.Redacted;
   };
 }
@@ -844,7 +830,6 @@ function loadDecisionProvider(
     Effect.map((apiKey) => ({
       kind: "jev" as const,
       model: setting.model,
-      endpoint: setting.endpoint,
       apiKey,
     })),
   );
