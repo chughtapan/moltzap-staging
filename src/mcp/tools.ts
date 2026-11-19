@@ -48,13 +48,11 @@ interface Destination {
 /**
  * Canonicalizes a destination. A group includes the local agent and names no
  * agent twice, and a group of one other agent is that agent's address. An
- * address that names only the local agent, and with `hideGroups` any group,
- * is refused.
+ * address that names only the local agent is refused.
  */
 export function canonicalMessageAddress(
   to: MessageAddressInput,
   localAgentName: AgentName,
-  hideGroups = false,
 ): Effect.Effect<Destination, SendError> {
   const direct = (other: AgentName): Effect.Effect<Destination, SendError> =>
     other === localAgentName
@@ -70,15 +68,6 @@ export function canonicalMessageAddress(
         });
   if (to.startsWith(AGENT_ADDRESS_PREFIX)) {
     return direct(AgentName.make(to.slice(AGENT_ADDRESS_PREFIX.length)));
-  }
-  if (hideGroups) {
-    return Effect.fail(
-      new SendError({
-        reason: "invalid-address",
-        detail:
-          "this daemon does not offer groups; address one agent as agent:<name>",
-      }),
-    );
   }
   return Effect.flatMap(groupMembers(to, localAgentName), (members) => {
     const others = members.filter((name) => name !== localAgentName);
@@ -361,7 +350,7 @@ export const toolDefinitions = {
   receive_messages: {
     failure: { toData: (error: InboxError) => reasonData(error) },
     description:
-      "Receive pending inbox entries, each with its conversation address, its item and any guidance. item.message is the message received. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
+      "Receive pending inbox entries, each with its conversation address, its message and any guidance. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: receiveMessagesInput,
     output: receiveMessagesOutput,
     annotations: {
@@ -430,6 +419,33 @@ export const toolDefinitions = {
     input: noArguments,
     output: readNormsOutput,
     annotations: readOnlyAnnotations,
+  },
+} as const;
+
+/** The address of one agent, on a daemon that offers no groups. */
+const oneAgent = AgentAddress.annotations({
+  description: "agent:<name>",
+  message: () =>
+    "this daemon does not offer groups; address one agent as agent:<name>",
+});
+
+/**
+ * How the two tools that take an address read on a daemon that offers no
+ * groups: the address names one agent.
+ */
+export const directToolDefinitions = {
+  send_message: {
+    ...toolDefinitions.send_message,
+    input: exactStruct({
+      ...SendRequest.fields,
+      to: Schema.propertySignature(oneAgent).annotations({
+        description: "The recipient: agent:<name>.",
+      }),
+    }),
+  },
+  read_conversation: {
+    ...toolDefinitions.read_conversation,
+    input: exactStruct({ ...readConversationInput.fields, address: oneAgent }),
   },
 } as const;
 

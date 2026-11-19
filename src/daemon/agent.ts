@@ -142,7 +142,6 @@ export interface HarnessSettings {
   readonly agentKey: string;
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
-  readonly hideGroups?: boolean;
   /**
    * What to tell the sender of a message the firewall withheld for breaking a
    * rule, when no rule supplied a reply of its own. Without it such a sender
@@ -249,7 +248,6 @@ function send(agent: Agent, input: SendRequest) {
       const destination = yield* canonicalMessageAddress(
         request.to,
         agent.card.agentName,
-        agent.settings.hideGroups,
       );
       const outgoing = yield* outgoingFor(agent, request, destination.others);
       const evidence = yield* evidenceFor(agent, [

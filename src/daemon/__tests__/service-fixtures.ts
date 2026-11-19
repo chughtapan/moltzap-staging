@@ -158,7 +158,7 @@ interface Network {
   cursorId: number;
   sendFailure?: CommunicationError;
 }
-/** How a harness opens. It offers no groups, as the server agent's does not, unless `hideGroups` is false. */
+/** How a harness opens. */
 interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
   readonly policy?: ComposedMessagePolicy;
   /** The contracts the agent starts with. */
@@ -249,7 +249,6 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
         agentKey,
         maximumHistoryRecords: options.maximumHistoryRecords,
         maximumConcurrentChecks: options.maximumConcurrentChecks,
-        hideGroups: options.hideGroups ?? true,
         ...(options.withheldReply === undefined
           ? {}
           : { withheldReply: options.withheldReply }),

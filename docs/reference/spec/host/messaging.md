@@ -115,9 +115,6 @@ the value sent. A firewall refusal includes its check, rule and
 feedback. Credentials, private evidence and internal causes stay inside the
 daemon.
 
-[Experiment switches](../../daemon-experiment-settings.mdx#experiment-switches) apply to
-every send.
-
 ## Local guidance
 
 An inbox entry carries [firewall guidance](../firewall/message-policy.md#incoming-messages)

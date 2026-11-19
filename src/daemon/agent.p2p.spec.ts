@@ -57,7 +57,7 @@ const membership = fc
 it("sends each call as new work to exactly the agents its address names, with the reply reference it gives, and refuses an address that names an unknown agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const { harness } = yield* subject.open({ hideGroups: false });
+    const { harness } = yield* subject.open();
     const receipts: string[] = [];
     yield* forAll(
       fc.tuple(
@@ -101,7 +101,7 @@ it("sends each call as new work to exactly the agents its address names, with th
 it("reads a saved conversation's history at its canonical address, reports an unknown agent at a canonical address that names one, and refuses every other spelling as invalid", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({ hideGroups: false });
+    const runtime = yield* subject.open();
     yield* subject.retain(
       yield* Message.create({
         author: subject.self,

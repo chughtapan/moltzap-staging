@@ -185,24 +185,6 @@ it("sends each call as new work to the agent its address names, with the reply r
     );
   }));
 
-it("refuses every group address before dispatch, and still sends to one agent", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const { harness } = yield* subject.open();
-    yield* forAll(
-      fc.subarray(["alice", "bob", "carol", "nobody"], { minLength: 1 }),
-      Effect.fn(function* (members) {
-        const to = MessageAddressInput.make(`group:${members.join(",")}`);
-        expect(
-          yield* harness.send({ to, text: "Hello" }).pipe(Effect.flip),
-        ).toMatchObject({ reason: "invalid-address" });
-      }),
-    );
-    expect(subject.submitted).toEqual([]);
-    yield* harness.send({ to: bobAddress, text: "Hello" });
-    expect(subject.submitted).toHaveLength(1);
-  }));
-
 it("ends a send that could not be stored as a defect without sending it again", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
