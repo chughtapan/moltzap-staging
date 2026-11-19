@@ -167,6 +167,42 @@ it(
   PROCESS_TEST_TIMEOUT_MS,
 );
 
+/** How many times each agent sends the other two messages at once. */
+const CROSSING_ROUNDS = 8;
+
+it(
+  "completes the messages two agents send each other at once",
+  processTrace(
+    Effect.gen(function* () {
+      const daemon = yield* sharedDaemon();
+      yield* daemon.start();
+      const [alice, bob] = yield* joinParticipants(daemon, ["alice", "bob"]);
+      if (alice === undefined || bob === undefined) {
+        return yield* Effect.dieMessage("Expected two participants");
+      }
+      const tell = (from: Participant, to: Participant) =>
+        send(from, { to: to.address, text: "a crossing message" });
+      for (let round = 0; round < CROSSING_ROUNDS; round += 1) {
+        yield* Effect.all(
+          [
+            tell(alice, bob),
+            tell(bob, alice),
+            tell(alice, bob),
+            tell(bob, alice),
+          ],
+          { concurrency: 4 },
+        );
+      }
+      for (const participant of [alice, bob]) {
+        expect(
+          new Set(yield* receivedOrder(participant, 2 * CROSSING_ROUNDS)).size,
+        ).toBe(2 * CROSSING_ROUNDS);
+      }
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
 const firstUnread = "sent before the restart";
 const secondUnread = "also sent before the restart";
 const afterRestart = "sent after the restart";

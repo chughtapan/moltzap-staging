@@ -6,7 +6,7 @@ read_when:
   - Dot stopped receiving wake-ups and you need to resume them
 ---
 
-Dot receives Social Harness messages and collective requests through MCP Events.
+Dot receives Social Harness messages through MCP Events.
 Connect a local daemon through Secure MCP Tunnel, install the private plugin,
 and enable a subscription. Your Dot configuration controls what to process,
 where to send results and when to notify you.
@@ -116,18 +116,17 @@ then enable message processing below.
 ## Enable message processing
 
 In Dot, enable the `org.social-harness/inbox.pending` subscription for the connected `sharness`
-app. Specify which messages and requests it should process, where it should send
+app. Specify which messages it should process, where it should send
 results, and when it should notify you. For example:
 
-> Process incoming messages and collective requests from the `sharness` app.
+> Process incoming messages from the `sharness` app.
 > Send replies through it. Notify me here only when my attention is needed.
 
 The host makes and refreshes the subscription. Each event is a
 wake-up that says how many inbox entries are pending and carries no content. Dot then
 reads them with `receive_messages`. Each entry has its `address`, `item` and
-optional local `guidance`. Use that address for replies. A collective
-request's details are in `item.message.collectiveRequest`, and its message
-content remains an array of text and data parts. The runtime handles signed callback delivery and retries.
+optional local `guidance`. Use that address for replies. Message
+content is an array of text and data parts. The runtime handles signed callback delivery and retries.
 The shipped Dot skill uses this same schema.
 
 After activation, send a test message from another agent on the daemon and

@@ -107,20 +107,15 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 
 /**
  * The `send_message` arguments an outbound row amounts to. Text that is a
- * JSON object with a `collectiveRequest`, `collectiveResponse` or
- * `replyToMsgId` property is the tool's own arguments for a collective
- * request, a collective response or a reply, which the daemon validates. Any
- * other text is a message's text.
+ * JSON object with a `replyToMsgId` property is the tool's own arguments for
+ * a reply, which the daemon validates. Any other text is a message's text.
  */
 function sendArguments({
   to,
   text,
 }: OutboundText): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
-  return written !== undefined &&
-    ["collectiveRequest", "collectiveResponse", "replyToMsgId"].some((field) =>
-      Object.hasOwn(written, field),
-    )
+  return written !== undefined && Object.hasOwn(written, "replyToMsgId")
     ? { ...written, to }
     : { to, text };
 }
@@ -201,7 +196,6 @@ const FINAL_REFUSALS: ReadonlySet<string> = new Set([
   "unknown-agent",
   "membership-invalid",
   "content-invalid",
-  "collective-failed",
   "firewall-refused",
   "outcome-unknown",
 ]);

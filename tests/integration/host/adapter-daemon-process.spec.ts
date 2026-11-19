@@ -12,7 +12,6 @@ import { ProcessTestError, type SignedIn } from "../daemon/daemon-fixture.js";
 import { markedRule } from "../firewall/policy-fixture.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
-import { anyString } from "../test-matchers.js";
 import { callTool } from "../tool-call.js";
 import {
   acquireGuardedServer,
@@ -27,7 +26,6 @@ import {
   type OpenClawMessageActionContext,
   type OpenClawRunTurn,
   registerOpenClawChannel,
-  requireRequest,
   type Scenario,
   startOpenClawGateway,
 } from "./openclaw-daemon-fixture.js";
@@ -38,25 +36,11 @@ const INITIAL_TEXT = "hello through the OpenClaw channel plugin";
 /** What the host's agent sends back through the message tool. */
 const REPLY = "reply through the OpenClaw message tool";
 
-const SLOT_SCHEMA = {
-  type: "object",
-  properties: { slot: { type: "string", enum: ["mon", "tue"] } },
-  required: ["slot"],
-} as const;
+/** What the caller sends its group with the host's agent and a peer. */
+const GROUP_TEXT = "hello to the group";
 
-const GATHER_QUESTION = "Which day works?";
-
-const ALL_GATHER = {
-  op: "all_gather",
-  deadline: 60,
-  requestedSchema: SLOT_SCHEMA,
-} as const;
-
-/** The text a model sends to make an all_gather request of a group. */
-const ALL_GATHER_TEXT = JSON.stringify({
-  text: GATHER_QUESTION,
-  collectiveRequest: ALL_GATHER,
-});
+/** What the host's agent sends the group back through the message tool. */
+const GROUP_REPLY = "reply to the group through the OpenClaw message tool";
 
 const textContent = (text: string) => [{ type: "text", text }];
 
@@ -147,18 +131,6 @@ function savedExchange(reader: SignedIn, peer: SignedIn) {
   });
 }
 
-/**
- * A result lists its outcomes in the order of the recipients' names, which the
- * daemon chooses.
- */
-function inRecipientNameOrder<
-  Outcome extends { readonly recipient: SignedIn["agent"] },
->(outcomes: readonly Outcome[]) {
-  return outcomes.toSorted((left, right) =>
-    left.recipient.agentName < right.recipient.agentName ? -1 : 1,
-  );
-}
-
 /** A client's send in client/server mode, which names no recipient. */
 function sendAsClient(client: Participant, text: string) {
   return Effect.tryPromise(() =>
@@ -216,147 +188,34 @@ const durableExchange = Effect.gen(function* () {
   expect(yield* savedExchange(target, caller)).toEqual(exchange);
 });
 
-const allGatherBothWays = Effect.gen(function* () {
+const groupBothWays = Effect.gen(function* () {
   const { hosted, gateway } = yield* startQueuedGateway(yield* acquirePeers);
-  const group = groupAddress([hosted.caller, hosted.peer, hosted.target]);
-  const address = yield* receiveAllGather(hosted, group);
-  yield* sendAllGather(hosted, address);
+  const { caller, peer, target, turns, messageTool } = hosted;
+  const { id, address } = yield* send(caller, {
+    to: groupAddress([caller, peer, target]),
+    text: GROUP_TEXT,
+  });
+  const turn = yield* nextTurn(turns);
+  expect(turn.ctxPayload).toMatchObject({
+    ChatType: "group",
+    From: caller.address,
+    BodyForAgent: GROUP_TEXT,
+  });
+  expect(turn.raw.id).toBe(id);
+  yield* nextItem(peer);
+  const replied = yield* messageTool("reply", {
+    to: address,
+    message: GROUP_REPLY,
+  });
+  expect(replied.details).toMatchObject({ ok: true });
+  const reply = {
+    kind: "message",
+    message: { author: target.agent, content: textContent(GROUP_REPLY) },
+  };
+  expect(yield* nextItem(caller)).toMatchObject(reply);
+  expect(yield* nextItem(peer)).toMatchObject(reply);
   yield* stopGateway(gateway);
 });
-
-function receiveAllGather(scenario: HostedScenario, group: string) {
-  const { caller, peer, target, turns, messageTool } = scenario;
-  return Effect.gen(function* () {
-    const { address } = yield* send(caller, {
-      to: group,
-      text: GATHER_QUESTION,
-      collectiveRequest: ALL_GATHER,
-    });
-    const requestTurn = yield* nextTurn(turns);
-    expect(requestTurn.ctxPayload).toMatchObject({
-      ChatType: "group",
-      From: caller.address,
-    });
-    const peerRequest = yield* nextItem(peer).pipe(
-      Effect.flatMap(requireRequest),
-    );
-    expect(entryRead(requestTurn)).toEqual({
-      address,
-      deliveryToken: anyString,
-      item: peerRequest,
-    });
-    const requestId = peerRequest.message.msgId;
-    expect(requestTurn.raw.id).toBe(requestId);
-    yield* send(peer, {
-      to: group,
-      collectiveResponse: { action: "decline", requestId },
-    });
-    const responded = yield* messageTool("reply", {
-      to: group,
-      message: JSON.stringify({
-        collectiveResponse: {
-          action: "accept",
-          requestId,
-          content: { slot: "tue" },
-        },
-      }),
-    });
-    expect(responded.details).toMatchObject({ ok: true });
-
-    const callerResult = yield* nextItem(caller);
-    expect(callerResult).toMatchObject({
-      kind: "collectiveResult",
-      requestId,
-      outcomes: inRecipientNameOrder([
-        { recipient: peer.agent, outcome: { kind: "declined" } },
-        {
-          recipient: target.agent,
-          outcome: { kind: "answered", content: { slot: "tue" } },
-        },
-      ]),
-    });
-    expect(yield* nextItem(peer)).toEqual(callerResult);
-    const resultTurn = yield* nextTurn(turns);
-    expect(resultTurn.ctxPayload).toMatchObject({
-      ChatType: "group",
-      SenderName: "Social Harness",
-    });
-    expect(entryRead(resultTurn)).toEqual({
-      address,
-      deliveryToken: anyString,
-      item: callerResult,
-    });
-    expect(resultTurn.raw.id).toBe(requestId);
-    return address;
-  });
-}
-
-function sendAllGather(scenario: HostedScenario, group: string) {
-  const { caller, peer, turns, messageTool } = scenario;
-  return Effect.gen(function* () {
-    const malformed = yield* messageTool("send", {
-      to: group,
-      message: JSON.stringify({
-        text: GATHER_QUESTION,
-        collectiveRequest: { ...ALL_GATHER, deadline: "tomorrow" },
-      }),
-    }).pipe(Effect.flip);
-    expect(malformed.cause).toHaveProperty(
-      "message",
-      expect.stringContaining("collectiveRequest.deadline"),
-    );
-    const started = yield* messageTool("send", {
-      to: group,
-      message: ALL_GATHER_TEXT,
-    });
-    expect(started.details).toEqual({ ok: true, to: group });
-    const callerRequest = yield* nextItem(caller).pipe(
-      Effect.flatMap(requireRequest),
-    );
-    const peerRequest = yield* nextItem(peer).pipe(
-      Effect.flatMap(requireRequest),
-    );
-    yield* send(caller, {
-      to: group,
-      collectiveResponse: {
-        action: "accept",
-        requestId: callerRequest.message.msgId,
-        content: { slot: "mon" },
-      },
-    });
-    yield* send(peer, {
-      to: group,
-      collectiveResponse: {
-        action: "decline",
-        requestId: peerRequest.message.msgId,
-      },
-    });
-    const memberResult = yield* nextItem(caller);
-    expect(memberResult).toMatchObject({
-      kind: "collectiveResult",
-      requestId: callerRequest.message.msgId,
-      outcomes: inRecipientNameOrder([
-        {
-          recipient: caller.agent,
-          outcome: { kind: "answered", content: { slot: "mon" } },
-        },
-        { recipient: peer.agent, outcome: { kind: "declined" } },
-      ]),
-    });
-    expect(yield* nextItem(peer)).toEqual(memberResult);
-    const resultTurn = yield* nextTurn(turns);
-    expect(resultTurn.ctxPayload).toMatchObject({
-      ChatType: "group",
-      SenderName: "Social Harness",
-    });
-    expect(entryRead(resultTurn)).toEqual({
-      address: group,
-      deliveryToken: anyString,
-      item: memberResult,
-    });
-    expect(memberResult).toMatchObject({ requestId: resultTurn.raw.id });
-  });
-}
 
 it(
   "keeps OpenClaw host identities local across a durable exchange",
@@ -365,8 +224,8 @@ it(
 );
 
 it(
-  "runs an all_gather in both directions through the OpenClaw message tool",
-  processTrace(allGatherBothWays),
+  "carries a group message in both directions through the OpenClaw message tool",
+  processTrace(groupBothWays),
   300_000,
 );
 
@@ -431,21 +290,6 @@ function exerciseOpenClawSends(
     expect(refused.cause).toHaveProperty(
       "message",
       expect.stringContaining("chk_"),
-    );
-    const unoffered = yield* messageTool("send", {
-      to: caller.address,
-      message: JSON.stringify({
-        text: "Which day?",
-        collectiveRequest: {
-          op: "gather",
-          deadline: 60,
-          requestedSchema: SLOT_SCHEMA,
-        },
-      }),
-    }).pipe(Effect.flip);
-    expect(unoffered.cause).toHaveProperty(
-      "message",
-      expect.stringContaining("collectiveRequest: Unexpected field"),
     );
     const targets = yield* messageTool("send", {
       to: caller.address,

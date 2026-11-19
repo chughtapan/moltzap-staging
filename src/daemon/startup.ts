@@ -24,11 +24,7 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentCard, type AgentName, Identity } from "../identity.js";
-import {
-  clientToolDefinitions,
-  textOnlyToolDefinitions,
-  toolDefinitions,
-} from "../mcp/tools.js";
+import { clientToolDefinitions, toolDefinitions } from "../mcp/tools.js";
 import {
   compiledPolicyEdit,
   HeldNorms,
@@ -70,7 +66,7 @@ export function roleOf(
   daemon: {
     readonly settings: Pick<
       DaemonSettings,
-      "serverAgentName" | "hideGroups" | "hideCollectives" | "messagePolicy"
+      "serverAgentName" | "hideGroups" | "messagePolicy"
     >;
     readonly norms?: InstalledNorms;
     /** The norms the server agent holds, once it has started; clients read them. */
@@ -101,7 +97,7 @@ export function roleOf(
       withheldReply: undefined,
       firewall: checked(),
       started: () => Effect.void,
-      tools: peerTools(settings.hideCollectives),
+      tools: peerTools(),
     };
   }
   const permits = serverAgentAndOne(serverAgentName);
@@ -113,7 +109,7 @@ export function roleOf(
       firewall: checked(),
       started: (services: Context.Context<never>) =>
         Ref.set(serverAgentHeldNorms, Context.getOption(services, HeldNorms)),
-      tools: peerTools(true),
+      tools: peerTools(),
     };
   }
   const unchecked = Firewall.layer(agentKey);
@@ -217,10 +213,9 @@ function serverAgentNormsLayer(
 
 /**
  * The tools of a peer and of the server agent: each addresses any agent and
- * owns its message policy. `hideCollectives` leaves collective requests and
- * responses out of send_message, which then sends text only.
+ * owns its message policy.
  */
-function peerTools(hideCollectives: boolean) {
+function peerTools() {
   return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
     const harness = yield* SocialHarness;
     const firewall = yield* Firewall;
@@ -229,13 +224,7 @@ function peerTools(hideCollectives: boolean) {
       .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
     return [
       yield* statusTool(subscription),
-      hideCollectives
-        ? bind(
-            "send_message",
-            textOnlyToolDefinitions.send_message,
-            harness.send,
-          )
-        : bind("send_message", toolDefinitions.send_message, harness.send),
+      bind("send_message", toolDefinitions.send_message, harness.send),
       bind(
         "receive_messages",
         toolDefinitions.receive_messages,

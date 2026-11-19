@@ -269,7 +269,7 @@ export type ResponseContent = typeof ResponseContent.Type;
 const MAXIMUM_DEADLINE_SECONDS = 2_592_000;
 
 /** A collective request's relative deadline: whole seconds, up to 30 days. */
-export const DeadlineSeconds = Schema.Number.pipe(
+const DeadlineSeconds = Schema.Number.pipe(
   Schema.int(),
   Schema.between(1, MAXIMUM_DEADLINE_SECONDS),
 );

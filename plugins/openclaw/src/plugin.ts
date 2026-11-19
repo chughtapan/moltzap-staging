@@ -914,10 +914,9 @@ function sendText(
 
 /**
  * The `send_message` arguments a host send amounts to. Text that is a JSON
- * object with a `collectiveRequest`, `collectiveResponse` or `replyToMsgId`
- * property is the tool's own arguments for a collective request, a collective
- * response or a reply, which the daemon validates. Any other text is a
- * message's text, sent with the reply reference the host gave.
+ * object with a `replyToMsgId` property is the tool's own arguments for a
+ * reply, which the daemon validates. Any other text is a message's text, sent
+ * with the reply reference the host gave.
  */
 function sendArguments(
   to: MessageAddressInput,
@@ -925,10 +924,7 @@ function sendArguments(
   replyToMsgId?: string,
 ): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
-  return written !== undefined &&
-    ["collectiveRequest", "collectiveResponse", "replyToMsgId"].some((field) =>
-      Object.hasOwn(written, field),
-    )
+  return written !== undefined && Object.hasOwn(written, "replyToMsgId")
     ? { ...written, to }
     : { to, text, ...(replyToMsgId === undefined ? {} : { replyToMsgId }) };
 }

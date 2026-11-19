@@ -228,7 +228,6 @@ const knownSettings = new Set([
   ...Object.keys(settings),
   "serverAgentName",
   "hideGroups",
-  "hideCollectives",
   "messagePolicyFile",
   "decisionProviderKeyFile",
   "normsDirectory",

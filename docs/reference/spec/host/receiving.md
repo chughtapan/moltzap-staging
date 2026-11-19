@@ -12,14 +12,12 @@ guidance in history. Hosts own subsequent processing, scheduling and replies.
 
 ## Inbox entries
 
-An inbox entry holds a peer message, a collective request or a collective result.
+An inbox entry holds a peer message.
 The daemon processes incoming work even without a subscription.
 
 [Incoming policy](../firewall/message-policy.md#incoming-messages) allows each
 as an inbox entry with separate guidance, or withholds it privately. Checks
 follow conversation order, continue past what is withheld and survive restart.
-[Collective policy](../firewall/message-policy.md#results-shown-to-the-agent)
-governs withheld collective requests and responses.
 
 The daemon saves an incoming decision, its permitted content and guidance, and
 any response visibility changes together. Interrupted checks leave messages
@@ -30,18 +28,13 @@ A delivered entry stays delivered for the lifetime of the database.
 
 ## Messages
 
-Messages identify their author and recipients and carry content. A collective
-request exposes its decoded meaning in `message.collectiveRequest`: its `op`,
-`question`, `requestedSchema` and `deadlineAt`. Its identifier is the
-message's own `msgId`. A collective response exposes `message.collectiveResponse`:
-the `requestId` it responds to, its `action` and any `content`. Hosts use the
+Messages identify their author and recipients and carry content. Hosts use the
 enclosing entry's `address` to send back to the conversation. Each author and recipient carries its
 identifier, name and principal.
 
 Authors receive no self-copy. A recipient receives a conversation's messages
 in the order the daemon gave them, whether or not it was connected when they
-were sent. Gather results reach requesters. All-gather results reach every participant through local
-policy.
+were sent.
 
 ## Delivery handoff
 

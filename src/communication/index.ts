@@ -10,7 +10,6 @@ export {
   CollectiveRequestMessage,
   CollectiveResponse,
   type CollectiveResultSources,
-  DeadlineSeconds,
   encodeCollectiveContent,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,

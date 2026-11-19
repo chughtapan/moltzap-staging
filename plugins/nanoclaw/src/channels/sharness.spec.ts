@@ -66,46 +66,23 @@ const message = {
   },
 };
 const plainEntry = readEntry({ deliveryToken, address, item: message });
-const slotSchema = {
-  type: "object",
-  properties: { slot: { type: "string", enum: ["mon", "tue"] } },
-  required: ["slot"],
-};
-/** The `send_message` arguments of a collective request, without their address. */
-const request = {
-  text: "Which day works?",
-  collectiveRequest: {
-    op: "all_gather",
-    deadline: 60,
-    requestedSchema: slotSchema,
-  },
-};
-/** The `send_message` arguments of a collective response, without their address. */
-const response = {
-  collectiveResponse: {
-    requestId: msgId,
-    action: "accept",
-    content: { slot: "tue" },
-  },
-};
-/** Alice's collective request to the group, in Bob's inbox. */
-const requestEntry = readEntry({
+/** Alice's message to the group, in Bob's inbox with guidance. */
+const guidedEntry = readEntry({
   deliveryToken,
   address: group,
   item: {
-    kind: "collectiveRequest",
-    message: {
-      msgId,
-      author: alice,
-      recipients: [bob, carol],
-      content: [{ type: "text", text: request.text }],
-      collectiveRequest: {
-        op: "all_gather",
-        question: request.text,
-        requestedSchema: slotSchema,
-        deadlineAt: 1_800_000_000_000,
+    ...message,
+    message: { ...message.message, recipients: [bob, carol] },
+  },
+  guidance: {
+    checkId: `chk_${"a".repeat(64)}`,
+    instructions: [
+      {
+        ruleId: "confirm-times",
+        instruction: "Confirm the time before agreeing.",
+        uncertain: { choice: "violation", probability: 0.6 },
       },
-    },
+    ],
   },
 });
 const agentName = fc.stringMatching(/^[a-z0-9]{3,8}$/);
@@ -116,16 +93,14 @@ const addresses = fc.oneof(
     .uniqueArray(agentName, { minLength: 2, maxLength: 4 })
     .map((names) => `group:${names.join(",")}`),
 );
-/** Fields a model may write beside a collective request or response, an address among them. */
+/** Fields a model may write beside a reply reference, an address among them. */
 const besides = fc.dictionary(
   fc.constantFrom("text", "to", "note"),
   fc.string(),
 );
-/** A collective request or response as a model writes it: a JSON object with a `collectiveRequest` or `collectiveResponse` property. */
-const collectiveSends = fc
-  .tuple(besides, fc.constantFrom(request, response))
-  .map(([beside, named]) => ({ ...beside, ...named }));
-/** Text that is no such object: prose, or a JSON object with neither property. */
+/** A reply as a model writes it: a JSON object with a `replyToMsgId` property. */
+const replies = besides.map((beside) => ({ ...beside, replyToMsgId: msgId }));
+/** Text that is no such object: prose, or a JSON object without that property. */
 const plainTexts = fc.oneof(
   fc.string(),
   besides.map((written) => JSON.stringify(written)),
@@ -267,8 +242,8 @@ describe("NanoClaw inbox entries", () => {
       senderId: address,
     });
   });
-  it("hands a collective request to the host as its inbox entry, in its group", async () => {
-    const { metadata, isGroup, content } = await received(requestEntry);
+  it("hands a group message with guidance to the host as its inbox entry, in its group", async () => {
+    const { metadata, isGroup, content } = await received(guidedEntry);
     expect(metadata).toEqual([group, group, true]);
     expect(isGroup).toBe(true);
     expect(content).toMatchObject({
@@ -276,7 +251,7 @@ describe("NanoClaw inbox entries", () => {
       sender: "agent:alice",
       members: ["agent:alice", "agent:bob", "agent:carol"],
     });
-    expect(entryInText(content)).toEqual(requestEntry);
+    expect(entryInText(content)).toEqual(guidedEntry);
   });
   it("disconnects when the native inbound callback fails", async () => {
     const fake = connection();
@@ -292,7 +267,7 @@ describe("NanoClaw inbox entries", () => {
 });
 
 describe("NanoClaw sends", () => {
-  it("sends text that is not a collective request or response as one message to its address", async () => {
+  it("sends text that is not a JSON reply as one message to its address", async () => {
     const fake = connection();
     const current = await channel();
     await current.setup(host());
@@ -306,12 +281,12 @@ describe("NanoClaw sends", () => {
       }),
     );
   });
-  it("sends a JSON object that names a collective request or response as those send_message arguments, to the row's address", async () => {
+  it("sends a JSON object that names a reply reference as those send_message arguments, to the row's address", async () => {
     const fake = connection();
     const current = await channel();
     await current.setup(host());
     await fc.assert(
-      fc.asyncProperty(addresses, collectiveSends, async (to, written) => {
+      fc.asyncProperty(addresses, replies, async (to, written) => {
         fake.call.mockClear();
         await current.deliver(to, null, {
           kind: "chat",
@@ -336,8 +311,7 @@ describe("NanoClaw sends", () => {
       }),
     );
   });
-  const invalidArguments =
-    "Invalid tool arguments: collectiveRequest.deadline: Expected a number";
+  const invalidArguments = "Invalid tool arguments: text: Expected a string";
   it.each([
     {
       failure: "refuses an argument",

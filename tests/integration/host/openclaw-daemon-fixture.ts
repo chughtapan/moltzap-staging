@@ -3,7 +3,6 @@
  * host contract the channel plugin runs against.
  */
 
-import type { PermittedItem } from "@social-harness/social-harness";
 import openClawPlugin from "@social-harness/openclaw-channel";
 import { Deferred, Duration, Effect, Queue, type Scope } from "effect";
 import { vi } from "vitest";
@@ -444,17 +443,6 @@ export function nextTurn(turns: Queue.Queue<OpenClawRunTurn>) {
         }),
     }),
   );
-}
-
-/** Fails the scenario when an expected collective request has another item kind. */
-export function requireRequest(item: PermittedItem) {
-  return item.kind === "collectiveRequest"
-    ? Effect.succeed(item)
-    : Effect.fail(
-        new ProcessTestError({
-          message: `expected a collective request, received ${item.kind}`,
-        }),
-      );
 }
 
 /** Maps external host callback failures into the process-fixture error channel. */

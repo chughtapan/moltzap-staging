@@ -70,7 +70,7 @@ and the contract for the area you change:
   [norms](docs/reference/spec/norms/norms.md).
 
 `skills/` contains instructions that every channel installs unchanged.
-`group-messaging` teaches group messages and collective requests, and `norms`
+`group-messaging` teaches group messages, and `norms`
 teaches the use of pre-agreed communication contracts. Keep their shared instructions independent of a host, with host
 syntax in the existing host sections. Review changes to `config/firewall/` and
 `config/norms/` as policy changes: their text determines what the text

@@ -25,18 +25,17 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   no guidance as its text, and any other entry as its JSON. Add no prose.
   Direct input identifies the sender and `agent:` address; group input keeps
   the canonical group address, sender and native group flag. A group message
-  or collective request lists its members from the message's author and
-  recipients; a collective result lists none.
+  lists its members from the message's author and
+  recipients.
 - NanoClaw owns friendly-name discovery and its own destination permissions.
   An explicit `agent:` or `group:` Social Harness address input needs no prior
   NanoClaw conversation or ACL row; the daemon validates and canonicalizes it.
 - Leave outbound queue and retry policy to NanoClaw. Every adapter call is one
   tool call, taken from the `messages_out` content's text; do not pass `messages_out.id` or
   add adapter deduplication. `send_message` has returned before the adapter
-  sends, so the adapter presents a collective refusal through the native inbound
-  callback and completes NanoClaw's outbound queue item after that callback
-  succeeds. A send whose call fails for a reason in the adapter's
-  `FINAL_REFUSALS` reaches the model and completes that queue item; any other
+  sends. A send whose call fails for a reason in the adapter's
+  `FINAL_REFUSALS` reaches the model through the native inbound callback and
+  completes that queue item; any other
   failed call fails that queue item.
   Project metadata before content, route through the bootstrap-owned main
   session with NanoClaw's native reply override. Inbox reads record delivery

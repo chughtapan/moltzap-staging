@@ -882,60 +882,6 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     ).toEqual(new Set([before.activeRevision]));
   }));
 
-it("can respond to a presented collective request after delivery and restart", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const scope = yield* Scope.make();
-    const runtime = yield* subject.open().pipe(Scope.extend(scope));
-    const original = yield* collectiveRequest(subject);
-    yield* subject.deliver({
-      kind: "collectiveRequest",
-      message: original.message,
-    });
-    yield* acknowledgeNext(runtime);
-    expect(subject.submitted).toEqual([]);
-    yield* Scope.close(scope, Exit.void);
-    const reopened = yield* subject.open();
-    yield* reopened.harness.send({
-      to: bobAddress,
-      collectiveResponse: {
-        requestId: original.message.msgId,
-        action: "accept",
-        content: { day: "Tuesday" },
-      },
-    });
-    expect(subject.submitted).toMatchObject([
-      { collectiveResponse: { requestId: original.message.msgId } },
-    ]);
-  }));
-
-it("cannot respond to a collective request withheld from the agent", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-
-    const runtime = yield* subject.open({
-      policy: composedPolicy(violation),
-    });
-    const original = yield* collectiveRequest(subject);
-    yield* subject.deliver({
-      kind: "collectiveRequest",
-      message: original.message,
-    });
-    yield* waitForDecisions(runtime);
-    expect(
-      yield* runtime.harness
-        .send({
-          to: bobAddress,
-          collectiveResponse: {
-            requestId: original.message.msgId,
-            action: "decline",
-          },
-        })
-        .pipe(Effect.flip),
-    ).toMatchObject({ failure: { kind: "request-none" } });
-    expect(subject.submitted).toEqual([]);
-  }));
-
 it("cancels an unaccepted draft and releases assessment capacity", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;

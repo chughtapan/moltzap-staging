@@ -18,8 +18,6 @@ import {
 import { createHash } from "node:crypto";
 import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
-  CollectiveRequest,
-  CollectiveResponse,
   type CommunicationError,
   GROUP_ADDRESS_PREFIX,
   Message,
@@ -28,7 +26,7 @@ import {
   MsgId,
   type Page,
   type PaginatedRequest,
-  RequestError,
+  type RequestError,
   SendError,
 } from "../communication/index.js";
 import {
@@ -311,44 +309,13 @@ function send(agent: Agent, input: SendRequest) {
   });
 }
 
-/**
- * The outgoing message a send request amounts to, addressed to the agents
- * `names` other than this one: a response to a collective request this agent
- * was shown, a collective request, or a message.
- */
+/** The message a send request amounts to, addressed to the agents `names` other than this one. */
 function outgoingFor(
   agent: Agent,
   request: SendRequest,
   names: ReadonlyArray<AgentCard["agentName"]>,
 ) {
   return Effect.gen(function* () {
-    if ("collectiveResponse" in request) {
-      if (
-        !(yield* agent.inbox.isCollectiveRequestVisible(
-          request.collectiveResponse.requestId,
-        ))
-      ) {
-        return yield* new RequestError({ failure: { kind: "request-none" } });
-      }
-      const collectiveRequest = yield* agent.communication.getCollectiveRequest(
-        request.collectiveResponse.requestId,
-      );
-      const expected = [
-        collectiveRequest.author,
-        ...collectiveRequest.recipients,
-      ]
-        .filter((member) => member.agentId !== agent.card.agentId)
-        .map((member) => member.agentName)
-        .sort(compareAscii);
-      if (expected.join(",") !== [...names].sort(compareAscii).join(",")) {
-        return yield* new SendError({ reason: "invalid-address" });
-      }
-      return yield* CollectiveResponse.create({
-        author: agent.card,
-        request: collectiveRequest,
-        response: request.collectiveResponse,
-      });
-    }
     const recipients = yield* agent.identity.resolve(names).pipe(
       Effect.catchTag("IdentityError", (error) =>
         error.reason === "unknown-agent"
@@ -369,19 +336,12 @@ function outgoingFor(
     if (first === undefined) {
       return yield* new SendError({ reason: "membership-invalid" });
     }
-    return "collectiveRequest" in request
-      ? yield* CollectiveRequest.create({
-          author: agent.card,
-          recipients: [first, ...rest],
-          question: request.text,
-          ...request.collectiveRequest,
-        })
-      : yield* Message.create({
-          author: agent.card,
-          recipients: [first, ...rest],
-          content: [{ type: "text", text: request.text }],
-          replyToMsgId: request.replyToMsgId,
-        });
+    return yield* Message.create({
+      author: agent.card,
+      recipients: [first, ...rest],
+      content: [{ type: "text", text: request.text }],
+      replyToMsgId: request.replyToMsgId,
+    });
   });
 }
 
