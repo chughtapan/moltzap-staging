@@ -59,50 +59,6 @@ export const sameJson = (left: string, right: string): boolean =>
     Option.getOrElse(() => false),
   );
 
-const HASH_BYTE_LENGTH = 32;
-
-/**
- * Returns bytes for canonical base64url, or undefined for another spelling.
- */
-const decodeCanonicalBase64Url = (value: string): Uint8Array | undefined =>
-  Either.match(Encoding.decodeBase64Url(value), {
-    onLeft: () => undefined,
-    onRight: (bytes) =>
-      Encoding.encodeBase64Url(bytes) === value ? bytes : undefined,
-  });
-
-/**
- * Requires the prefix followed by canonical base64url encoding of 32 bytes.
- */
-export function isCanonicalIdentifier(prefix: string, value: string): boolean {
-  if (!value.startsWith(prefix)) {
-    return false;
-  }
-  return (
-    decodeCanonicalBase64Url(value.slice(prefix.length))?.byteLength ===
-    HASH_BYTE_LENGTH
-  );
-}
-
-/**
- * Compares validated agent IDs by decoded bytes, as membership lists require.
- */
-export const compareAgentIds = (left: string, right: string): number => {
-  const leftBytes = decodeCanonicalBase64Url(left.slice(4));
-  const rightBytes = decodeCanonicalBase64Url(right.slice(4));
-  if (leftBytes === undefined || rightBytes === undefined) {
-    return 0;
-  }
-  const length = Math.min(leftBytes.byteLength, rightBytes.byteLength);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftBytes[index] ?? 0) - (rightBytes[index] ?? 0);
-    if (difference !== 0) {
-      return difference;
-    }
-  }
-  return leftBytes.byteLength - rightBytes.byteLength;
-};
-
 /**
  * Compares ASCII names in the order used by group addresses.
  */

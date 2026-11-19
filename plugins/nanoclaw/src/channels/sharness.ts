@@ -191,7 +191,6 @@ function extractOutboundText(message: OutboundMessage): string | null {
  */
 const FINAL_REFUSALS: ReadonlySet<string> = new Set([
   "invalid-arguments",
-  "invalid-address",
   "unknown-agent",
   "membership-invalid",
   "content-invalid",

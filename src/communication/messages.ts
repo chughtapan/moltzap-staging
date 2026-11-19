@@ -14,15 +14,11 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   canonicalIdentifier,
-  compareAgentIds,
   compareAscii,
-  encodeJson,
   exactStruct,
-  isCanonicalIdentifier,
-  isStrictlyAscending,
   issuesText,
   type JsonRepresentationError,
   representationFailure,
@@ -50,14 +46,7 @@ const utf8Encoder = new TextEncoder();
  * One author-scoped message id. Retrying a persisted message reuses it; a new
  * message receives a fresh one.
  */
-export const MsgId = Schema.String.pipe(
-  Schema.filter((value) => isCanonicalIdentifier("msg_", value), {
-    identifier: "MsgId",
-    description: "Canonical author-scoped message id",
-  }),
-  Schema.brand("MsgId"),
-  Schema.annotations({ identifier: "MsgId" }),
-);
+export const MsgId = canonicalIdentifier("MsgId", "msg_", 32);
 /**
  * A validated author-scoped message id.
  * @useDeclaredType
@@ -125,38 +114,6 @@ export const Content = contentStructure.pipe(
 );
 /** Validated nonempty semantic content. */
 export type Content = typeof Content.Type;
-
-const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
-const ConversationMembers = exactStruct({
-  kind: Schema.Literal("conversation_identity"),
-  memberAgentIds: Schema.Tuple([AgentId, AgentId], AgentId).pipe(
-    Schema.maxItems(maximumMembers),
-  ),
-});
-
-/**
- * The identifier of the conversation among these members: a hash of their
- * agent identifiers, which must be given in ascending order with no repeats.
- */
-export const deriveConversationId = (
-  memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
-): Effect.Effect<typeof ConversationId.Type, JsonRepresentationError> =>
-  isStrictlyAscending(memberAgentIds, compareAgentIds)
-    ? encodeJson(ConversationMembers, {
-        kind: "conversation_identity" as const,
-        memberAgentIds,
-      }).pipe(
-        Effect.map(
-          (members) =>
-            `cnv_${createHash("sha256")
-              .update("org.social-harness/client/v2/conversation\0")
-              .update(members)
-              .digest("base64url")}`,
-        ),
-        Effect.flatMap(Schema.decodeUnknown(ConversationId)),
-        Effect.mapError(representationFailure),
-      )
-    : Effect.fail(representationFailure());
 
 /** A fresh author-scoped id uses 32 random bytes before any assessment or send. */
 const mintMsgId = (): Effect.Effect<MsgId, JsonRepresentationError> =>

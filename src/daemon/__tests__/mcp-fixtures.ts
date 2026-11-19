@@ -76,7 +76,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   );
   const tools =
     options.serverAgentName === undefined
-      ? peerTools(false, false)
+      ? peerTools(false, false, false)
       : clientTools(
           MessageAddressInput.make(`agent:${options.serverAgentName}`),
         );

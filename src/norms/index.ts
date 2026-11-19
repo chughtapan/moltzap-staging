@@ -6,7 +6,7 @@
  */
 
 import { FileSystem } from "@effect/platform";
-import { Context, Data, Effect, Layer } from "effect";
+import { Data, Effect } from "effect";
 import { join } from "node:path";
 import { compareAscii } from "../encoding.js";
 import {
@@ -15,29 +15,11 @@ import {
   type PolicyEdit,
   type policyUpdateSchema,
 } from "../firewall/index.js";
-import { Firewall } from "../firewall/service.js";
 import { compileNorm } from "./compiler.js";
 
 /** The settings' copy of a norms directory: the contracts each new agent holds. */
 export interface InstalledNorms {
   readonly contracts: readonly CompiledContract[];
-}
-
-/** The contracts one agent holds, which `read_norms` lists with their norm documents. */
-export class HeldNorms extends Context.Tag("SocialHarness/HeldNorms")<
-  HeldNorms,
-  {
-    readonly read: () => Effect.Effect<
-      readonly CompiledContract[],
-      FirewallPolicyError
-    >;
-  }
->() {
-  /** Reads the agent's contracts from its firewall's active revision, so it shows edits made since startup. */
-  static readonly layer = Layer.effect(
-    HeldNorms,
-    Effect.map(Firewall, (firewall) => ({ read: firewall.readContracts })),
-  );
 }
 
 /** A norms directory the daemon cannot use, and why. */

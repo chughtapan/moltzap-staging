@@ -81,7 +81,6 @@ export type AgentAddress = typeof AgentAddress.Type;
 
 /** What a send and a history read both say of an address they cannot use. */
 const addressFailureText = {
-  "invalid-address": "the address is not a valid agent: or group: address",
   "unknown-agent": "an agent the address names is not a known agent",
 } as const;
 
@@ -237,6 +236,7 @@ export type SendResult = typeof SendResultSchema.Type;
 
 const historyFailureText = {
   ...addressFailureText,
+  "invalid-address": "the address is not a valid agent: or group: address",
   "invalid-cursor":
     "the cursor is not one this conversation returned; call again without a cursor",
 } as const;
@@ -570,16 +570,14 @@ function addressesAreOrdered(addresses: readonly string[]): boolean {
 /**
  * The members a `group:` destination names, with the local agent among them.
  * A name given twice, no agent but the local one, and more than
- * `maximumMembers` members are refused.
+ * `maximumMembers` members are refused. A validated address that names no
+ * single agent is a group address, so `to` always lists names.
  */
 function groupMembers(
-  to: string,
+  to: MessageAddressInput,
   localAgentName: AgentName,
 ): Effect.Effect<readonly AgentName[], SendError> {
-  const names = groupMemberNames(to);
-  if (names === undefined) {
-    return Effect.fail(new SendError({ reason: "invalid-address" }));
-  }
+  const names = groupMemberNames(to) ?? [];
   const refused = (detail: string) =>
     Effect.fail(new SendError({ reason: "membership-invalid", detail }));
   if (new Set(names).size !== names.length) {
