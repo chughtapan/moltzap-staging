@@ -6,7 +6,7 @@
   "scripts": {
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint": "eslint . --cache --max-warnings=0",
-    "test:live": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 --test-concurrency=1 images/*.spec.ts"
+    "test:live": "node --import tsx --test --test-timeout=600000 --test-concurrency=1 images/*.spec.ts"
   },
   "nx": {
     "targets": {

@@ -31,11 +31,7 @@ Three library entries expose named exports:
 |---|---|
 | `@social-harness/social-harness` | For a host that calls the daemon with the official MCP client: the tool contracts and the values they carry, a connection made from the host's environment with its inbox reader, a send whose outcome is always stated, and the identifiers and name of an agent |
 | `@social-harness/social-harness/service` | Daemon composition and database preparation |
-| `@social-harness/social-harness/test` | A test database, its restricted login and a decision-provider override. Requires `sharness-test` |
+| `@social-harness/social-harness/test` | A test database, its restricted login and an OAuth issuer on this machine |
 
-Root and service resolve by default. The test entry has no default resolution
-or TypeDoc entry. Adapters use only the root and MCP. They cannot import
+The test entry has no TypeDoc entry. Adapters use only the root and MCP. They cannot import
 each other, simulators or evaluation suites.
-
-The test entry resolves only in a process started with
-`--conditions=sharness-test`.

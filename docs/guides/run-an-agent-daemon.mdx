@@ -130,7 +130,7 @@ writes a token for each of two owners into `~/sharness/alice-token` and
 `~/sharness/bob-token`:
 
 ```bash
-cd ~/sharness && node --conditions=sharness-test --input-type=module -e '
+cd ~/sharness && node --input-type=module -e '
 import { NodeRuntime } from "@effect/platform-node";
 import { issuerFixture } from "@social-harness/social-harness/test";
 import { Console, Effect } from "effect";
