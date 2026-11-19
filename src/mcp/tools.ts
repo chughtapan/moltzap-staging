@@ -2,6 +2,7 @@
 
 import { Data, Effect, Schema } from "effect";
 import {
+  Cursor,
   Message,
   MsgId,
   Page,
@@ -116,11 +117,6 @@ export const InboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/** A place in an inbox's read order: the count of entries allowed before it, as decimal text. */
-export const InboxCursor = Schema.String.pipe(
-  Schema.pattern(/^\d{1,15}$/u),
-).annotations({ description: "the nextCursor of an earlier result" });
-
 /** The name of the event whose occurrences are an agent's inbox entries, in read order. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
 
@@ -152,19 +148,13 @@ export type SendResult = typeof SendResultSchema.Type;
 const historyFailureText = {
   ...addressFailureText,
   "invalid-address": "the address names you, not another agent",
-  "invalid-cursor":
-    "the cursor is not one this conversation returned; call again without a cursor",
 } as const;
 
 /** History failure never exposes private protocol or persistence diagnostics. */
 export class HistoryError extends Schema.TaggedError<HistoryError>()(
   "HistoryError",
   {
-    reason: Schema.Literal(
-      "invalid-address",
-      "unknown-agent",
-      "invalid-cursor",
-    ),
+    reason: Schema.Literal("invalid-address", "unknown-agent"),
   },
 ) {
   override get message(): string {
@@ -197,15 +187,9 @@ const statusOutput = Schema.Struct({
   agentName: AgentName,
 });
 
-/** Canonically ordered local-conversation page selector. */
-const listConversationsInput = exactStruct({
-  ...PaginatedRequest.fields,
-});
-
-/** At most fifty canonical addresses and an opaque position for the next page. */
+/** Every conversation's address, in order. */
 const listConversationsOutput = Schema.Struct({
-  addresses: Schema.Array(AgentAddress).pipe(Schema.maxItems(PAGE_SIZE)),
-  ...Page.fields,
+  addresses: Schema.Array(AgentAddress),
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
 const readConversationInput = exactStruct({
@@ -218,13 +202,11 @@ const readConversationOutput = Schema.Struct({
   ...Page.fields,
 });
 
-const receiveMessagesInput = exactStruct({
-  cursor: Schema.optional(InboxCursor),
-});
+const receiveMessagesInput = exactStruct({ ...PaginatedRequest.fields });
 /** Entries in read order, with the cursor that reads on from the last of them. */
 const receiveMessagesOutput = Schema.Struct({
   entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
-  nextCursor: InboxCursor,
+  nextCursor: Cursor,
 });
 /** Writes the typed refusal's details as the structured content of a failed send. */
 function sendErrorData(error: SendError | FirewallRefusal) {
@@ -318,15 +300,15 @@ export const toolDefinitions = {
   list_conversations: {
     failure: historyFails,
     description:
-      "List canonical conversation addresses with completed messages. Follow nextCursor until absent. Use read_conversation to read one address.",
-    input: listConversationsInput,
+      "List the address of every conversation with a message. Use read_conversation to read one address.",
+    input: noArguments,
     output: listConversationsOutput,
     annotations: readOnlyAnnotations,
   },
   read_conversation: {
     failure: historyFails,
     description:
-      "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
+      "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. A page holds the oldest records after cursor; pass nextCursor as cursor, with the same address, until it is absent.",
     input: readConversationInput,
     output: readConversationOutput,
     annotations: readOnlyAnnotations,

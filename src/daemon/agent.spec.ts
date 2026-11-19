@@ -26,7 +26,7 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
-import { AgentAddress, type HistoryRecord } from "../mcp/tools.js";
+import { AgentAddress } from "../mcp/tools.js";
 import {
   composedPolicy,
   decisionResponse,
@@ -391,7 +391,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
     });
   }));
 
-it("continues history through the boundary its first page fixed", () =>
+it("continues a conversation's history from the cursor a page returned, with what was sent since", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -400,36 +400,17 @@ it("continues history through the boundary its first page fixed", () =>
         yield* ordinaryMessage(subject, `Message ${index}`),
       );
     }
-    const first = yield* runtime.harness.readHistory({
-      address: bobAddress,
-    });
+    const first = yield* runtime.harness.readHistory({ address: bobAddress });
     expect(first.records).toHaveLength(50);
-    if (first.nextCursor === undefined) {
-      return yield* Effect.dieMessage("Expected history cursor");
-    }
     yield* subject.deliver(yield* ordinaryMessage(subject, "Later message"));
-    const remaining = yield* runtime.harness.readHistory({
+    const rest = yield* runtime.harness.readHistory({
       address: bobAddress,
       cursor: first.nextCursor,
     });
-    expect(remaining.records.map((record) => record.kind)).toEqual(["sent"]);
-    expect(remaining.nextCursor).toBeUndefined();
     expect(
-      (yield* runtime.harness
-        .readHistory({ address: carolAddress, cursor: first.nextCursor })
-        .pipe(Effect.flip)).reason,
-    ).toBe("invalid-cursor");
-    const records: HistoryRecord[] = [];
-    let page = yield* runtime.harness.readHistory({ address: bobAddress });
-    records.push(...page.records);
-    while (page.nextCursor !== undefined) {
-      page = yield* runtime.harness.readHistory({
-        address: bobAddress,
-        cursor: page.nextCursor,
-      });
-      records.push(...page.records);
-    }
-    expect(records.filter((record) => record.kind === "sent")).toHaveLength(52);
+      rest.records.map((record) => record.message.content[0]),
+    ).toMatchObject([{ text: "Message 50" }, { text: "Later message" }]);
+    expect(rest.nextCursor).toBeUndefined();
   }));
 
 it("lists every conversation once, in address order", () =>

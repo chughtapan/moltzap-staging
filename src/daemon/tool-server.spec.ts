@@ -317,7 +317,7 @@ describe("MCP tool contracts", () => {
   it("answers a read that fails with the failure's own message and reason", () =>
     Effect.gen(function* () {
       const reading = yield* Ref.make(
-        new HistoryError({ reason: "invalid-cursor" }),
+        new HistoryError({ reason: "unknown-agent" }),
       );
       const fixture = yield* mcpFixture({
         harness: { readHistory: () => Effect.flip(Ref.get(reading)) },

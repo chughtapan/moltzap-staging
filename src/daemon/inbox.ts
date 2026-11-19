@@ -1,7 +1,7 @@
 /** @file Stores one agent's inbox entries in the order they arrived. */
 
 import { SqlClient } from "@effect/sql";
-import { Data, Effect, Encoding, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import type { Message, MessageReference } from "../communication/index.js";
 import type { LocalGuidance } from "../firewall/index.js";
 import {
@@ -11,12 +11,8 @@ import {
   makeQueries,
   withAgentRows,
 } from "../database.js";
-import { decodeJson, encodeJson, exactStruct } from "../encoding.js";
-import {
-  type AgentAddress,
-  type InboxCursor,
-  InboxEntry,
-} from "../mcp/tools.js";
+import { encodeJson, exactStruct } from "../encoding.js";
+import { type AgentAddress, InboxEntry } from "../mcp/tools.js";
 
 const entryRow = exactStruct({
   read_number: Schema.Number,
@@ -103,10 +99,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
      * cursor to read on from and whether more entries follow. Without a
      * cursor the read starts from the newest entry and returns none.
      */
-    listInbox: Effect.fn(function* (
-      limit: number,
-      cursor?: typeof InboxCursor.Type,
-    ) {
+    listInbox: Effect.fn(function* (limit: number, cursor?: string) {
       const from = Number(
         cursor ?? (yield* run(newest(inboxRows())))[0]?.newest ?? 0,
       );
@@ -136,30 +129,3 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       ).pipe(Effect.map((rows) => rows[0]?.entry)),
   };
 });
-
-/** The text is not a cursor the read it was given to returned. */
-export class CursorError extends Data.TaggedError("CursorError") {}
-
-/** A cursor is its position as base64url JSON text. */
-export function encodeCursor<A, I>(
-  schema: Schema.Schema<A, I>,
-  position: NoInfer<A>,
-) {
-  return encodeJson(schema, position).pipe(
-    Effect.map((text) => Encoding.encodeBase64Url(text)),
-  );
-}
-
-/** The position a cursor holds, when it is one `schema` describes. */
-export function decodeCursor<A, I>(
-  schema: Schema.Schema<A, I>,
-  cursor: string,
-) {
-  return Encoding.decodeBase64UrlString(cursor).pipe(
-    Effect.flatMap((text) => decodeJson(schema, text)),
-    Effect.catchTags({
-      DecodeException: () => new CursorError(),
-      JsonRepresentationError: () => new CursorError(),
-    }),
-  );
-}

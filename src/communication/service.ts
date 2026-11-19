@@ -19,7 +19,7 @@ import {
   Option,
   Schema,
 } from "effect";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   afterCommit,
   executeQuery,
@@ -92,7 +92,7 @@ export interface CommunicationService {
     ReadonlyArray<readonly AgentCard[]>,
     CommunicationError
   >;
-  /** Reads a conversation's messages in order. Continuation cursors require this service instance. */
+  /** Reads a conversation's messages in order. A page's `nextCursor` is the position of its last message. */
   readonly readHistory: (
     query: HistoryQuery,
   ) => Effect.Effect<HistoryPage, CommunicationError>;
@@ -110,19 +110,6 @@ export interface CommunicationSettings {
   readonly consumers: Map<string, Effect.Latch>;
 }
 
-interface HistoryWindow {
-  readonly conversationId: string;
-  readonly after: number;
-  readonly through: number;
-  readonly newestFirst: boolean;
-  readonly limit: number;
-}
-const cursorSchema = Schema.Struct({
-  session: Schema.String,
-  conversation: Schema.String,
-  after: Schema.Int,
-  through: Schema.Int,
-});
 const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
 const ConversationMembers = exactStruct({
   kind: Schema.Literal("conversation_identity"),
@@ -306,12 +293,7 @@ function readHistory(agent: HostedAgent, query: HistoryQuery) {
       !window.newestFirst &&
       selected.length > window.limit &&
       last !== undefined
-        ? JSON.stringify({
-            session: agent.session,
-            conversation: window.conversationId,
-            after: last.ordinal,
-            through: window.through,
-          })
+        ? String(last.ordinal)
         : undefined;
     if (window.newestFirst) {
       page.reverse();
@@ -377,33 +359,26 @@ function historyWindow(agent: HostedAgent, query: HistoryQuery) {
     ) {
       return yield* refused("membership-invalid");
     }
-    const through = newestStored?.ordinal ?? -1;
-    if (query.order === "newest") {
-      return {
-        conversationId,
-        after: -1,
-        through:
-          query.beforeMessage === undefined
-            ? through
-            : (yield* ordinalOf(
-                agentKey,
-                conversationId,
-                query.beforeMessage,
-              )) - 1,
-        newestFirst: true,
-        limit: query.limit,
-      };
-    }
-    const window = {
-      conversationId,
-      after: -1,
-      through,
-      newestFirst: false,
-      limit: PAGE_SIZE,
-    };
-    return query.cursor === undefined
-      ? window
-      : yield* continueWindow(agent.session, window, query.cursor);
+    return query.order === "newest"
+      ? {
+          conversationId,
+          through:
+            query.beforeMessage === undefined
+              ? undefined
+              : (yield* ordinalOf(
+                  agentKey,
+                  conversationId,
+                  query.beforeMessage,
+                )) - 1,
+          newestFirst: true,
+          limit: query.limit,
+        }
+      : {
+          conversationId,
+          after: Number(query.cursor ?? -1),
+          newestFirst: false,
+          limit: PAGE_SIZE,
+        };
   });
 }
 
@@ -506,37 +481,12 @@ function ordinalOf(
   });
 }
 
-function continueWindow(
-  session: string,
-  window: HistoryWindow,
-  encodedCursor: string,
-) {
-  return Effect.gen(function* () {
-    const cursor = yield* Schema.decodeUnknown(Schema.parseJson(cursorSchema))(
-      encodedCursor,
-    ).pipe(Effect.mapError(() => refused("invalid-cursor")));
-    const sameRequest =
-      cursor.session === session &&
-      cursor.conversation === window.conversationId;
-    const validBounds =
-      cursor.after >= window.after &&
-      cursor.after <= cursor.through &&
-      cursor.through <= window.through;
-    if (!sameRequest || !validBounds) {
-      return yield* refused("invalid-cursor");
-    }
-    return { ...window, after: cursor.after, through: cursor.through };
-  });
-}
-
-/** One hosted agent's database client, settings, arrival latch and cursor session. */
+/** One hosted agent's database client, settings and arrival latch. */
 interface HostedAgent {
   readonly sql: SqlClient;
   readonly settings: CommunicationSettings;
   /** Opened when a message is saved for this agent. */
   readonly arrived: Effect.Latch;
-  /** Names this service instance in the history cursors it returns. */
-  readonly session: string;
 }
 const agentRow = Schema.Struct({
   agentKey: Schema.String,
@@ -553,7 +503,6 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
     sql: yield* SqlClient,
     settings,
     arrived,
-    session: randomBytes(16).toString("base64url"),
   };
   const oneConsumer = yield* Effect.makeSemaphore(1);
   return {

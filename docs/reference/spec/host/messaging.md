@@ -74,10 +74,9 @@ contents, ordering and replay.
 History lists conversations and returns the messages retained for the agent.
 The content and any guidance stay the same across restart.
 
-A history read fixes an opaque end position at its start. Later appends remain
-outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
-`cursor` with the same selection until absent. An invalid cursor returns
-`invalid-cursor`.
+Listing returns every address in `addresses`. History returns `records`, oldest
+first, at most 50 to a page. Pass `nextCursor` as
+`cursor` with the same address until absent.
 
 An invalid history page returns no messages. Reading history does not
 authorize a send.
