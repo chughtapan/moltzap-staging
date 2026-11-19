@@ -27,7 +27,7 @@ export interface Candidate {
 interface Refusal {
   readonly reason: FirewallRefusalReason;
   readonly ruleId?: string;
-  readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly feedback: readonly string[];
   readonly detail?: unknown;
   readonly reply?: string;
 }
@@ -104,7 +104,7 @@ export function contractRefusal(
     refusal: {
       reason: problem.reason,
       ruleId,
-      feedback: [{ text: problem.detail }],
+      feedback: [problem.detail],
       detail,
       ...(reply === undefined ? {} : { reply }),
     },

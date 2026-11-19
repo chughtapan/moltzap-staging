@@ -185,7 +185,7 @@ then fixed and initial behaviors.
 | `text` | Trimmed body. |
 | `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
 | `guidance` | Optional `metadata.social-harness.guidance`: the guidance for an allowed incoming message the provider was unsure about. |
-| `feedback` | Optional `metadata.social-harness.feedback`: `text`. |
+| `feedback` | Optional `metadata.social-harness.feedback`. |
 | `action` | Optional `metadata.social-harness.action`: `deny` or `reply`. |
 
 Other metadata, description/license and neighboring files supply no policy.

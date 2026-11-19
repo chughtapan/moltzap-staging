@@ -677,9 +677,7 @@ function textReply(active: ActivePolicy, check: FirewallCheck): string {
   const violated = new Set(check.decidedBy.map((rule) => rule.ruleId));
   return active.textRules
     .filter((rule) => violated.has(rule.id) && rule.action === "reply")
-    .flatMap((rule) =>
-      rule.feedback === undefined ? [] : [rule.feedback.text],
-    )
+    .flatMap((rule) => (rule.feedback === undefined ? [] : [rule.feedback]))
     .join("\n");
 }
 
@@ -695,7 +693,7 @@ function contractRefusalReply(
     ? undefined
     : contractReply(
         contract,
-        check.feedback.map((entry) => entry.text).join(" ") ||
+        check.feedback.join(" ") ||
           `The semantic policy check returned ${check.reason}.`,
       );
 }

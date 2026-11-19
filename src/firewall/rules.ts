@@ -45,7 +45,7 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
   guidance: Schema.optional(Schema.NonEmptyString),
-  feedback: Schema.optional(exactStruct({ text: Schema.NonEmptyString })),
+  feedback: Schema.optional(Schema.NonEmptyString),
   action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),

@@ -238,7 +238,7 @@ function compileRule(form: Declaration, id: string) {
       applies: atom(form.attributes.get(":applies")) ?? "both",
       ...(act === undefined ? {} : { act }),
       ...(guidance === undefined ? {} : { guidance }),
-      ...(feedback === undefined ? {} : { feedback: { text: feedback } }),
+      ...(feedback === undefined ? {} : { feedback }),
       ...(action === undefined ? {} : { action }),
     };
   });

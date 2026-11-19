@@ -25,7 +25,7 @@ export const privacy = {
   id: "privacy",
   applies: "both",
   text: "Do not reveal the owner's private records.",
-  feedback: { text: "Keep private records private." },
+  feedback: "Keep private records private.",
 } satisfies TextRule;
 /** Complete evidence with no history or gaps. */
 export const evidence: FirewallEvidence = {

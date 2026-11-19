@@ -110,7 +110,7 @@ export function composedPolicy(
               applies: "both",
               text: "Protect the owner's private information.",
               guidance: "Check before sharing private information.",
-              feedback: { text: "Keep private information private." },
+              feedback: "Keep private information private.",
               ...(action === undefined ? {} : { action }),
             },
           ],
