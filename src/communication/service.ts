@@ -17,10 +17,9 @@ import {
   withAgentRows,
 } from "../database/index.js";
 import { compareAgentIds } from "../encoding.js";
-import { AgentCard, type AgentName } from "../identity.js";
+import { AgentCard } from "../identity.js";
 import { CommunicationError } from "./errors.js";
 import {
-  conversationNameKey,
   deriveConversationId,
   type Message,
   messageMembers,
@@ -38,12 +37,6 @@ import {
 
 /** All conversation members, in ascending agent-name order. */
 export type Conversation = readonly [AgentCard, AgentCard, ...AgentCard[]];
-/** Omit cursor to begin listing conversations. */
-export interface ConversationQuery extends PaginatedRequest {}
-/** A missing nextCursor ends the listing. */
-interface ConversationPage extends Page {
-  readonly conversations: readonly Conversation[];
-}
 /** Selects a paged forward traversal or one bounded recent window. */
 export type HistoryQuery =
   | (PaginatedRequest & {
@@ -81,14 +74,11 @@ export interface CommunicationService {
   readonly consume: <E, R>(
     handle: (message: Message) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<never, CommunicationError | E, R>;
-  /** Finds a retained conversation by all member names, including self. */
-  readonly getConversation: (
-    names: readonly AgentName[],
-  ) => Effect.Effect<Conversation | undefined, CommunicationError>;
-  /** Lists retained conversations. Cursors expire when this service instance ends. */
-  readonly listConversations: (
-    query?: ConversationQuery,
-  ) => Effect.Effect<ConversationPage, CommunicationError>;
+  /** Every conversation this agent has a message in, in no order. */
+  readonly listConversations: Effect.Effect<
+    readonly Conversation[],
+    CommunicationError
+  >;
   /** Reads a conversation's messages in order. Continuation cursors require this service instance. */
   readonly readHistory: (
     query: HistoryQuery,
@@ -100,8 +90,6 @@ export interface CommunicationSettings {
   /** The key the agent's rows are stored under. */
   readonly agentKey: string;
   readonly card: AgentCard;
-  /** The most messages one newest-first history read may ask for. */
-  readonly maximumHistoryRecords?: number;
   /**
    * The latch each agent's consumer waits on, by agent key. Every agent of a
    * daemon is given the same map, so a send opens its recipients' latches.
@@ -139,7 +127,6 @@ export function restarting(agentKey: string, loop: string) {
 interface HistoryAgent {
   readonly agentKey: string;
   readonly card: AgentCard;
-  readonly maximumHistoryRecords: number;
   readonly session: string;
 }
 interface HistoryWindow {
@@ -165,71 +152,14 @@ function messageHistory(input: Omit<HistoryAgent, "session">) {
     session: randomBytes(16).toString("base64url"),
   };
   return {
-    getConversation: (names: readonly AgentName[]) =>
-      historyFailure(getConversation(agent, names)).pipe(
-        Effect.withSpan("getConversation"),
-      ),
-    listConversations: (query: ConversationQuery = {}) =>
-      historyFailure(listConversations(agent, query)).pipe(
-        Effect.withSpan("listConversations"),
-      ),
+    listConversations: historyFailure(listConversations(agent)).pipe(
+      Effect.withSpan("listConversations"),
+    ),
     readHistory: (query: HistoryQuery) =>
       historyFailure(readHistory(agent, query)).pipe(
         Effect.withSpan("readHistory"),
       ),
   };
-}
-
-function getConversation(agent: HistoryAgent, names: readonly AgentName[]) {
-  return Effect.gen(function* () {
-    if (
-      !names.includes(agent.card.agentName) ||
-      new Set(names).size !== names.length
-    ) {
-      return yield* refused("membership-invalid");
-    }
-    const wanted = conversationNameKey(names, agent.card.agentName);
-    const conversations = yield* retainedConversations(agent);
-    return conversations.find(
-      (members) => conversationKey(agent, members) === wanted,
-    );
-  });
-}
-
-function listConversations(agent: HistoryAgent, query: ConversationQuery) {
-  return Effect.gen(function* () {
-    const conversations = yield* retainedConversations(agent);
-    const after =
-      query.cursor === undefined
-        ? ""
-        : yield* Schema.decodeUnknown(
-            Schema.parseJson(
-              Schema.Struct({
-                session: Schema.Literal(agent.session),
-                after: Schema.String,
-              }),
-            ),
-          )(query.cursor).pipe(
-            Effect.map((cursor) => cursor.after),
-            Effect.mapError(() => refused("invalid-cursor")),
-          );
-    const selected = conversations.filter(
-      (members) => conversationKey(agent, members) > after,
-    );
-    const page = selected.slice(0, 50);
-    const last = page.at(-1);
-    return {
-      conversations: page,
-      ...(selected.length > 50 && last !== undefined
-        ? {
-            nextCursor: JSON.stringify({
-              session: agent.session,
-              after: conversationKey(agent, last),
-            }),
-          }
-        : {}),
-    };
-  });
 }
 
 function readHistory(agent: HistoryAgent, query: HistoryQuery) {
@@ -270,7 +200,7 @@ function readHistory(agent: HistoryAgent, query: HistoryQuery) {
   });
 }
 
-function retainedConversations(agent: HistoryAgent) {
+function listConversations(agent: HistoryAgent) {
   return Effect.gen(function* () {
     const db = yield* communicationQueries;
     const rows = yield* withAgentRows(
@@ -293,9 +223,7 @@ function retainedConversations(agent: HistoryAgent) {
         conversations.push(yield* membersOf(stored.message));
       }
     }
-    return conversations.sort((a, b) =>
-      compareText(conversationKey(agent, a), conversationKey(agent, b)),
-    );
+    return conversations;
   });
 }
 
@@ -321,13 +249,6 @@ function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
     }
     const through = newestStored?.ordinal ?? -1;
     if (query.order === "newest") {
-      if (
-        !Number.isSafeInteger(query.limit) ||
-        query.limit < 1 ||
-        query.limit > agent.maximumHistoryRecords
-      ) {
-        return yield* refused("content-invalid");
-      }
       return {
         conversationId,
         after: -1,
@@ -422,13 +343,6 @@ function read(agent: HistoryAgent, query: Parameters<typeof readMessages>[1]) {
   return readMessages(agent.agentKey, query);
 }
 
-function conversationKey(agent: HistoryAgent, members: Conversation) {
-  return conversationNameKey(
-    members.map((member) => member.agentName),
-    agent.card.agentName,
-  );
-}
-
 function compareText(a: string, b: string) {
   if (a < b) {
     return -1;
@@ -476,17 +390,16 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
   const history = messageHistory({
     agentKey: settings.agentKey,
     card: settings.card,
-    maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
   });
   const oneConsumer = yield* Effect.makeSemaphore(1);
   return {
     send: (message) =>
       withSqlAndServiceErrors(agent, sendMessage(agent, message)),
     consume: (handle) => oneConsumer.withPermits(1)(consume(agent, handle)),
-    getConversation: (names) =>
-      withSqlAndServiceErrors(agent, history.getConversation(names)),
-    listConversations: (query = {}) =>
-      withSqlAndServiceErrors(agent, history.listConversations(query)),
+    listConversations: withSqlAndServiceErrors(
+      agent,
+      history.listConversations,
+    ),
     readHistory: (query) =>
       withSqlAndServiceErrors(agent, history.readHistory(query)),
   } satisfies CommunicationService;

@@ -503,7 +503,7 @@ function textCheckPlan(
 function saveRecords(store: FirewallStore, decision: Decision) {
   return decision.record === undefined
     ? Effect.void
-    : store.saveCheckRecords([decision.record]);
+    : store.saveCheckRecord(decision.record);
 }
 
 /** Checks the planned candidate against its text rules, with the history before it. */
