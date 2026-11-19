@@ -499,5 +499,4 @@ Shared site values live in `docs/docs.json` variables. Check site links with
 
 Add a diagram when it makes a relationship or invariant easier to understand.
 Keep it with the explanation that owns that fact. API diagrams belong in the
-owning symbol's JSDoc. `pnpm docs:check:mermaid` checks the Mermaid dialect
-GitHub accepts. TypeDoc displays these diagrams as code blocks.
+owning symbol's JSDoc. TypeDoc displays these diagrams as code blocks.

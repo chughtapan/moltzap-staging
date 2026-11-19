@@ -7,8 +7,7 @@
         "vitest*.config.ts",
         "scripts/build/*.ts",
         "scripts/test-*-package.ts",
-        "images/*.ts",
-        "scripts/docs/*.spec.ts"
+        "images/*.ts"
       ],
       "project": [
         "src/**/*.ts",
@@ -20,10 +19,7 @@
           "typedoc.json",
           "scripts/docs/typedoc.json"
         ]
-      },
-      "ignoreDependencies": [
-        "@mermaid-js/mermaid-cli"
-      ]
+      }
     },
     "plugins/nanoclaw": {
       "project": [
