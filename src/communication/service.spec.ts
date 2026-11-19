@@ -19,13 +19,11 @@ import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { Message } from "./messages.js";
 import { Communication, type Conversation } from "./service.js";
 
-type Rule = Pick<Parameters<typeof Communication.layer>[0], "permits">;
-
-/** Alice, Bob and Carol on one daemon, under `rule` on who may share a conversation when given one. */
-const peers = Effect.fn("peers")(function* (rule: Rule = {}) {
+/** Alice, Bob and Carol on one daemon. */
+const peers = Effect.fn("peers")(function* () {
   const { sql, ...agents } = yield* conversationFixture;
   const open = (agent: typeof agents.alice) =>
-    Layer.build(Communication.layer({ ...agent, ...rule })).pipe(
+    Layer.build(Communication.layer(agent)).pipe(
       Effect.provideService(SqlClient, sql),
       Effect.map((context) => Context.get(context, Communication)),
     );
@@ -66,13 +64,9 @@ const peers = Effect.fn("peers")(function* (rule: Rule = {}) {
   };
 });
 
-/** Every conversation is Alice and one other agent, as for a server agent and its clients. */
+/** Alice as a server agent and Bob as its client. */
 const fixture = Effect.gen(function* () {
-  const f = yield* peers({
-    permits: (members) =>
-      members.length === 2 &&
-      members.some((member) => member.agentName === "alice"),
-  });
+  const f = yield* peers();
   const members: Conversation = [f.cards.alice, f.cards.bob];
   const message = (text: string) =>
     Message.create({
@@ -178,13 +172,9 @@ it("carries a group message to every member in one order, between any agents", (
     expect(yield* Queue.take(carolInbox)).toEqual(direct);
   }));
 
-it("appends a message once to the history of each member of its conversation, and of no one else, exactly when its author sends it to agents on the daemon that the rule lets share a conversation", () =>
+it("appends a message once to the history of each member of its conversation, and of no one else, exactly when its author sends it to agents on the daemon", () =>
   Effect.gen(function* () {
-    let apart: readonly string[] = [];
-    /** The rule in force: the agents `apart` names may not all share one conversation. */
-    const permits = (members: ReadonlyArray<Conversation[number]>) =>
-      !apart.every((name) => members.some((one) => one.agentName === name));
-    const f = yield* peers({ permits });
+    const f = yield* peers();
     const people = { ...f.cards, dave: testAgentCard("dave") };
     const names = Record.keys(people);
     /** A send through `caller`'s service of a message it wrote, or one `author` wrote when that names an agent. */
@@ -199,11 +189,9 @@ it("appends a message once to the history of each member of its conversation, an
       })
       .filter(({ caller, author = caller, to }) => !to.includes(author));
     const property = fc.asyncProperty(
-      fc.subarray(names, { minLength: 2 }),
       sends,
-      (rule, { caller, author = caller, to }) =>
+      ({ caller, author = caller, to }) =>
         Effect.gen(function* () {
-          apart = rule;
           const message = yield* Message.create({
             author: people[author],
             recipients: Arr.map(to, (name) => people[name]),
@@ -211,9 +199,7 @@ it("appends a message once to the history of each member of its conversation, an
           });
           const members: Conversation = [message.author, ...message.recipients];
           const admitted =
-            author === caller &&
-            to.every((name) => name in f.hosted) &&
-            permits(members);
+            author === caller && to.every((name) => name in f.hosted);
           const before = yield* f.histories(members);
           const refusal = yield* f.hosted[caller].send(message).pipe(
             Effect.as("none"),
