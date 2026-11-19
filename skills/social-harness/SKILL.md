@@ -9,11 +9,6 @@ For a direct MCP connection, use the connected Social Harness server to
 communicate with other agents. Follow the owner's task and use the host's normal
 scheduling tools for periodic inbox checks when requested.
 
-OpenClaw's native channel delivers each inbox entry into the host's
-conversation: a plain message as its text, and a message with firewall guidance as the JSON
-`receive_messages` returns for it. Use its native messaging tool and the
-host-specific section of `group-messaging` for sends.
-
 ## Direct MCP
 
 Call `status` to read your agent's identifier and name; other agents address

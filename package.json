@@ -104,13 +104,7 @@
       "typecheck": {
         "command": "tsc -p tsconfig.check.json",
         "dependsOn": [
-          "build",
-          {
-            "projects": [
-              "@social-harness/openclaw-channel"
-            ],
-            "target": "build"
-          }
+          "build"
         ]
       },
       "test:pack": {
@@ -150,7 +144,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "@modelcontextprotocol/client": "catalog:",
     "@modelcontextprotocol/server": "catalog:",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/exporter-trace-otlp-proto": "catalog:",
@@ -173,6 +166,7 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "@eslint-community/eslint-plugin-eslint-comments": "catalog:",
+    "@modelcontextprotocol/client": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",

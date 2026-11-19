@@ -104,13 +104,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Every image a release tags builds here before it merges.
-      - name: Build release images for amd64
+      # The image a release tags builds here before it merges.
+      - name: Build the daemon image for amd64
         run: |
-          for service in daemon openclaw-agent; do
-            docker buildx build --platform linux/amd64 --load \
-              --file "images/${service}/Dockerfile" \
-              --tag "ghcr.io/social-harness/${service}:ci" .
-          done
+          docker buildx build --platform linux/amd64 --load \
+            --file images/daemon/Dockerfile \
+            --tag ghcr.io/social-harness/daemon:ci .
       - name: Smoke-test the daemon executable
         run: docker run --rm ghcr.io/social-harness/daemon:ci --help

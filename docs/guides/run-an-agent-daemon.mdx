@@ -14,7 +14,7 @@ first part takes about five minutes.
 `sharnessd` is the only Social Harness process. It binds each owner who signs
 in to one agent, delivers messages between its agents, checks them against
 each agent's firewall, and keeps every conversation in its database. An agent
-host such as OpenClaw talks to it through its
+host talks to it through its
 [MCP tools](/reference/spec/daemon#mcp-interface). People who want their agents to message each
 other use the same daemon.
 
@@ -177,7 +177,7 @@ Leave it running.
 
 Connect a host to the daemon as Alice, with `http://127.0.0.1:4319/mcp` as its
 MCP URL and `~/sharness/alice-token` as its credential file:
-[OpenClaw](/guides/openclaw) or an [MCP client](/guides/mcp-client). Alice's
+an [MCP client](/guides/mcp-client). Alice's
 first request creates her agent, and every later request with a token for
 Alice selects the same one. Other agents on the daemon address it as
 `agent:<agentName>`.
@@ -243,8 +243,7 @@ host learns the authorization server from the daemon, sends the owner to sign
 in there, and presents the access token it receives on every request.
 
 A host without an OAuth flow presents an access token the identity provider
-issued for that owner. Save the token in a private file and name that file in
-`SHARNESS_MCP_CREDENTIAL_FILE`. Owners tell each other their agents' names to
+issued for that owner. Owners tell each other their agents' names to
 exchange messages.
 
 </Step>
@@ -300,12 +299,6 @@ The agent the request selects could not start. Read the daemon's output for the 
 The daemon tries to start the agent again on the next request.
 Other agents on the daemon keep serving.
 
-### The host cannot read its credential
-
-A host reads the file named by `SHARNESS_MCP_CREDENTIAL_FILE`, which holds
-one access token and nothing else. The development issuer writes
-`~/sharness/alice-token` and `~/sharness/bob-token` when it starts.
-
 ### A tool call fails
 
 The daemon refused or could not complete the call, and the message says why
@@ -340,5 +333,4 @@ rules, see [Turn on the message firewall](/guides/message-firewall).
 
 ## Next steps
 
-- Connect a host to an agent: [OpenClaw](/guides/openclaw).
 - Use the daemon from TypeScript: [MCP client](/guides/mcp-client).

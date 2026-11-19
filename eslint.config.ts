@@ -1,8 +1,7 @@
 /**
  * @file The repository's one ESLint flat configuration. Each section names
  * the paths it covers: the root package's `src/`, the root modules with
- * `scripts/`, each plugin, the agent-image tooling and
- * the integration tests.
+ * `scripts/`, and the integration tests.
  */
 import comments from "@eslint-community/eslint-plugin-eslint-comments";
 import { plugin as guard } from "eslint-plugin-agent-code-guard";
@@ -88,43 +87,6 @@ function packageSections() {
  */
 function rootSection() {
   return makeStrictBlock(["*.ts", "scripts/**/*.ts"], makeStrictRules());
-}
-
-/**
- * Sections for one agent image's tooling, with paths relative to its folder.
- * Image bootstrap programs run on Node built-ins before runtime packages are
- * installed. Their process fixtures use node:test's Promise-native boundary.
- */
-function agentImageSections() {
-  return [
-    ...integrationSections(),
-    {
-      files: ["**/*.ts"],
-      rules: {
-        "agent-code-guard/async-keyword": "off",
-        "agent-code-guard/promise-type": "off",
-        "agent-code-guard/no-raw-throw-new-error": "off",
-        "agent-code-guard/prefer-effect-platform": "off",
-        "agent-code-guard/no-process-env-at-runtime": "off",
-        "@typescript-eslint/no-floating-promises": [
-          "error",
-          {
-            allowForKnownSafeCalls: [
-              {
-                from: "package",
-                package: "node:test",
-                name: ["describe", "it", "suite", "test"],
-              },
-            ],
-          },
-        ],
-      },
-    },
-    {
-      files: ["**/*.spec.ts"],
-      rules: { "sonarjs/no-os-command-from-path": "off" },
-    },
-  ];
 }
 
 /** Sections for process suites: the strict preset on every TypeScript file plus the integration-test preset on specs. */
@@ -274,18 +236,6 @@ function isPatterns(value: unknown): value is readonly string[] {
   return Array.isArray(value);
 }
 
-/**
- * Process suites take the integration sections; the image scenarios under
- * `images/` take the agent-image sections for their Node test boundary.
- */
-const integrationTestSections = [
-  ...integrationSections().map((section) => ({
-    ...section,
-    ignores: ["images/**"],
-  })),
-  ...at("images", agentImageSections()),
-];
-
 export default [
   globalIgnores,
   rootSection(),
@@ -319,9 +269,7 @@ export default [
       "max-params": ["error", 7],
     },
   },
-  ...at("plugins/openclaw", packageSections()),
-  ...at("images/openclaw-agent", agentImageSections()),
-  ...at("tests/integration", integrationTestSections),
+  ...at("tests/integration", integrationSections()),
   configModuleRules,
   specAssertionRules,
 ];

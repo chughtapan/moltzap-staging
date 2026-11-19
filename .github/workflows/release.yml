@@ -35,8 +35,8 @@ defaults:
     shell: bash
 
 env:
-  PACKAGES: . plugins/openclaw
-  IMAGES: daemon openclaw-agent
+  PACKAGES: .
+  IMAGES: daemon
 
 jobs:
   version:
@@ -154,7 +154,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [daemon, openclaw-agent]
+        service: [daemon]
         platform: [amd64, arm64]
         include:
           - platform: amd64
@@ -199,7 +199,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [daemon, openclaw-agent]
+        service: [daemon]
     runs-on: ubuntu-24.04
     permissions:
       packages: write
