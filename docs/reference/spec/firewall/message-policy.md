@@ -274,7 +274,7 @@ rows identify authors. Daemon-generated failures have no row. Retained identitie
 | Allowed | Rules the provider was unsure about for an incoming message, otherwise none. |
 
 Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an allowed message.
-Sources are `fixed` or `editable`. A rule's source grants no caller
+Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller
 privileges. A rule proposed by a peer becomes active only through an authorized
 policy change.
 
