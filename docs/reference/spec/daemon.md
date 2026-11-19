@@ -13,10 +13,9 @@ conversations, inbox and firewall policy in PostgreSQL.
 
 ## Process and configuration
 
-Installation prepares the database schema before the daemon starts.
-`sharnessd` checks that the database is prepared, reads its settings file,
+`sharnessd` reads its settings file, creates its tables in an empty database,
 then serves MCP. It does not install releases or migrate
-the database. Deployment owns database preparation and manual upgrades.
+the database.
 
 Startup requires:
 
@@ -27,9 +26,7 @@ Startup requires:
 
 Start the daemon with `sharnessd`. Standard `OTEL_*` environment
 variables configure tracing. A missing or invalid settings file or a database
-that has not been prepared refuses startup.
-The daemon's PostgreSQL credentials need data access; schema changes require
-separate deployment credentials.
+that holds other tables refuses startup.
 
 The settings file is a JSON document that takes these properties. Unknown properties are refused.
 

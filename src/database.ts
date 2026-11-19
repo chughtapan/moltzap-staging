@@ -154,13 +154,13 @@ export const withAgentRows = Effect.fn("withAgentRows")(
           const [row] = yield* sql<{
             previous: string | null;
           }>`SELECT current_setting('social_harness.agent_key', true) AS previous`;
-          return yield* Effect.acquireUseRelease(
-            sql`SELECT set_config('social_harness.agent_key', ${agentKey}, true)`,
-            () => sql.withTransaction(work),
-            () =>
+          return yield* sql`SELECT set_config('social_harness.agent_key', ${agentKey}, true)`.pipe(
+            Effect.zipRight(sql.withTransaction(work)),
+            Effect.ensuring(
               sql`SELECT set_config('social_harness.agent_key', ${row?.previous ?? ""}, true)`.pipe(
                 Effect.orDie,
               ),
+            ),
           );
         }),
       ),
@@ -292,8 +292,9 @@ const initializeMigrationLedger = Migrator.make({})({
 });
 
 /**
- * Schema failures identify the operator action without disclosing SQL.
- * Exported so the public preparation operation's inferred failure can be named.
+ * The daemon's tables could not be created. Messages name the operator's
+ * action without disclosing SQL.
+ * Exported so the daemon's inferred startup failure can be named.
  * @public
  */
 export class DatabasePreparationError extends Data.TaggedError(
@@ -302,50 +303,27 @@ export class DatabasePreparationError extends Data.TaggedError(
   readonly reason: "schema" | "preparation";
 }> {
   override get message(): string {
-    return `Database ${this.reason} check failed; prepare a compatible database before starting the daemon`;
+    return this.reason === "schema"
+      ? "The database holds tables that are not this daemon's; give the daemon an empty database"
+      : "The daemon could not create its tables; check that SHARNESS_DATABASE_URL names a reachable database its login may create tables in";
   }
 }
 
-/** Applies each daemon migration the database's ledger does not record. */
-export const migrateDaemon = runMigrations.pipe(
-  Effect.withSpan("migrateDaemon"),
-);
-
-/** Fails unless the database has been prepared. Changes nothing. */
-export const checkDatabase = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  const applied = yield* sql`SELECT 1 FROM ${sql(migrationsTable)} LIMIT 1`;
-  if (applied.length === 0) {
-    return yield* new DatabasePreparationError({ reason: "schema" });
-  }
-}).pipe(
-  Effect.catchTag(
-    "SqlError",
-    () => new DatabasePreparationError({ reason: "schema" }),
-  ),
-  Effect.withSpan("checkDatabase"),
-);
-
 /**
- * Deployment commits domain migrations atomically.
- * A failed first preparation can retain an empty Migrator bookkeeping table.
+ * Creates the daemon's tables in an empty database, in one transaction, and
+ * leaves a database that already holds them as it is, so a login that cannot
+ * create tables serves a database another login prepared. A failed first
+ * preparation can retain an empty Migrator bookkeeping table.
  */
 export const prepareDatabase = Effect.gen(function* () {
-  const url = yield* databaseUrl;
-  yield* Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* requireEmptyOrPreparedDatabase();
-    yield* initializeMigrationLedger;
-    yield* sql.withTransaction(migrateDaemon);
-  }).pipe(Effect.provide(databaseConnection(url)));
+  const sql = yield* SqlClient.SqlClient;
+  if (yield* alreadyPrepared()) {
+    return;
+  }
+  yield* initializeMigrationLedger;
+  yield* sql.withTransaction(runMigrations);
 }).pipe(
-  Effect.scoped,
   Effect.catchTags({
-    DatabaseUrlMissingError: () =>
-      new DatabasePreparationError({ reason: "preparation" }),
-    DatabaseUrlError: () =>
-      new DatabasePreparationError({ reason: "preparation" }),
-    ConfigError: () => new DatabasePreparationError({ reason: "preparation" }),
     MigrationError: () => new DatabasePreparationError({ reason: "schema" }),
     SqlError: () => new DatabasePreparationError({ reason: "preparation" }),
   }),
@@ -360,17 +338,18 @@ export const prepareDatabase = Effect.gen(function* () {
 );
 
 /**
- * Only an empty database or one that already holds the daemon's tables can be
- * prepared. An empty database may hold the migration ledger table with no rows.
+ * Whether the database already holds the daemon's tables. Fails for a
+ * database that holds anything else: an empty one may hold only the migration
+ * ledger table, with no rows.
  */
-function requireEmptyOrPreparedDatabase() {
+function alreadyPrepared() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const tables = yield* sql<{
       name: string;
     }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`;
     if (tables.some((table) => table.name === "owner_bindings")) {
-      return;
+      return true;
     }
     if (tables.some((table) => table.name !== migrationsTable)) {
       return yield* new DatabasePreparationError({ reason: "schema" });
@@ -381,6 +360,7 @@ function requireEmptyOrPreparedDatabase() {
         return yield* new DatabasePreparationError({ reason: "schema" });
       }
     }
+    return false;
   });
 }
 
