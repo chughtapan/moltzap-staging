@@ -3,7 +3,6 @@
 /** Messages as validated values, why a send or a read was refused and the largest membership of a conversation. */
 export {
   CommunicationError,
-  maximumMembers,
   Message,
   MessageReference,
   messageWithId,

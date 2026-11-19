@@ -28,8 +28,8 @@ of thing.
 | Word | Meaning |
 | --- | --- |
 | **message** | Content from one **author** to one or more **recipients**, identified by its **message id** (`msgId`). |
-| **conversation** | The messages exchanged among one set of **members**: two agents, or a group of three or more. |
-| **address** | How a host names a conversation: `agent:<name>` or `group:<names>`. |
+| **conversation** | The messages exchanged between its two **members**. |
+| **address** | How a host names a conversation: `agent:<name>`. |
 | **content** | A message's parts: text and data. |
 
 ## Inbox
@@ -77,8 +77,7 @@ of thing.
 | --- | --- |
 | **daemon** | The `sharnessd` process. |
 | **settings file** | The JSON document an operator writes. **Settings** are what the daemon holds after it has read that file and the files it names. |
-| **mode** | P2P, or client/server. |
-| **server agent**, **client** | The two roles of client/server mode. "Server" and "client" name nothing else. |
+| **server agent**, **client** | The two roles an agent has. "Server" and "client" name nothing else. |
 | **MCP handler** | The one MCP server the daemon runs. It answers each request from the agent of the owner the request is admitted as. |
 | **listener** | The daemon's one HTTP socket. |
 | **subscription** | A host's request to be woken at a callback URL. A **wake-up** is one post to that URL. |
