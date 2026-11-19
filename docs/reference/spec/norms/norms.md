@@ -234,7 +234,7 @@ instruct the agent to restart an instance.
 During an active instance, `:on-refusal` can produce an ordinary correction
 message carrying `reason` and a `replyToMsgId` metadata reference. Its form may
 require no additional fields. It follows the firewall's ordinary
-[reply behavior](../firewall/message-policy.md#chain). Before an opening
+[reply behavior](../firewall/message-policy.md#incoming-messages). Before an opening
 is allowed, or after the local instance ends, automatic norm feedback is
 unavailable. No implicit rewind, reopening or cancellation occurs.
 

@@ -50,7 +50,7 @@ Its one event, `org.social-harness/inbox.pending`, contains only
 Inbox reads recover lost wake-ups.
 
 `receive_messages` takes an optional `cursor` and returns `entries` with any `nextCursor`.
-Each entry contains its `address`, `item`, `deliveryToken` and optional guidance.
+Each entry contains its `address`, `message`, `deliveryToken` and optional guidance.
 Pages hold at most 50 entries and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
 Later arrivals await a new traversal.

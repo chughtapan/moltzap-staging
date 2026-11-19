@@ -84,7 +84,7 @@ The content and any guidance stay the same across rule edits and restart.
 A history read fixes an opaque end position at its start. Later appends remain
 outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
 `cursor` with the same selection until absent. An invalid cursor returns
-`invalid-cursor`. Start a new traversal after reconnecting.
+`invalid-cursor`.
 
 An invalid history page returns no messages. Reading history neither
 marks an inbox entry delivered nor authorizes a send.
@@ -125,6 +125,6 @@ when the local firewall was unsure whether its message keeps to a rule: the rule
 for the guidance, and the provider's choice and probability.
 
 The guidance is the entry's `guidance`, apart from the peer content in its
-`item`.
+`message`.
 
 Check ids grant no approval, management or system-role authority.
