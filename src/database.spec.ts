@@ -41,13 +41,6 @@ const rows: Readonly<
     decided_at: 0,
     decision: "allowed",
   },
-  firewall_policy: { policy: "{}" },
-  firewall_activations: {
-    activated_at: 0,
-    revision: "revision",
-    added_rule_ids: "[]",
-    removed_rule_ids: "[]",
-  },
   message_log: {
     conversation_id: "conversation",
     ordinal: 0,

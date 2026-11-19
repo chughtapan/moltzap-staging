@@ -102,8 +102,7 @@ export function composedPolicy(
         format: "org.social-harness/message-policy/v2",
         facts: [],
         text: {
-          fixedRules: [],
-          initialRules: [
+          fixedRules: [
             {
               id: "privacy",
               applies: "both",

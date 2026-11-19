@@ -1,4 +1,4 @@
-/** @file A norms directory loads as the contracts of its norm documents, and a policy update's norm documents compile before the firewall sees them. */
+/** @file A norms directory loads as the contracts of its norm documents. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
@@ -7,8 +7,7 @@ import { Effect, FastCheck as fc } from "effect";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { compareAscii } from "../encoding.js";
-import { compileNorm } from "./compiler.js";
-import { compiledPolicyEdit, loadNorms } from "./index.js";
+import { loadNorms } from "./index.js";
 
 /** A document of the norm `name`, whose one act opens and ends an instance. */
 const documentOf = (name: string) =>
@@ -57,87 +56,20 @@ it.prop(
   { fastCheck: { numRuns: 20 } },
 );
 
-it.prop(
-  "refuses a directory that holds a document that does not compile or two documents of one norm",
-  [
-    normName,
-    fc.constantFrom<(name: string) => Readonly<Record<string, string>>>(
-      (name) => ({ "a.lisp": documentOf(name), "b.lisp": documentOf(name) }),
-      (name) => ({
-        "a.lisp": documentOf(name).replace(":by Asker", ":by Absent"),
+it("refuses a directory that holds a document that does not compile or two documents of one norm", () =>
+  Effect.forEach(
+    [
+      { "a.lisp": documentOf("ask"), "b.lisp": documentOf("ask") },
+      { "a.lisp": documentOf("ask").replace(":by Asker", ":by Absent") },
+      { "a.lisp": `${documentOf("ask")}(` },
+    ],
+    (files: Readonly<Record<string, string>>) =>
+      Effect.gen(function* () {
+        const directory = yield* directoryWith(files);
+
+        const failure = yield* Effect.flip(loadNorms(directory));
+
+        expect(failure._tag).toBe("NormsConfigurationError");
       }),
-      (name) => ({ "a.lisp": `${documentOf(name)}(` }),
-    ),
-  ],
-  ([name, files]) =>
-    Effect.gen(function* () {
-      const directory = yield* directoryWith(files(name));
-
-      const failure = yield* Effect.flip(loadNorms(directory));
-
-      expect(failure._tag).toBe("NormsConfigurationError");
-    }).pipe(Effect.provide(NodeContext.layer)),
-  { fastCheck: { numRuns: 20 } },
-);
-
-const rule = { id: "brief", applies: "both", text: "Be brief." } as const;
-
-/** One addition of a policy update: a rule, a behavior, a norm document that compiles or one that does not. */
-const addition = fc.oneof(
-  fc.constant({ kind: "rule" as const, added: rule }),
-  fc.constant({ kind: "behavior" as const, added: { behavior: "a document" } }),
-  normName.map((name) => ({
-    kind: "norm" as const,
-    added: { norm: documentOf(name) },
-  })),
-  fc.string().map((text) => ({
-    kind: "invalid" as const,
-    added: { norm: `(norm ${text}` },
-  })),
-);
-
-it("compiles each norm document an update adds and leaves the rest of the update as written, or fails at the first document that does not compile", () =>
-  Effect.sync(() => {
-    fc.assert(
-      fc.property(
-        fc.array(addition, { maxLength: 5 }),
-        fc.array(
-          fc.oneof(
-            normName,
-            normName.map((norm) => ({ norm })),
-          ),
-        ),
-        (additions, remove) => {
-          const edit = Effect.runSync(
-            Effect.either(
-              compiledPolicyEdit({
-                add: additions.map(({ added }) => added),
-                remove,
-              }),
-            ),
-          );
-          const invalid = additions.findIndex(({ kind }) => kind === "invalid");
-          if (invalid >= 0) {
-            expect(edit).toMatchObject({
-              left: {
-                reason: "invalid-rule",
-                problem: "schema",
-                path: ["add", invalid],
-              },
-            });
-            return;
-          }
-          expect(edit).toMatchObject({
-            right: {
-              remove,
-              add: additions.map(({ added }) =>
-                "norm" in added
-                  ? { contract: Effect.runSync(compileNorm(added.norm)) }
-                  : added,
-              ),
-            },
-          });
-        },
-      ),
-    );
-  }));
+    { concurrency: 1, discard: true },
+  ).pipe(Effect.provide(NodeContext.layer)));

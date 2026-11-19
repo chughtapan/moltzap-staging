@@ -32,7 +32,6 @@ import {
   type SubscriptionStatus,
   toolDefinitions,
 } from "../mcp/tools.js";
-import { compiledPolicyEdit } from "../norms/index.js";
 import { SocialHarness } from "./agent.js";
 
 /** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
@@ -141,15 +140,10 @@ interface Definition<A, I, B, J, E> {
 }
 
 /**
- * The tools of a peer and of the server agent: each addresses any agent and
- * owns its message policy. Without `groups` an address names one agent. An
+ * The tools of a peer and of the server agent: each addresses any agent. Without `groups` an address names one agent. An
  * agent that holds norms lists them with `read_norms`.
  */
-export function peerTools(
-  policyConfigured: boolean,
-  groups: boolean,
-  holdsNorms: boolean,
-) {
+export function peerTools(groups: boolean, holdsNorms: boolean) {
   return Effect.fnUntraced(function* (
     status: Effect.Effect<SubscriptionStatus>,
   ) {
@@ -185,18 +179,6 @@ export function peerTools(
             directToolDefinitions.read_conversation,
             harness.readHistory,
           ),
-      ...(policyConfigured
-        ? [
-            bind("read_policy", toolDefinitions.read_policy, () =>
-              firewall.readPolicy(),
-            ),
-            bind("update_policy", toolDefinitions.update_policy, (update) =>
-              compiledPolicyEdit(update).pipe(
-                Effect.flatMap(firewall.updatePolicy),
-              ),
-            ),
-          ]
-        : []),
       bind(
         "read_firewall_decisions",
         toolDefinitions.read_firewall_decisions,

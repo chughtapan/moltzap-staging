@@ -33,32 +33,14 @@ firewall behavior.
 
 The daemon's
 `normsDirectory` loads the `.lisp` files directly inside that directory and
-compiles them before startup. New agents receive those contracts; a retained
-policy keeps its installed contracts across restart. `read_norms` returns the
+compiles them before startup. `read_norms` returns the
 current documents. No additional rule file or built-in agreement is installed.
-An authorized caller installs the exact source:
 
-```json
-{"add": [{"norm": "<complete Lisp document>"}]}
-```
-
-`read_policy` returns installed `norms` names and their semantic rules in
-`fixedRules`. Those rules belong to their documents and cannot be edited
-individually. Replace a document atomically with remove and add:
-
-```json
-{"remove": [{"norm": "example"}], "add": [{"norm": "<replacement document>"}]}
-```
-
-Malformed declarations fail the entire edit. A source SHA-256 digest identifies
+A source SHA-256 digest identifies
 the exact document bytes. The opening check retains its document and
-digest. Existing instances keep that document after edits or removal;
-subsequent instances use the installed documents. Removal does not undo
-an instance. Its declared ending or correction acts still apply.
+digest. Existing instances keep that document after a restart replaces it;
+subsequent instances use the installed documents.
 
-<a id="authority" />
-
-Installation follows the existing [policy editing authority](../firewall/message-policy.md#editing-rules).
 A peer message cannot install policy.
 
 ## Document grammar

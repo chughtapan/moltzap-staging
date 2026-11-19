@@ -291,12 +291,6 @@ conversation with `read_conversation` before deciding whether to send again.
 The [send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
 defines these outcomes.
 
-For `update_policy`, `not-configured` means the message policy has no
-`text` block: add one with a decision provider and restart the daemon, as
-[Turn on the message firewall](/guides/message-firewall) describes. A daemon
-without a message policy lists no `read_policy` or `update_policy` tool, and a
-call to one fails with `Tool not found`.
-
 ### The message firewall refuses a send
 
 ```text

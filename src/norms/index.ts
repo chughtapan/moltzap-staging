@@ -1,23 +1,16 @@
 /**
  * @file A daemon's norms. A deployment's norms directory holds the norm
- * documents each new agent starts with, compiled to the contracts its firewall
- * checks. After that each agent holds its own contracts in its firewall's
- * editable policy, and a norm document an edit adds is compiled here first.
+ * documents, compiled to the contracts the firewall checks.
  */
 
 import { FileSystem } from "@effect/platform";
 import { Data, Effect } from "effect";
 import { join } from "node:path";
+import type { CompiledContract } from "../firewall/index.js";
 import { compareAscii } from "../encoding.js";
-import {
-  type CompiledContract,
-  FirewallPolicyError,
-  type PolicyEdit,
-  type policyUpdateSchema,
-} from "../firewall/index.js";
 import { compileNorm } from "./compiler.js";
 
-/** The settings' copy of a norms directory: the contracts each new agent holds. */
+/** The settings' copy of a norms directory: the contracts the firewall checks. */
 export interface InstalledNorms {
   readonly contracts: readonly CompiledContract[];
 }
@@ -67,42 +60,7 @@ export const loadNorms = Effect.fn("loadNorms")(
   }),
 );
 
-/** Whether the contracts each new agent holds have English rules, which need a decision provider. */
+/** Whether the contracts have English rules, which need a decision provider. */
 export function initialNormsHaveRules(installed: InstalledNorms): boolean {
   return installed.contracts.some((contract) => contract.textRules.length > 0);
 }
-
-/**
- * The edit a policy update amounts to once each `{norm}` document it adds is
- * compiled to a contract. A document that does not compile fails the update
- * with `invalid-rule` at its place in `add`, without its text.
- */
-export const compiledPolicyEdit = Effect.fn("compiledPolicyEdit")(function* (
-  update: typeof policyUpdateSchema.Type,
-) {
-  const add = yield* Effect.forEach(
-    update.add ?? [],
-    (
-      added,
-      index,
-    ): Effect.Effect<
-      NonNullable<PolicyEdit["add"]>[number],
-      FirewallPolicyError
-    > =>
-      "norm" in added
-        ? compileNorm(added.norm).pipe(
-            Effect.mapBoth({
-              onFailure: () =>
-                new FirewallPolicyError({
-                  reason: "invalid-rule",
-                  problem: "schema",
-                  path: ["add", index],
-                }),
-              onSuccess: (contract) => ({ contract }),
-            }),
-          )
-        : Effect.succeed(added),
-    { concurrency: 1 },
-  );
-  return { ...update, add } satisfies PolicyEdit;
-});
