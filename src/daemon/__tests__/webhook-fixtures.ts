@@ -18,9 +18,9 @@ import {
 } from "effect";
 import { digest } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../database/testing.js";
-import { DeliveryToken, INBOX_PENDING_EVENT } from "../../mcp/tools.js";
+import { DeliveryToken } from "../../mcp/tools.js";
 import { SocialHarness } from "../agent.js";
-import { makeWebhookEvents } from "../subscriptions.js";
+import { INBOX_PENDING_EVENT, makeWebhookEvents } from "../subscriptions.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 
 /** The signing secret of the scripted subscription. */

@@ -176,20 +176,12 @@ export const DeliveryToken = canonicalIdentifier("DeliveryToken", "dlv_", 32);
 /** @useDeclaredType */
 export type DeliveryToken = typeof DeliveryToken.Type;
 
-/** An inbox entry as the inbox stores it: everything but its delivery token. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const StoredInboxEntry = Schema.Struct({
-  address: MessageAddress,
-  message: Message,
-  guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-});
-/** @useDeclaredType */
-export type StoredInboxEntry = typeof StoredInboxEntry.Type;
-
 /** One message as the host reads it. It keeps its delivery token once delivered. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
-  ...StoredInboxEntry.fields,
+  address: MessageAddress,
+  message: Message,
+  guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   deliveryToken: DeliveryToken,
 });
 /** @useDeclaredType */
@@ -287,9 +279,6 @@ const subscriptionStatusSchema = Schema.Struct({
 
 /** A subscription as the `status` tool reports it, without its callback URL or secret. */
 export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
-
-/** A wake-up to read the pending inbox. It carries no content. */
-export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
 const historyRecordSchema = Schema.Union(
   Schema.Struct({

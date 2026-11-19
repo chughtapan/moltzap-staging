@@ -25,12 +25,14 @@ import {
 } from "../encoding.js";
 import {
   DeliveryToken,
-  type InboxEntry,
+  InboxEntry,
   InboxError,
   type InboxPage,
   MessageAddress,
-  StoredInboxEntry,
 } from "../mcp/tools.js";
+
+/** An inbox entry as the inbox stores it: everything but its delivery token. */
+const StoredInboxEntry = InboxEntry.omit("deliveryToken");
 
 const uncheckedRow = exactStruct({
   sequence: Schema.Number,

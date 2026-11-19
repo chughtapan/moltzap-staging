@@ -49,13 +49,12 @@ import { lookup } from "node:dns";
 import { isIP, type LookupFunction } from "node:net";
 import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
 import { plainUrl } from "../encoding.js";
-import {
-  callbackReasons,
-  INBOX_PENDING_EVENT,
-  type SubscriptionStatus,
-} from "../mcp/tools.js";
+import { callbackReasons, type SubscriptionStatus } from "../mcp/tools.js";
 import { SocialHarness } from "./agent.js";
 import { JsonRpcError } from "./tool-server.js";
+
+/** A wake-up to read the pending inbox. It carries no content. */
+export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
 export type WebhookFailureReason = (typeof callbackReasons)[number];
