@@ -3,17 +3,13 @@
 import {
   Cause,
   Context,
-  Duration,
   Effect,
   Layer,
-  Option,
   Predicate,
-  PubSub,
   Queue,
   Schedule,
   Schema,
   Scope,
-  Stream,
 } from "effect";
 import { createHash } from "node:crypto";
 import type { FirewallRefusal } from "../firewall/index.js";
@@ -39,8 +35,6 @@ import {
   canonicalMessageAddress,
   HistoryError,
   type HistoryRecord,
-  type InboxError,
-  type InboxPage,
   MessageAddress,
   type MessageAddressInput,
   SendError,
@@ -77,16 +71,14 @@ interface SocialHarnessService {
   readonly send: (
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | FirewallRefusal>;
-  /** The delivery token of each pending inbox entry. */
-  readonly pendingTokens: Inbox["pendingTokens"];
   /**
-   * Hands over a page of pending inbox entries and marks each delivered. With
-   * `wait`, a read that finds nothing waits up to that many seconds, and
-   * returns as soon as an entry is pending or empty when the wait ends.
+   * A page of the inbox entries after `cursor`, in the order they were
+   * allowed, with the cursor that reads on from the last of them. Without a
+   * cursor the read starts from now and returns no entry.
    */
-  readonly receive: (
-    request: PaginatedRequest & { readonly wait?: number },
-  ) => Effect.Effect<InboxPage, InboxError>;
+  readonly receive: (request: {
+    readonly cursor?: string;
+  }) => Effect.Effect<ToolResult<"receive_messages">>;
   /**
    * Lists live canonical addresses, direct conversations before groups.
    * Omitting the cursor starts a live traversal. Follow `nextCursor` until
@@ -103,18 +95,11 @@ interface SocialHarnessService {
   readonly readHistory: (
     request: ReadHistoryRequest,
   ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
-  /**
-   * Each notification carries no data and may cover several arrivals. Read the
-   * inbox initially, after each notification and after reconnecting because
-   * notifications can be missed.
-   */
-  readonly inboxChanged: Stream.Stream<undefined>;
 }
 
 /**
- * Hosts use this service for identity, messaging and local policy. It stores
- * an inbox entry before notifying of it. A stored entry survives delivery,
- * policy edits and restart.
+ * Hosts use this service for identity, messaging and local policy. A stored
+ * inbox entry survives policy edits and restart.
  */
 export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
@@ -146,7 +131,6 @@ interface Agent {
   readonly firewall: Context.Tag.Service<typeof Firewall>;
   readonly communication: Context.Tag.Service<typeof Communication>;
   readonly inbox: Inbox;
-  readonly changes: PubSub.PubSub<undefined>;
   readonly settings: HarnessSettings;
   readonly historyLimit: number;
 }
@@ -160,8 +144,6 @@ function makeHarness(settings: HarnessSettings) {
     const inbox = yield* makeInbox(settings.agentKey);
     /** Offered once an unchecked entry is committed, so the check that it starts can read the entry. */
     const wake = yield* Queue.sliding<undefined>(1);
-    const changes = yield* PubSub.sliding<undefined>(1);
-    yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
     const capacity =
       settings.maximumConcurrentChecks ?? defaultConcurrentChecks;
     const agent: Agent = {
@@ -170,7 +152,6 @@ function makeHarness(settings: HarnessSettings) {
       firewall,
       communication,
       inbox,
-      changes,
       settings,
       historyLimit: settings.maximumHistoryRecords ?? 256,
     };
@@ -201,7 +182,6 @@ function makeHarness(settings: HarnessSettings) {
           addressesBeingChecked.add(unchecked.address);
           yield* fork(
             checkIncoming(agent, unchecked).pipe(
-              Effect.zipRight(PubSub.publish(changes, undefined)),
               Effect.catchAllCause((cause) => retryLater(agent, cause)),
               Effect.ensuring(
                 Effect.sync(() =>
@@ -222,11 +202,13 @@ function makeHarness(settings: HarnessSettings) {
     );
     return SocialHarness.of({
       send: (request) => send(agent, request),
-      pendingTokens: inbox.pendingTokens,
-      receive: (request) => receive(agent, request),
+      receive: ({ cursor }) =>
+        inbox.listInbox(PAGE_SIZE, cursor).pipe(
+          Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
+          Effect.orDie,
+        ),
       listConversations: (request = {}) => listConversations(agent, request),
       readHistory: (request) => readHistory(agent, request),
-      inboxChanged: Stream.fromPubSub(changes),
     });
   }).pipe(Effect.withSpan("SocialHarness.layer"));
 }
@@ -304,51 +286,6 @@ function outgoingFor(
       replyToMsgId: request.replyToMsgId,
     });
   });
-}
-
-function receive(
-  agent: Agent,
-  { wait, ...request }: PaginatedRequest & { readonly wait?: number },
-) {
-  return Effect.gen(function* () {
-    const page = yield* wait === undefined
-      ? agent.inbox.listInbox(request)
-      : waitForInbox(agent, request, Duration.seconds(wait));
-    yield* agent.inbox.markDelivered(
-      page.entries.map((entry) => entry.deliveryToken),
-    );
-    return page;
-  }).pipe(
-    Effect.catchAll((error) =>
-      error._tag === "InboxError" ? Effect.fail(error) : Effect.die(error),
-    ),
-  );
-}
-
-/**
- * Reads the inbox and, while nothing is pending, rereads after each change
- * until `wait` ends. Subscribing before the first read keeps an entry that
- * becomes pending between that read and the wait from being missed.
- */
-function waitForInbox(
-  agent: Agent,
-  request: PaginatedRequest,
-  wait: Duration.Duration,
-) {
-  return Effect.gen(function* () {
-    const arrivals = yield* PubSub.subscribe(agent.changes);
-    const read = agent.inbox.listInbox(request);
-    const first = yield* read;
-    if (first.entries.length > 0) {
-      return first;
-    }
-    const arrived = yield* Queue.take(arrivals).pipe(
-      Effect.zipRight(read),
-      Effect.repeat({ until: (page) => page.entries.length > 0 }),
-      Effect.timeoutOption(wait),
-    );
-    return Option.isSome(arrived) ? arrived.value : yield* read;
-  }).pipe(Effect.scoped);
 }
 
 function listConversations(agent: Agent, request: PaginatedRequest) {

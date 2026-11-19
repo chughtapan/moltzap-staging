@@ -20,8 +20,8 @@ catalog:
   "@effect/sql-pg": ^0.53.0
   "@effect/vitest": ^0.30.0
   "@eslint-community/eslint-plugin-eslint-comments": ^4.7.1
-  "@modelcontextprotocol/client": 2.4.0
-  "@modelcontextprotocol/server": 2.4.0
+  "@modelcontextprotocol/client": https://pkg.pr.new/@modelcontextprotocol/client@5ebb589
+  "@modelcontextprotocol/server": https://pkg.pr.new/@modelcontextprotocol/server@5ebb589
   "@opentelemetry/api": ^1.9.0
   "@opentelemetry/exporter-trace-otlp-proto": ^0.223.0
   "@opentelemetry/resources": ^2.12.0
@@ -39,7 +39,6 @@ catalog:
   fast-check: 3.23.2
   husky: ^9.0.0
   jiti: ^2.7.0
-  ipaddr.js: 2.2.0
   jose: 6.2.5
   mint: 4.2.749
   nx: ^22.7.5

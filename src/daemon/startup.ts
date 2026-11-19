@@ -1,5 +1,5 @@
 /** @file Opens the daemon's database and runs its agents independently of MCP connections. */
-import { type FileSystem, HttpClient } from "@effect/platform";
+import type { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
@@ -37,8 +37,7 @@ import {
   refused,
   spanExport,
 } from "./settings.js";
-import { makeWebhookEvents, webhookHttpClientLayer } from "./subscriptions.js";
-import { clientTools, peerTools } from "./tool-server.js";
+import { clientTools, makeInboxEvents, peerTools } from "./tool-server.js";
 
 /**
  * One agent's role, and everything that follows from it. In P2P mode every
@@ -157,11 +156,14 @@ function runningAgents(settings: DaemonSettings) {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
     const consumers = new Map<string, Effect.Latch>();
+    const events = yield* makeInboxEvents;
     /** An agent that fails to start is not kept, so the next request for it starts it again. */
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
       lookup: (agentKey: string) =>
-        startAgent(settings, consumers, agentKey, contractsOf),
+        startAgent(settings, consumers, agentKey, contractsOf).pipe(
+          Effect.map((agent) => ({ ...agent, events })),
+        ),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -202,7 +204,7 @@ function runningAgents(settings: DaemonSettings) {
 
 /**
  * Starts one agent: its services, which run until the scope closes, and from
- * them its tools, its Events calls and the read of the contracts it holds.
+ * them its tools and the read of the contracts it holds.
  * `consumers` holds the latch each agent's consumer waits on, which a send to
  * that agent opens.
  */
@@ -238,20 +240,9 @@ function startAgent(
         ),
       ),
     );
-    const callbackHttp = yield* Layer.build(webhookHttpClientLayer);
-    const subscription = yield* makeWebhookEvents(agentKey).pipe(
-      Effect.provide(services),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        Context.get(callbackHttp, HttpClient.HttpClient),
-      ),
-    );
-    const tools = yield* role
-      .tools(subscription.status)
-      .pipe(Effect.provide(services));
     return {
-      tools,
-      events: subscription,
+      agentKey,
+      tools: yield* role.tools().pipe(Effect.provide(services)),
       readContracts: Context.get(services, Firewall).readContracts,
     };
   }).pipe(Effect.withSpan("startAgent"));

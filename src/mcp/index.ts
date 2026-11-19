@@ -1,17 +1,16 @@
 /** @file What crosses MCP between a host and the daemon: the tool contracts. It loads no database. */
 
-/** The tools, the types derived from their schemas and the longest wait a read accepts. */
+/** The tools and the types derived from their schemas. */
 export {
-  MAXIMUM_WAIT_SECONDS,
   toolDefinitions,
   type ToolName,
   type ToolRequest,
   type ToolResult,
 } from "./tools.js";
-/** What a host sends, the addresses it names an agent or a group by, and the inbox entries it reads. */
+/** What a host sends, the addresses it names an agent or a group by, the inbox entries it reads and the event that carries them. */
 export {
   AgentAddress,
-  DeliveryToken,
+  INBOX_EVENT,
   InboxEntry,
   MessageAddressInput,
   SendRequest,

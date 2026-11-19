@@ -29,7 +29,6 @@ import { describe, expect } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
 import {
   HistoryError,
-  MAXIMUM_WAIT_SECONDS,
   MessageAddressInput,
   SendError,
   toolDefinitions,
@@ -187,10 +186,6 @@ it("answers 401 unless the bearer is an owner's token, and otherwise serves that
     );
   }));
 
-/** Seconds above `min`, up to `max`. */
-const seconds = (min: number, max: number) =>
-  fc.double({ min, max, minExcluded: true, noNaN: true });
-
 /** The values one argument accepts and the values it refuses. An `absent` value leaves the argument out. */
 interface Argument {
   readonly accepts: fc.Arbitrary<unknown>;
@@ -213,23 +208,15 @@ const text: Argument = {
   accepts: fc.string(),
   refuses: fc.oneof(absent, fc.integer()),
 };
-/** A wait is optional, longer than no time and no longer than the limit, which is itself accepted. */
-const wait: Argument = {
-  accepts: fc.oneof(
-    absent,
-    fc.constant(MAXIMUM_WAIT_SECONDS),
-    seconds(0, MAXIMUM_WAIT_SECONDS),
-  ),
-  refuses: fc.oneof(
-    fc.constant(0),
-    seconds(-MAXIMUM_WAIT_SECONDS, 0),
-    seconds(MAXIMUM_WAIT_SECONDS, 2 * MAXIMUM_WAIT_SECONDS),
-  ),
+/** An inbox cursor is optional, and is a count as decimal text. */
+const cursor: Argument = {
+  accepts: fc.oneof(absent, fc.nat().map(String)),
+  refuses: fc.oneof(fc.nat(), fc.constantFrom("", "-1", "1.5", "PRIVATE")),
 };
 /** Each kind of call the server agent makes with arguments. */
 const calls: ReadonlyArray<{ name: string; takes: Arguments }> = [
   { name: "read_conversation", takes: { address: recipient } },
-  { name: "receive_messages", takes: { wait } },
+  { name: "receive_messages", takes: { cursor } },
   { name: "send_message", takes: { to: recipient, text } },
 ];
 /** A call of any kind, with one value each of its arguments accepts and one value each refuses. */
@@ -250,7 +237,7 @@ it("runs a call when every argument holds a value its tool accepts, and refuses 
     const fixture = yield* mcpFixture({
       harness: {
         send: returns(sendReceipt),
-        receive: returns({ entries: [] }),
+        receive: returns({ entries: [], nextCursor: "0" }),
         readHistory: returns({ records: [] }),
       },
     });

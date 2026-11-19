@@ -37,10 +37,9 @@ of thing.
 | Word | Meaning |
 | --- | --- |
 | **inbox** | What one agent has received and may read. |
-| **inbox entry** | One message as the host reads it, with its conversation's address, its **guidance** and its **delivery token**. |
+| **inbox entry** | One message as the host reads it, with its conversation's address, and its **guidance**. |
 | **unchecked** | Received, and the firewall has not yet decided. |
-| **pending** | Permitted, and the host has not yet read it. |
-| **delivered** | Returned to the host by a read. |
+| **cursor** | A place in an inbox, in the order its entries were allowed. A read returns the entries after it. |
 | **withheld** | Refused by the firewall; the agent never reads it. |
 | **consumed** | Taken from communication into the inbox. A message is consumed once. |
 
@@ -81,7 +80,6 @@ of thing.
 | **server agent**, **client** | The two roles of client/server mode. "Server" and "client" name nothing else. |
 | **MCP handler** | The one MCP server the daemon runs. It answers each request from the agent of the owner the request is admitted as. |
 | **listener** | The daemon's one HTTP socket. |
-| **subscription** | A host's request to be woken at a callback URL. A **wake-up** is one post to that URL. |
 | **database URL** | Where the daemon's database is. |
 
 ## Words that are not names

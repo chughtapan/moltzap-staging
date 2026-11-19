@@ -1,9 +1,11 @@
 /** @file One daemon process delivers between its server agent and a client, in one order for both. */
 
-import { Effect } from "effect";
+import { INBOX_EVENT } from "@social-harness/social-harness";
+import { Effect, Stream } from "effect";
 import { expect, it } from "vitest";
 import {
   callTool,
+  inboxStream,
   joinParticipants,
   nextItem,
   processTrace,
@@ -84,6 +86,35 @@ it(
           arguments: {},
         }),
       ).toEqual({ addresses: [client.address] });
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
+it(
+  "offers the inbox event by poll, push and webhook, and delivers a polling host the entries after its cursor",
+  processTrace(
+    Effect.gen(function* () {
+      const daemon = yield* sharedDaemon();
+      yield* daemon.start();
+      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+      const client = yield* daemon.signInAs("bob");
+      const listed = yield* Effect.tryPromise(() =>
+        client.connection.events.list(),
+      );
+      expect(listed.events).toMatchObject([
+        { name: INBOX_EVENT, delivery: ["poll", "push", "webhook"] },
+      ]);
+      const first = yield* send(server, { to: client.address, text: greeting });
+      const second = yield* send(server, { to: client.address, text: reply });
+      const polled = yield* inboxStream(client.connection, "0", "poll").pipe(
+        Stream.take(2),
+        Stream.runCollect,
+      );
+      expect([...polled].map((entry) => entry.message.msgId)).toEqual([
+        first.id,
+        second.id,
+      ]);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

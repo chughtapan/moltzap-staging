@@ -121,7 +121,6 @@ it("reads a saved conversation's history at its canonical address, reports an un
       yield* subject.message("Hello from carol", subject.carol),
     );
     yield* waitForInbox(runtime);
-    yield* runtime.harness.receive({});
     const saved: Record<string, readonly string[]> = {
       "agent:bob": ["sent"],
       "agent:carol": ["received"],

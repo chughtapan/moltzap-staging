@@ -37,10 +37,10 @@ catalogs:
       specifier: ^4.7.1
       version: 4.7.2
     '@modelcontextprotocol/client':
-      specifier: 2.4.0
+      specifier: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589
       version: 2.4.0
     '@modelcontextprotocol/server':
-      specifier: 2.4.0
+      specifier: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589
       version: 2.4.0
     '@opentelemetry/api':
       specifier: ^1.9.0
@@ -90,9 +90,6 @@ catalogs:
     husky:
       specifier: ^9.0.0
       version: 9.1.7
-    ipaddr.js:
-      specifier: 2.2.0
-      version: 2.2.0
     jiti:
       specifier: ^2.7.0
       version: 2.7.0
@@ -150,7 +147,7 @@ importers:
         version: 0.53.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
       '@modelcontextprotocol/server':
         specifier: 'catalog:'
-        version: 2.4.0
+        version: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1)
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.9.1
@@ -184,9 +181,6 @@ importers:
       effect:
         specifier: 3.22.1
         version: 3.22.1
-      ipaddr.js:
-        specifier: 'catalog:'
-        version: 2.2.0
       jose:
         specifier: 'catalog:'
         version: 6.2.5
@@ -211,7 +205,7 @@ importers:
         version: 4.7.2(eslint@9.39.4(jiti@2.7.0))
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
-        version: 2.4.0
+        version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)
       '@types/node':
         specifier: 'catalog:'
         version: 25.5.0
@@ -277,7 +271,7 @@ importers:
         version: 0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
-        version: 2.4.0
+        version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)
       '@social-harness/social-harness':
         specifier: workspace:*
         version: link:../..
@@ -1160,17 +1154,24 @@ packages:
   '@mintlify/validation@0.1.804':
     resolution: {integrity: sha512-VceGtUE8eCvO7j9XCa5RUnosZAp7H5cGe4MGC5Y+UpPkTJMgb/0qZzm7M48SxVrZmFwzLTvzxlVVsZ8H/B/WBg==}
 
-  '@modelcontextprotocol/client@2.4.0':
-    resolution: {integrity: sha512-LgrD2OphHuG12vfKFKz6SOnq7bKHQmhGJIAYdD+MZBn2npHEyry6uD8zvktodtl5CQM85MO0anUyD9JwmUmxww==}
+  '@modelcontextprotocol/client@https://pkg.pr.new/@modelcontextprotocol/client@5ebb589':
+    resolution: {tarball: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589}
+    version: 2.4.0
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
+
+  '@modelcontextprotocol/core@https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589':
+    resolution: {tarball: https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589}
+    version: 2.4.0
     engines: {node: '>=20'}
 
-  '@modelcontextprotocol/core@2.4.0':
-    resolution: {integrity: sha512-z8QBKqdfXLPzkLQuG4xp8hrVEMm1PZ1IgxMN2sMbJiFiAKOWXnAzogXn2W4aqIBlP1ea6U5yiqVquvUNM1Cj6Q==}
+  '@modelcontextprotocol/server@https://pkg.pr.new/@modelcontextprotocol/server@5ebb589':
+    resolution: {tarball: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589}
+    version: 2.4.0
     engines: {node: '>=20'}
-
-  '@modelcontextprotocol/server@2.4.0':
-    resolution: {integrity: sha512-rgR9yxSaAJ+bcsi/XroT/S2AfPiIWloXAnrdfYSCms9ivVju0ishu/wW0J21Ho6+ZOR1r7RyeRbjiRuF87ix5Q==}
-    engines: {node: '>=20'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.3':
     resolution: {integrity: sha512-QZHtlVgbAdy2zAqNA9Gu1UpIuI8Xvsd1v8ic6B2pZmeFnFcMWiPLfWXh7TVw4eGEZ/C9TH281KwhVoeQUKbyjw==}
@@ -4182,10 +4183,6 @@ packages:
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
-
-  ipaddr.js@2.2.0:
-    resolution: {integrity: sha512-Ag3wB2o37wslZS19hZqorUnrnzSkpOVy+IiiDEiTqNubEYpYuHWIf6K4psgN2ZWKExS4xhVCrRVfb/wfW8fWJA==}
-    engines: {node: '>= 10'}
 
   is-alphabetical@2.0.1:
     resolution: {integrity: sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==}
@@ -7527,9 +7524,10 @@ snapshots:
       - supports-color
       - typescript
 
-  '@modelcontextprotocol/client@2.4.0':
+  '@modelcontextprotocol/client@https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@modelcontextprotocol/core': 2.4.0
+      '@modelcontextprotocol/core': https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589
+      '@opentelemetry/api': 1.9.1
       cross-spawn: 7.0.6
       eventsource: 3.0.7
       eventsource-parser: 3.1.0
@@ -7537,13 +7535,14 @@ snapshots:
       pkce-challenge: 5.0.1
       zod: 4.6.7
 
-  '@modelcontextprotocol/core@2.4.0':
+  '@modelcontextprotocol/core@https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589':
     dependencies:
       zod: 4.6.7
 
-  '@modelcontextprotocol/server@2.4.0':
+  '@modelcontextprotocol/server@https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@modelcontextprotocol/core': 2.4.0
+      '@modelcontextprotocol/core': https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589
+      '@opentelemetry/api': 1.9.1
       zod: 4.6.7
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.3':
@@ -10619,8 +10618,6 @@ snapshots:
   ip-regex@4.3.0: {}
 
   ipaddr.js@1.9.1: {}
-
-  ipaddr.js@2.2.0: {}
 
   is-alphabetical@2.0.1: {}
 

@@ -1,15 +1,9 @@
-/** @file Stores one agent's unchecked messages, its inbox entries and which of them are delivered. */
+/** @file Stores one agent's unchecked messages and its inbox entries in the order they were allowed. */
 
 import { SqlClient } from "@effect/sql";
 import { Data, Effect, Encoding, Schema } from "effect";
-import { randomBytes } from "node:crypto";
 import type { IncomingDecision } from "../firewall/service.js";
-import {
-  Message,
-  type MessageReference,
-  PAGE_SIZE,
-  type PaginatedRequest,
-} from "../communication/index.js";
+import { Message, type MessageReference } from "../communication/index.js";
 import {
   type Compilable,
   executeQuery,
@@ -23,55 +17,31 @@ import {
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import {
-  DeliveryToken,
-  InboxEntry,
-  InboxError,
-  type InboxPage,
-  MessageAddress,
-} from "../mcp/tools.js";
-
-/** An inbox entry as the inbox stores it: everything but its delivery token. */
-const StoredInboxEntry = InboxEntry.omit("deliveryToken");
+import { type InboxCursor, InboxEntry, MessageAddress } from "../mcp/tools.js";
 
 const uncheckedRow = exactStruct({
-  sequence: Schema.Number,
-  delivery_token: DeliveryToken,
   address: MessageAddress,
   unchecked: Schema.parseJson(Message),
 });
-const position = { sequence: Schema.Number, delivery_token: DeliveryToken };
-/** A pending entry as stored text, whose size counts toward a page's bytes. */
-const pendingRow = exactStruct({ ...position, entry: Schema.String });
 const entryRow = exactStruct({
-  ...position,
-  entry: Schema.parseJson(StoredInboxEntry),
-});
-const inboxCursor = Schema.Struct({
-  operation: Schema.Literal("inbox"),
-  after: Schema.NonNegativeInt,
-  through: Schema.NonNegativeInt,
+  read_number: Schema.Number,
+  entry: Schema.parseJson(InboxEntry),
 });
 
-/**
- * A received message the firewall has not yet decided, with the address and
- * delivery token its inbox entry takes.
- */
+/** A received message the firewall has not yet decided, with the address its inbox entry takes. */
 export interface Unchecked {
-  readonly token: DeliveryToken;
   readonly address: MessageAddress;
   readonly message: Message;
 }
 
+/** `read_number` orders an agent's allowed entries by when each was allowed, counting from one. */
 type InboxTables = Record<
   "inbox_entries",
-  Record<
-    "agent_key" | "delivery_token" | "address" | "author" | "message_id",
-    string
-  > &
+  Record<"agent_key" | "address" | "author" | "message_id", string> &
     Record<"unchecked" | "entry", string | null> &
     Record<"sequence", Generated<number>> &
-    Record<"status", "unchecked" | "withheld" | "pending" | "delivered">
+    Record<"read_number", number | null> &
+    Record<"status", "unchecked" | "withheld" | "allowed">
 >;
 
 /** One agent's inbox: its operations in the order an entry lives through them, then the reads of what was stored. */
@@ -94,27 +64,22 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   ) => run(query).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(row))));
   const inboxRows = () =>
     queries.selectFrom("inbox_entries").where("agent_key", "=", agentKey);
-  const head = (rows: ReturnType<typeof inboxRows>) =>
-    run(
-      rows.select((eb) =>
-        eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
-      ),
-    ).pipe(Effect.map((found) => found[0]?.head ?? 0));
+  /** The newest read number an entry holds, or zero for an inbox with no entry. */
+  const newest = (rows: ReturnType<typeof inboxRows>) =>
+    rows.select((eb) =>
+      eb.fn.coalesce(eb.fn.max("read_number"), eb.val(0)).as("newest"),
+    );
   return {
     storeUnchecked: Effect.fn(function* (
       address: MessageAddress,
       message: Message,
     ) {
       const encodedMessage = yield* encodeJson(Message, message);
-      const token = DeliveryToken.make(
-        `dlv_${randomBytes(32).toString("base64url")}`,
-      );
       yield* run(
         queries
           .insertInto("inbox_entries")
           .values({
             agent_key: agentKey,
-            delivery_token: token,
             address,
             author: message.author.agentId,
             message_id: message.msgId,
@@ -132,12 +97,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         uncheckedRow,
         queries
           .selectFrom("inbox_entries as candidate")
-          .select([
-            "candidate.sequence",
-            "candidate.delivery_token",
-            "candidate.address",
-            "candidate.unchecked",
-          ])
+          .select(["candidate.address", "candidate.unchecked"])
           .where("candidate.agent_key", "=", agentKey)
           .where("candidate.status", "=", "unchecked")
           .where((eb) =>
@@ -159,20 +119,25 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         Effect.map((rows) =>
           rows.map(
             (row): Unchecked => ({
-              token: row.delivery_token,
               address: row.address,
               message: row.unchecked,
             }),
           ),
         ),
       ),
+    /**
+     * An allowed entry takes the agent's next read number. The lock on the
+     * agent is held until the transaction that records the decision ends, so
+     * entries become readable in read-number order and a reader that has read
+     * to one number has seen every entry before it.
+     */
     recordDecision: Effect.fn(function* (
       unchecked: Unchecked,
       decision: IncomingDecision,
     ) {
       let encodedEntry: string | undefined;
       if (decision.kind === "allowed") {
-        encodedEntry = yield* encodeJson(StoredInboxEntry, {
+        encodedEntry = yield* encodeJson(InboxEntry, {
           address: unchecked.address,
           message: unchecked.message,
           ...(decision.guidance === undefined
@@ -183,84 +148,57 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           encodedEntry = undefined;
         }
       }
-      yield* run(
-        queries
-          .updateTable("inbox_entries")
-          .set({
-            unchecked: null,
-            entry: encodedEntry ?? null,
-            status: encodedEntry === undefined ? "withheld" : "pending",
-          })
-          .where("agent_key", "=", agentKey)
-          .where("delivery_token", "=", unchecked.token)
-          .where("status", "=", "unchecked"),
-      );
+      const entry = encodedEntry ?? null;
+      yield* withAgentRows(
+        agentKey,
+        sql`SELECT pg_advisory_xact_lock(hashtext(${agentKey}))`.pipe(
+          Effect.zipRight(
+            executeQuery(
+              queries
+                .updateTable("inbox_entries")
+                .set((eb) => ({
+                  unchecked: null,
+                  entry,
+                  status: entry === null ? "withheld" : "allowed",
+                  read_number:
+                    entry === null ? null : eb(newest(inboxRows()), "+", 1),
+                }))
+                .where("agent_key", "=", agentKey)
+                .where("author", "=", unchecked.message.author.agentId)
+                .where("message_id", "=", unchecked.message.msgId)
+                .where("status", "=", "unchecked"),
+            ),
+          ),
+        ),
+      ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     }),
+    /**
+     * At most `limit` of the entries after `cursor`, in read order, with the
+     * cursor to read on from and whether more entries follow. Without a
+     * cursor the read starts from the newest entry and returns none.
+     */
     listInbox: Effect.fn(function* (
-      request: typeof PaginatedRequest.Type = {},
+      limit: number,
+      cursor?: typeof InboxCursor.Type,
     ) {
-      const position =
-        request.cursor === undefined
-          ? { after: 0, through: yield* head(inboxRows()) }
-          : yield* decodeCursor(inboxCursor, request.cursor).pipe(
-              Effect.catchTag(
-                "CursorError",
-                () => new InboxError({ reason: "invalid-cursor" }),
-              ),
-            );
-      const rows = yield* read(
-        pendingRow,
-        inboxRows()
-          .select(["sequence", "delivery_token", "entry"])
-          .where("status", "=", "pending")
-          .where("sequence", ">", position.after)
-          .where("sequence", "<=", position.through)
-          .orderBy("sequence")
-          .limit(PAGE_SIZE + 1),
+      const from = Number(
+        cursor ?? (yield* run(newest(inboxRows())))[0]?.newest ?? 0,
       );
-      const entries: InboxEntry[] = [];
-      let bytes = 0;
-      let after = position.after;
-      for (const row of rows.slice(0, PAGE_SIZE)) {
-        const size = Buffer.byteLength(row.entry);
-        if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
-          break;
-        }
-        const stored = yield* decodeJson(StoredInboxEntry, row.entry);
-        entries.push({ ...stored, deliveryToken: row.delivery_token });
-        bytes += size;
-        after = row.sequence;
-      }
+      const rows = yield* read(
+        entryRow,
+        inboxRows()
+          .select(["read_number", "entry"])
+          .where("read_number", ">", from)
+          .orderBy("read_number")
+          .limit(limit + 1),
+      );
+      const page = rows.slice(0, limit);
       return {
-        entries,
-        ...(rows.length > entries.length
-          ? {
-              nextCursor: yield* encodeCursor(inboxCursor, {
-                operation: "inbox",
-                after,
-                through: position.through,
-              }),
-            }
-          : {}),
-      } satisfies InboxPage;
+        entries: page.map((row) => row.entry),
+        nextCursor: String(page.at(-1)?.read_number ?? from),
+        hasMore: rows.length > limit,
+      };
     }),
-    /** The delivery token of each pending entry. */
-    pendingTokens: read(
-      Schema.Struct({ delivery_token: DeliveryToken }),
-      inboxRows().select("delivery_token").where("status", "=", "pending"),
-    ).pipe(Effect.map((rows) => rows.map((row) => row.delivery_token))),
-    /** Marks the pending entries carrying these delivery tokens delivered, all or none. */
-    markDelivered: (tokens: readonly DeliveryToken[]) =>
-      tokens.length === 0
-        ? Effect.void
-        : run(
-            queries
-              .updateTable("inbox_entries")
-              .set({ status: "delivered" })
-              .where("agent_key", "=", agentKey)
-              .where("delivery_token", "in", tokens)
-              .where("status", "=", "pending"),
-          ).pipe(Effect.asVoid),
     storedEntry: (reference: MessageReference) =>
       read(
         exactStruct({ entry: entryRow.fields.entry }),
@@ -278,7 +216,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           run(
             queries
               .selectFrom("inbox_entries")
-              .select("delivery_token")
+              .select("sequence")
               .where("agent_key", "=", agentKey)
               .where("author", "=", message.author.agentId)
               .where("message_id", "=", message.msgId)

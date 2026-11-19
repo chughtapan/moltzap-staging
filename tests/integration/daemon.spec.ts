@@ -3,12 +3,18 @@
 import { FileSystem, HttpClient } from "@effect/platform";
 import { NodeContext, NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import { MAXIMUM_WAIT_SECONDS } from "@social-harness/social-harness";
 import {
   databaseConnection,
   databaseUrl,
 } from "@social-harness/social-harness/test";
-import { ConfigProvider, Context, Effect, Layer, Redacted } from "effect";
+import {
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Redacted,
+  Schedule,
+} from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -142,12 +148,17 @@ it(
   PROCESS_TEST_TIMEOUT_MS,
 );
 
-/** The agent's pending inbox entries, waiting for one to arrive. A read marks what it returns delivered. */
-const awaitInbox = (agent: SignedIn) =>
+/** The agent's inbox entries after `cursor`, read again until there is one. Without a cursor the read starts from now. */
+const readInbox = (agent: SignedIn, cursor?: string) =>
   callTool(agent.connection.mcp, {
     name: "receive_messages",
-    arguments: { wait: MAXIMUM_WAIT_SECONDS },
-  }).pipe(Effect.map((page) => page.entries));
+    arguments: { cursor },
+  }).pipe(
+    Effect.filterOrFail(
+      (page) => cursor === undefined || page.entries.length > 0,
+    ),
+    Effect.retry(Schedule.spaced("50 millis")),
+  );
 
 /** The daemon's database, opened as the daemon opens it. */
 function openDatabase(daemon: Daemon) {
@@ -178,7 +189,7 @@ function requestStatus(daemon: Daemon, bearer: Redacted.Redacted) {
 }
 
 it(
-  "keeps each owner's agent, inbox and history across a restart, and serves the server agent when a client's record is lost",
+  "keeps each owner's agent, history and inbox across a restart, where a cursor from before it reads the same entries, and serves the server agent when a client's record is lost",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
@@ -190,11 +201,14 @@ it(
           expect(server.agent.agentId).not.toBe(client.agent.agentId);
           expect(server.agent.agentName).toBe(SERVER_AGENT_NAME);
 
+          const start = yield* readInbox(client);
+          expect(start.entries).toEqual([]);
           const first = yield* send(server, {
             to: client.address,
             text: "read before the restart",
           });
-          expect(yield* awaitInbox(client)).toMatchObject([
+          const read = yield* readInbox(client, start.nextCursor);
+          expect(read.entries).toMatchObject([
             { message: { msgId: first.id } },
           ]);
           const unread = yield* send(server, {
@@ -205,6 +219,7 @@ it(
             server: server.agent,
             client: client.agent,
             ids: [first.id, unread.id],
+            cursors: [start.nextCursor, read.nextCursor],
           };
         }),
       );
@@ -215,9 +230,15 @@ it(
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
       expect(client.agent).toEqual(sent.client);
       expect(server.agent).toEqual(sent.server);
-      expect(yield* awaitInbox(client)).toMatchObject([
+      const [start, afterFirst] = sent.cursors;
+      expect((yield* readInbox(client, afterFirst)).entries).toMatchObject([
         { message: { msgId: sent.ids[1] } },
       ]);
+      expect(
+        (yield* readInbox(client, start)).entries.map(
+          (entry) => entry.message.msgId,
+        ),
+      ).toEqual(sent.ids);
       const history = yield* callTool(client.connection.mcp, {
         name: "read_conversation",
         arguments: {},
