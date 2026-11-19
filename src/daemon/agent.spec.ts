@@ -329,6 +329,59 @@ const exchange = contractOf("exchange", [
   },
 ]);
 
+it("answers what an agent that holds norms withholds, plain text and an act out of turn alike, and the conversation goes on", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const withheldReply = "Your message was not accepted.";
+    const runtime = yield* subject.open({
+      withheldReply,
+      contracts: [exchange],
+      policy: composedPolicy({
+        decide: (request) => Effect.succeed(decisionResponse(request)),
+      }),
+    });
+    const plain = yield* subject.sendFrom({ text: "Hello, can you help?" });
+    const outOfTurn = yield* subject.sendFrom({
+      text: "(close :ontology exchange)",
+    });
+    const { decisions } = yield* runtime.firewall.readDecisions({});
+    expect(
+      decisions
+        .map(({ direction, decision }) => `${direction} ${decision}`)
+        .sort(compareAscii),
+    ).toEqual([
+      "incoming withheld",
+      "incoming withheld",
+      "outgoing allowed",
+      "outgoing allowed",
+    ]);
+    expect(subject.submitted).toMatchObject(
+      [plain, outOfTurn].map((withheld) => ({
+        recipients: [subject.bob],
+        replyToMsgId: withheld.id,
+        content: [{ type: "text", text: withheldReply }],
+      })),
+    );
+    yield* subject.sendFrom({ text: "(open :ontology exchange)" });
+    expect(yield* runtime.inbox).toHaveLength(1);
+  }));
+
+it("answers an act its text rule withholds with that rule's feedback when it holds norms", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    yield* subject.open({
+      contracts: [exchange],
+      policy: composedPolicy(incomingViolation, "reply"),
+    });
+    const act = yield* subject.sendFrom({ text: "(open :ontology exchange)" });
+    expect(subject.submitted).toMatchObject([
+      {
+        replyToMsgId: act.id,
+        content: [{ type: "text", text: "Keep private information private." }],
+      },
+    ]);
+  }));
+
 it.prop(
   "checks each act of a contract against the whole conversation, however short the history window",
   [fc.integer({ min: 1, max: 3 }), fc.integer({ min: 1, max: 4 })],
