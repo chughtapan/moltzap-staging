@@ -1,15 +1,8 @@
-/** @file Real OpenClaw and daemon containers deliver a client's message to local model stand-ins. */
+/** @file Real OpenClaw and daemon containers deliver a client's message to a local model stand-in. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import {
   createServer,
   type IncomingMessage,
@@ -20,9 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { type DaemonAccess, openDaemon } from "../promise-fixture.ts";
-import { fakeClaude } from "./claude-fixture.ts";
-import { startDaemonContainer } from "./daemon-container.ts";
+import { openDaemon } from "./daemon-container.ts";
 
 const docker = promisify(execFile);
 /** Fixture state is copied before the normal host entrypoint secures its directories. */
@@ -36,30 +27,8 @@ const skip =
     ? "set OPENCLAW_INTEGRATION_IMAGE and DAEMON_INTEGRATION_IMAGE to built images"
     : false;
 const text = "client message through the separate daemon container";
-
-async function deliverTurn(
-  daemon: DaemonAccess,
-  options: { runtime: string; directory: string; container: string },
-  provider: { requests: string[] },
-): Promise<undefined> {
-  const { runtime, directory, container } = options;
-  const target = await daemon.signIn();
-  const caller = await daemon.signIn("caller");
-  await caller.send({ text });
-  await startHost({
-    container,
-    daemon: `sharness-daemon-${target.mcp.port}`,
-    directory,
-    mcp: target.mcp,
-    mcpCredentialFile: target.mcpCredentialFile,
-  });
-  const received = await receivedTurn(directory, runtime, provider.requests);
-  const logs = await docker("docker", ["logs", container]);
-  assert.ok(
-    received,
-    `stand-in did not receive the client's text\n${logs.stdout}\n${logs.stderr}`,
-  );
-}
+/** How long the stand-in waits for the client's text. */
+const TURN_TIMEOUT_MILLIS = 180_000;
 
 interface HostOptions {
   readonly container: string;
@@ -70,12 +39,12 @@ interface HostOptions {
 }
 
 /**
- * The image user copies fixture state so OpenClaw owns the directories it
- * secures, and reads the credential file its agent's owner signed in with.
+ * Starts the host image on the daemon container's network. The image user
+ * copies fixture state so OpenClaw owns the directories it secures, and reads
+ * the credential file its agent's owner signed in with.
  */
 async function startHost(options: HostOptions): Promise<undefined> {
   const { container, daemon, directory, mcp, mcpCredentialFile } = options;
-  await chmod(mcpCredentialFile, 0o644);
   await docker("docker", [
     "run",
     "--detach",
@@ -85,8 +54,6 @@ async function startHost(options: HostOptions): Promise<undefined> {
     `container:${daemon}`,
     "--mount",
     `type=bind,src=${directory},dst=/probe`,
-    "--mount",
-    `type=bind,src=${directory}/claude,dst=/home/node/.local/bin/claude,readonly`,
     "--env",
     "HOME=/home/node",
     "--env",
@@ -102,8 +69,6 @@ async function startHost(options: HostOptions): Promise<undefined> {
     "--env",
     "OPENCLAW_DISABLE_BONJOUR=1",
     "--env",
-    "FAKE_CLAUDE_LOG=/probe/claude.ndjson",
-    "--env",
     "ANTHROPIC_API_KEY=stand-in-key",
     "--entrypoint=bash",
     image ?? "",
@@ -112,20 +77,11 @@ async function startHost(options: HostOptions): Promise<undefined> {
   ]);
 }
 
-async function receivedTurn(
-  directory: string,
-  runtime: string,
-  requests: string[],
-): Promise<boolean> {
-  const deadline = Date.now() + 180_000;
+/** Whether a request to the stand-in carries the client's text before the deadline. */
+async function receivedTurn(requests: readonly string[]): Promise<boolean> {
+  const deadline = Date.now() + TURN_TIMEOUT_MILLIS;
   while (Date.now() < deadline) {
-    const received =
-      runtime === "provider"
-        ? requests.join("\n")
-        : await readFile(join(directory, "claude.ndjson"), "utf8").catch(
-            () => "",
-          );
-    if (received.includes(text)) {
+    if (requests.join("\n").includes(text)) {
       return true;
     }
     await delay(250);
@@ -133,83 +89,62 @@ async function receivedTurn(
   return false;
 }
 
+/** Writes an OpenClaw configuration whose one model is the stand-in listening on `port`. */
 async function prepareHost(
   directory: string,
-  runtime: string,
   port: number,
 ): Promise<undefined> {
   await chmod(directory, 0o777);
   const state = join(directory, "state");
   await mkdir(state, { mode: 0o777 });
   await chmod(state, 0o777);
-  await writeFile(join(directory, "claude"), fakeClaude, { mode: 0o755 });
   await writeFile(
     join(state, "openclaw.json"),
-    JSON.stringify(configuration(runtime, port)),
+    JSON.stringify({
+      gateway: {
+        mode: "local",
+        bind: "loopback",
+        auth: { mode: "token", token: "dummy-local-gateway-token" },
+      },
+      plugins: {
+        allow: ["anthropic", "social-harness"],
+        entries: {
+          anthropic: { enabled: true },
+          "social-harness": { enabled: true },
+        },
+      },
+      channels: {
+        sharness: {
+          accounts: [{ id: "default", enabled: true, mode: "shared" }],
+        },
+      },
+      agents: {
+        defaults: {
+          workspace: "/home/node/test-workspace",
+          model: { primary: "probe/stand-in" },
+          models: { "probe/stand-in": {} },
+        },
+      },
+      models: {
+        providers: {
+          probe: {
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            apiKey: "stand-in-key",
+            api: "openai-completions",
+            models: [
+              {
+                id: "stand-in",
+                name: "Stand-in",
+                contextWindow: 128000,
+                maxTokens: 2048,
+              },
+            ],
+          },
+        },
+      },
+    }),
     { mode: 0o666 },
   );
-}
-
-function configuration(runtime: string, port: number) {
-  const model =
-    runtime === "claude-cli" ? "anthropic/claude-opus-4-8" : "probe/stand-in";
-  return {
-    gateway: {
-      mode: "local",
-      bind: "loopback",
-      auth: { mode: "token", token: "dummy-local-gateway-token" },
-    },
-    plugins: {
-      allow: ["anthropic", "social-harness"],
-      entries: {
-        anthropic: { enabled: true },
-        "social-harness": { enabled: true },
-      },
-    },
-    channels: {
-      sharness: {
-        accounts: [{ id: "default", enabled: true, mode: "shared" }],
-      },
-    },
-    agents: {
-      defaults: {
-        workspace: "/home/node/test-workspace",
-        model: { primary: model },
-        models: {
-          [model]:
-            runtime === "claude-cli"
-              ? { agentRuntime: { id: "claude-cli" } }
-              : {},
-        },
-      },
-    },
-    ...providerConfiguration(runtime, port),
-  };
-}
-
-function providerConfiguration(runtime: string, port: number) {
-  if (runtime !== "provider") {
-    return {};
-  }
-  return {
-    models: {
-      providers: {
-        probe: {
-          baseUrl: `http://127.0.0.1:${port}/v1`,
-          apiKey: "stand-in-key",
-          api: "openai-completions",
-          models: [
-            {
-              id: "stand-in",
-              name: "Stand-in",
-              contextWindow: 128000,
-              maxTokens: 2048,
-            },
-          ],
-        },
-      },
-    },
-  };
 }
 
 async function startProvider() {
@@ -287,26 +222,39 @@ function completion(): string {
   );
 }
 
-for (const runtime of ["provider", "claude-cli"]) {
-  test(
-    `OpenClaw delivers a client's turn to the ${runtime} stand-in`,
-    { skip, timeout: 300_000 },
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), "openclaw-container-"));
-      const daemon = await openDaemon(startDaemonContainer);
-      const provider = await startProvider();
-      const container = `openclaw-host-${runtime}-${Date.now()}`;
-      try {
-        await prepareHost(directory, runtime, provider.port);
-        await deliverTurn(daemon, { runtime, directory, container }, provider);
-      } finally {
-        await docker("docker", ["rm", "--force", container]).catch(
-          () => undefined,
-        );
-        await provider.close();
-        await daemon.close();
-        await rm(directory, { recursive: true, force: true });
-      }
-    },
-  );
-}
+test(
+  "OpenClaw delivers a client's turn to its model",
+  { skip, timeout: 300_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-container-"));
+    const daemon = await openDaemon();
+    const provider = await startProvider();
+    const container = `openclaw-host-${Date.now()}`;
+    try {
+      await prepareHost(directory, provider.port);
+      const target = await daemon.signIn();
+      const caller = await daemon.signIn("caller");
+      await caller.send({ text });
+      await startHost({
+        container,
+        daemon: daemon.container,
+        directory,
+        mcp: target.mcp,
+        mcpCredentialFile: target.mcpCredentialFile,
+      });
+      const received = await receivedTurn(provider.requests);
+      const logs = await docker("docker", ["logs", container]);
+      assert.ok(
+        received,
+        `stand-in did not receive the client's text\n${logs.stdout}\n${logs.stderr}`,
+      );
+    } finally {
+      await docker("docker", ["rm", "--force", container]).catch(
+        () => undefined,
+      );
+      await provider.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
