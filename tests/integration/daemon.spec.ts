@@ -9,7 +9,6 @@ import { expect, it } from "vitest";
 import { runProcess } from "../../scripts/packed-workspace.js";
 import {
   callTool,
-  type Daemon,
   processTrace,
   send,
   SERVER_AGENT_NAME,

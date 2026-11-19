@@ -83,9 +83,11 @@ export function identityLayer(
         sql`SELECT agent_id AS "agentId", agent_name AS "agentName", principal_id AS "principalId"
           FROM agent_cards WHERE ${condition}`.pipe(
           Effect.flatMap(Schema.decodeUnknown(Schema.Array(AgentCard))),
-          Effect.mapError(
-            () => new IdentityError({ reason: "persistence-failed" }),
-          ),
+          Effect.catchTags({
+            SqlError: () => new IdentityError({ reason: "persistence-failed" }),
+            ParseError: () =>
+              new IdentityError({ reason: "persistence-failed" }),
+          }),
           Effect.flatMap(([found]) =>
             found === undefined
               ? Effect.fail(
