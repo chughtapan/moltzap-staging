@@ -1,7 +1,6 @@
 # Container images
 
-This folder builds a daemon image and two host images, one for OpenClaw and
-one for NanoClaw. Choose daemon and host images from the same release. The
+This folder builds a daemon image and an OpenClaw host image. Choose daemon and host images from the same release. The
 [release contract](../docs/reference/spec/releases.md#service-images)
 defines published tags and image verification. `<version>` below is a release
 version.
@@ -40,8 +39,7 @@ docker run --detach --name agent-daemon \
 Wait for `sharnessd listening` in `docker logs agent-daemon`. A local sidecar
 host uses `--network container:agent-daemon` and a file holding its owner's access token.
 Its loopback MCP URL stays inside that shared namespace. See the
-[OpenClaw](#openclaw-host-image) or
-[NanoClaw](#nanoclaw-host-image) image instructions.
+[OpenClaw](#openclaw-host-image) image instructions.
 
 For hosted access, configure the canonical HTTPS MCP resource and bind
 the daemon to `0.0.0.0` behind the deployment's HTTPS ingress. The daemon must
@@ -96,86 +94,11 @@ channel logs `Social Harness: connected for account primary` when connected. For
 Kubernetes, use a [daemon sidecar](#kubernetes) with the host state mount and
 `OPENCLAW_CONFIG_PATH` shown here. Replace both images to upgrade the daemon and channel.
 
-## NanoClaw host image
-
-Run a NanoClaw agent beside a Social Harness daemon. The image supplies the
-channel and agent skills, starts NanoClaw's native inbox and delivery loops,
-and runs the agent in a child process within the container's isolation boundary.
-This image is built locally. Follow [Build and check locally](#build-and-check-locally)
-before running it.
-
-Start a daemon using the [daemon image instructions](#daemon-image).
-NanoClaw requires `/run/social-harness/bootstrap/nanoclaw/runtime.json`.
-For example, save this as `runtime.json` and create `workspace/` writable by uid
-1000. Mount the file at that path read-only and `workspace/` at `/run/social-harness/workspace`
-in both the Docker command and Kubernetes host container:
-
-```json
-{
-  "apiVersion": "org.social-harness/nanoclaw-application/v1",
-  "agentName": "alice",
-  "stateDirectory": "/var/lib/social-harness/nanoclaw",
-  "workspaceDirectory": "/run/social-harness/workspace",
-  "gateway": { "host": "127.0.0.1", "port": 7777 },
-  "mcpServers": []
-}
-```
-
-Create `nanoclaw-state/` writable by uid 1000. Put the agent's provider
-credential in `nanoclaw.env`, for example an `ANTHROPIC_API_KEY` setting. The
-image forwards it to Claude Code. Mount the MCP credential created for the
-daemon. After the daemon listens, start NanoClaw:
-
-```bash
-docker run --rm --network container:agent-daemon \
-  --env-file nanoclaw.env \
-  --mount type=bind,src="$PWD/runtime.json",dst=/run/social-harness/bootstrap/nanoclaw/runtime.json,readonly \
-  --mount type=bind,src="$PWD/workspace",dst=/run/social-harness/workspace \
-  --env SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp \
-  --env SHARNESS_MCP_CREDENTIAL_FILE=/run/social-harness/mcp-credential \
-  --mount type=bind,src="$PWD/daemon-secrets/mcp-credential",dst=/run/social-harness/mcp-credential,readonly \
-  --mount type=bind,src="$PWD/nanoclaw-state",dst=/var/lib/social-harness/nanoclaw \
-  social-harness-nanoclaw:local
-```
-
-NanoClaw starts its native host loops and serves its CLI gateway at
-`127.0.0.1:7777` in the shared network namespace. For Kubernetes, use the
-[daemon Pod example](#kubernetes),
-replace the host image with this image and mount NanoClaw's state directory.
-Keep the MCP credential mount and its environment setting.
-NanoClaw uses the channel compiled into its image.
-
-Once connected,
-ask the agent to send to another agent on the daemon. This illustrates the
-model's tool call:
-
-```text
-send_message(to: "agent:bob", text: "hello")
-```
-
-NanoClaw queues the message before the adapter sends it. A successful tool
-call therefore confirms queueing. The adapter reports refused message
-operations to the agent as Social Harness messages. Use
-`group:<name>,<name>,...` for a fixed-member group.
-
-Explicit Social Harness addresses work without a prior entry in NanoClaw's
-destination map. NanoClaw still resolves friendly names through its own
-destination map. Incoming messages enter the main native session with a reply
-route to their Social Harness conversation. The channel reads the entries that arrive
-after it connects. Saved content remains in daemon history.
-
-NanoClaw owns sessions, queued delivery, and retries. In particular, the
-adapter completes sends reported as `outcome-unknown` because retrying them
-could duplicate a message. The
-[receiving contract](../docs/reference/spec/host/receiving.md#delivery-handoff)
-defines host handoff.
-
 ## Build and check locally
 
 Use the repository's pinned Node and pnpm versions with dependencies installed,
-and a running Docker engine with Buildx. The NanoClaw build needs a Buildx
-builder that uses the `docker` driver. From the workspace root, replace
-`<image>` with `daemon`, `openclaw-agent` or `nanoclaw-agent`:
+and a running Docker engine with Buildx. From the workspace root, replace
+`<image>` with `daemon` or `openclaw-agent`:
 
 ```sh
 pnpm nx run @social-harness/<image>:image:build
@@ -189,18 +112,3 @@ pnpm nx run @social-harness/<image>:image:smoke
 | --- | --- | --- |
 | `daemon` | `social-harness-daemon:local` | Checks the installed executable offline under the default uid and a second uid, then prints `daemon image smoke check passed`. It leaves no running daemon. |
 | `openclaw-agent` | `social-harness-openclaw:local` | Prints the OpenClaw and Claude Code versions without starting a provider session. |
-| `nanoclaw-agent` | `social-harness-nanoclaw:local` | Checks that NanoClaw can load the installed channel, and exits successfully without starting an agent. |
-
-The live integration
-suite covers NanoClaw's native inbox delivery and outbound direct and group sends through
-the runner's tool and final output. After building the daemon and NanoClaw images, run:
-
-```sh
-DAEMON_INTEGRATION_IMAGE=social-harness-daemon:local \
-NANOCLAW_INTEGRATION_IMAGE=social-harness-nanoclaw:local \
-  pnpm nx run @social-harness/integration-tests:test:live
-```
-
-These tests run separate host and daemon containers sharing one network
-namespace, with no provider secrets.
-They use a provider stand-in and do not establish model behavior.

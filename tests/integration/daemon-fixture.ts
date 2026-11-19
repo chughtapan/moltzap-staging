@@ -230,7 +230,7 @@ export const stopProcess = Effect.fn("stopProcess")(function* (
  * `environment` and a `PATH`. A scope closed by a failure or an interruption,
  * as a timed-out test's is, first prints the child's output.
  */
-export const managedProcess = Effect.fn("managedProcess")(function* (
+const managedProcess = Effect.fn("managedProcess")(function* (
   executable: string,
   processArguments: readonly string[],
   environment: Readonly<Record<string, string>> = {},
@@ -262,7 +262,7 @@ export const managedProcess = Effect.fn("managedProcess")(function* (
  * line only after binding, so another process holding a released port cannot
  * satisfy readiness the way it could answer a connection.
  */
-export const daemonListening = (running: RunningProcess, endpoint: URL) =>
+const daemonListening = (running: RunningProcess, endpoint: URL) =>
   Effect.sync(() =>
     running.logs().includes(`sharnessd listening on ${endpoint.href} (`),
   );
@@ -272,7 +272,7 @@ export const daemonListening = (running: RunningProcess, endpoint: URL) =>
  * the child exits first or `timeout` passes. `phase` names what the child had
  * yet to do.
  */
-export const awaitReady = Effect.fn("awaitReady")(
+const awaitReady = Effect.fn("awaitReady")(
   (
     running: RunningProcess,
     probe: Effect.Effect<boolean>,
