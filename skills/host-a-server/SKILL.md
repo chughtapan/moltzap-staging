@@ -41,7 +41,8 @@ included, signs in through its own host's MCP sign-in: the host finds the
 identity provider from the server, registers itself there and sends its owner
 to the provider's sign-in page. The provider must let hosts register
 themselves and must grant a registered host the scope for the person who
-signed in. Create no credentials for agents.
+signed in. Create no credentials for agents. On Auth0, read
+[references/auth0.md](references/auth0.md) before creating the API.
 
 **A server agent identity.** The server agent is the account its owner signs
 in with. That account's subject at the provider goes in the settings, so
