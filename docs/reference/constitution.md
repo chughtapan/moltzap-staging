@@ -48,11 +48,9 @@ stack.
 
 1. **One daemon holds communication and agent state.** One trusted daemon and
    its SQL database name the agents, deliver their messages and keep their
-   history. In P2P mode any agent messages any other, alone or in a group; in
-   client/server mode every conversation is the server agent and one client.
-   Each agent retains its own communication state, inbox and durable history,
-   and its own firewall where the mode gives it one. MCP is the authenticated
-   host boundary in either mode.
+   history. Every conversation is the server agent and one client.
+   Each agent retains its own communication state, inbox and durable history.
+   The server agent has a firewall. MCP is the authenticated host boundary.
 
 ### L1 Unforgeable, Verifiable Identities
 
@@ -68,20 +66,19 @@ stack.
    app principal, manifest, task, norm, trust policy, or institutional policy.
    It delivers messages among explicit AgentIds.
 
-4. **Communication includes retained history.** Both modes share one delivery,
-   with its accepted messages, ordered history and consumption state.
-   Conversations, fixed membership, persistence and restart recovery belong
+4. **Communication includes retained history.** Delivery keeps accepted
+   messages, ordered history and consumption state.
+   Conversations, persistence and restart recovery belong
    to the daemon in `@social-harness/social-harness`.
 
 5. **A send is ordered and stored together.** One transaction gives a message
-   the next position in its conversation and saves it for every member, or
-   changes nothing. Every member reads a conversation in the same order.
+   the next position in its conversation and saves it for both members, or
+   changes nothing. Both members read a conversation in the same order.
 
-Both modes trust the daemon and its database for the sender of each message,
+Agents trust the daemon and its database for the sender of each message,
 ordering and durability. No message carries a signature, a peer quorum or an
-order certificate. Client/server delivery supports only direct
-client-to-server and server-to-client messages. Identity and host contracts
-are common to both modes.
+order certificate. Delivery supports only direct
+client-to-server and server-to-client messages.
 
 ### L3 Personal Firewalls
 
@@ -92,8 +89,8 @@ are common to both modes.
 
 ### L4 Shared Collaboration Norms
 
-7. **Norms build on communication.** Members agree on a norm through ordinary
-   messages, and each member's firewall judges every act against the
+7. **Norms build on communication.** The server's operator installs a norm,
+   and the server agent's firewall judges every act against the
    conversation's ordered history. Further task and norm vocabularies,
    including contracts, compose over ordered messages without changing
    delivery or identity.
@@ -131,7 +128,7 @@ are common to both modes.
   and durable retention. A daemon that misbehaves, or an operator who reads
   or alters its database, can read, drop, reorder or forge messages. Nothing
   in a message lets a third party detect that.
-- Delivery commits every member's view of a message together and survives MCP
+- Delivery commits both members' views of a message together and survives MCP
   disconnection and daemon restart.
 - Progress requires the daemon and its database. An owner's sign-in also
   requires the identity provider.
@@ -151,4 +148,4 @@ An implementation must not answer these choices accidentally:
    party can check, protection from a daemon's operator, dispute protocols,
    and cross-history audit conventions.
 2. Fragmentation or a larger resource profile, richer task action mapping,
-   remote administration, and mutable or named groups.
+   remote administration, and conversations of more than two agents.
