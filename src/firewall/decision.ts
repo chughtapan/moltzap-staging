@@ -1,20 +1,14 @@
 /** @file One message's decision and the check record that saves it, and a contract's refusal, which needs no text check. */
 
-import { Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import type { Message } from "../communication/index.js";
+import type { FirewallEvidence, LocalGuidance } from "./check.js";
 import type {
   Direction,
   firewallDecisionSummarySchema,
   FirewallRefusalReason,
 } from "./rules.js";
 import type { CheckRecord } from "./store.js";
-import { decodeJson } from "../encoding.js";
-import {
-  type FirewallEvidence,
-  InvalidCheckError,
-  type LocalGuidance,
-} from "./check.js";
 import {
   type ContractCheck,
   contractReply,
@@ -33,7 +27,7 @@ export interface Candidate {
 interface Refusal {
   readonly reason: FirewallRefusalReason;
   readonly ruleId?: string;
-  readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly feedback: readonly string[];
   readonly detail?: unknown;
   readonly reply?: string;
 }
@@ -98,7 +92,6 @@ export function contractRefusal(
           (peer): DecisionSummary => ({
             direction,
             peer,
-            judgment: problem.reason === "rule-violation" ? "reject" : "hold",
             reason: problem.reason,
             decidedBy: [{ ruleId, from: "contract" }],
             checkedRuleIds: [ruleId],
@@ -111,73 +104,12 @@ export function contractRefusal(
     refusal: {
       reason: problem.reason,
       ruleId,
-      feedback: [{ text: problem.detail }],
+      feedback: [problem.detail],
       detail,
       ...(reply === undefined ? {} : { reply }),
     },
   };
 }
-
-/**
- * Adds to the decision of an act that passed its contract's structure and
- * protocol what its record saves: the contract's norm and digest, and for an
- * allowed act its protocol record, which later checks replay. A refusal by
- * the text rules carries the contract's diagnostics, and a withheld act is
- * answered with the `:on-refusal` act when one is declared.
- */
-export const withContract = Effect.fn("withContract")(
-  function* (
-    decision: Decision,
-    check: Extract<ContractCheck, { readonly kind: "ready" }>,
-    direction: Direction,
-  ) {
-    if (decision.record === undefined) {
-      return yield* new InvalidCheckError({ reason: "evidence" });
-    }
-    const json = Schema.Record({ key: Schema.String, value: Schema.Unknown });
-    const input = yield* decodeJson(json, decision.record.inputJson);
-    const result = yield* decodeJson(json, decision.record.resultJson);
-    const detail = {
-      norm: check.contract.name,
-      digest: check.contract.digest,
-      act: check.record.act.name,
-      stage: "semantic",
-    };
-    const record: CheckRecord = {
-      ...decision.record,
-      inputJson: JSON.stringify({
-        ...input,
-        norm: check.contract.name,
-        digest: check.contract.digest,
-      }),
-      resultJson: JSON.stringify({
-        ...result,
-        detail,
-        ...(decision.kind === "allowed" ? { protocol: check.record } : {}),
-      }),
-    };
-    if (decision.kind === "allowed") {
-      return { ...decision, record } satisfies Decision;
-    }
-    const text =
-      decision.refusal.feedback.map((entry) => entry.text).join(" ") ||
-      `The semantic policy check returned ${decision.refusal.reason}.`;
-    const reply =
-      direction === "incoming" ? contractReply(check, text) : undefined;
-    return {
-      ...decision,
-      record,
-      refusal: {
-        ...decision.refusal,
-        detail,
-        ...(reply === undefined ? {} : { reply }),
-      },
-    } satisfies Decision;
-  },
-  Effect.catchTag("JsonRepresentationError", () =>
-    Effect.fail(new InvalidCheckError({ reason: "evidence" })),
-  ),
-);
 
 /** A check id correlates a check without granting lookup authority. */
 export function mintCheckId() {

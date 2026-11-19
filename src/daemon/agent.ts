@@ -248,13 +248,7 @@ function send(agent: Agent, input: SendRequest) {
         outgoing.author,
         ...outgoing.recipients,
       ]);
-      const decision = yield* agent.firewall
-        .checkOutgoing(outgoing, evidence)
-        .pipe(
-          Effect.catchTag("InvalidCheckError", () =>
-            Effect.fail(new SendError({ reason: "content-invalid" })),
-          ),
-        );
+      const decision = yield* agent.firewall.checkOutgoing(outgoing, evidence);
       yield* decision.save;
       if (decision.kind === "refused") {
         return yield* decision.refusal;

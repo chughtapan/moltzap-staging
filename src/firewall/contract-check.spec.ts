@@ -5,11 +5,13 @@ import { type Context, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { DecisionProvider, FirewallEvidence } from "./check.js";
+import type { Firewall } from "./service.js";
 import { Message, type MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
   certainProvider,
   contractOf,
+  firewallLayer,
   form,
   noFields,
   peer,
@@ -18,7 +20,6 @@ import {
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
 import { type Act, formatAct, readAct } from "./contract.js";
-import { Firewall } from "./service.js";
 
 const bob = peer("bob", 2);
 
@@ -167,7 +168,7 @@ it("refuses every text that is not an act of a held norm", () =>
           }),
         { concurrency: 1, discard: true },
       ),
-    (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
+    (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
   ));
 
 it.prop(
@@ -203,7 +204,7 @@ it.prop(
               },
             });
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
+        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 8 } },
@@ -251,7 +252,7 @@ it.prop(
             );
           }),
         (agentKey) =>
-          Firewall.layer(agentKey, policy([brief], [], recording), [duo]),
+          firewallLayer(agentKey, policy([brief], [], recording), [duo]),
       );
     }),
   { fastCheck: { numRuns: 8 } },
@@ -306,7 +307,7 @@ it.prop(
             expect(again.kind).toBe(replaced ? "refused" : "allowed");
             expect(begun.kind).toBe("allowed");
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
+        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 6 } },
@@ -368,7 +369,7 @@ it.prop(
             });
             expect(sent.kind).toBe(repliesIntoInstance ? "allowed" : "refused");
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
+        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 12 } },
@@ -421,7 +422,7 @@ it.prop(
               ]);
             }
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
+        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 12 } },

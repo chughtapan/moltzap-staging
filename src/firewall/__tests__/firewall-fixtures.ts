@@ -3,7 +3,6 @@
 import { SqlClient } from "@effect/sql";
 import { type Context, Effect, Encoding, Layer, Schema } from "effect";
 import type { DecisionProvider, FirewallEvidence } from "../check.js";
-import type { TextRule } from "../rules.js";
 import { Message } from "../../communication/index.js";
 import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import {
@@ -13,15 +12,20 @@ import {
   Identity,
   PrincipalId,
 } from "../../identity.js";
-import { compiledContractSchema } from "../contract.js";
-import { type ComposedMessagePolicy, Firewall } from "../service.js";
+import { type CompiledContract, compiledContractSchema } from "../contract.js";
+import {
+  decodeMessagePolicy,
+  type LoadedMessagePolicy,
+  type TextRule,
+} from "../rules.js";
+import { Firewall } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */
 export const privacy = {
   id: "privacy",
   applies: "both",
   text: "Do not reveal the owner's private records.",
-  feedback: { text: "Keep private records private." },
+  feedback: "Keep private records private.",
 } satisfies TextRule;
 /** Complete evidence with no history or gaps. */
 export const evidence: FirewallEvidence = {
@@ -29,16 +33,10 @@ export const evidence: FirewallEvidence = {
   earlierHistoryOmitted: false,
   gaps: [],
 };
-/** The raw provider text, which no decision may expose. */
-export const privateProviderResponse = "private provider explanation";
 /** Finds `privacy` broken and every other rule followed, with certainty. */
 export const certainProvider: DecisionProvider = {
   decide: (request) =>
     Effect.succeed({
-      provider: "test",
-      model: "test",
-      raw: privateProviderResponse,
-      usage: {},
       answers: Object.fromEntries(
         Object.entries(request.questions).map(([id, question]) => {
           const choices = Object.keys(question.criteria);
@@ -130,30 +128,51 @@ export function peer(name: string, byte: number): AgentCard {
   });
 }
 
+/** A message policy and the provider that judges its text rules in place of Jev. */
+interface TestPolicy {
+  readonly source: LoadedMessagePolicy;
+  readonly provider: DecisionProvider;
+}
+
 /** A message policy with the given initial editable rules and fixed rules, judged by `provider`. */
 export function policy(
   initialRules: readonly TextRule[] = [],
   fixedRules: readonly TextRule[] = [],
   provider: DecisionProvider = certainProvider,
-): ComposedMessagePolicy {
+): TestPolicy {
   return {
-    facts: [],
-    limits: {
-      timeoutMilliseconds: 10_000,
-      maximumInputBytes: 1_000_000,
-      maximumResultBytes: 100_000,
-    },
-    text: {
-      fixedRules,
-      initialRules,
-      provider,
-      providerSettings: {
-        minimumProbability: 0.5,
-        maximumRequestBytes: 60_000,
-        timeoutMilliseconds: 5_000,
-      },
+    provider,
+    source: {
+      policy: Effect.runSync(
+        decodeMessagePolicy(
+          JSON.stringify({
+            format: "org.social-harness/message-policy/v2",
+            decisionProvider: { model: "test" },
+            text: { fixedRules, initialRules },
+            textSettings: {
+              minimumProbability: 0.5,
+              maximumRequestBytes: 60_000,
+              timeoutMilliseconds: 5_000,
+            },
+          }),
+        ),
+      ),
     },
   };
+}
+
+/** The firewall of the agent `agentKey` names under `configured`, which starts holding `contracts`. */
+export function firewallLayer(
+  agentKey: string,
+  configured: TestPolicy,
+  contracts: readonly CompiledContract[] = [],
+) {
+  return Firewall.layer(
+    agentKey,
+    configured.source,
+    contracts,
+    configured.provider,
+  );
 }
 
 /** A form of one string field, `value`. */

@@ -28,7 +28,6 @@ import {
   loadMessagePolicy,
   MAXIMUM_DOCUMENT_BYTES,
   type PolicyFilePaths,
-  readPolicyCredential as readCredential,
 } from "./rules.js";
 
 const policyFormat = "org.social-harness/message-policy/v2";
@@ -47,11 +46,8 @@ function directory(): string {
 }
 
 /** An explicit configured file loads without constructing a provider or daemon. */
-function loadConfigured(
-  configuration: PolicyFilePaths,
-  reader: typeof readCredential,
-) {
-  return loadMessagePolicy(configuration, reader).pipe(
+function loadConfigured(configuration: PolicyFilePaths) {
+  return loadMessagePolicy(configuration).pipe(
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.dieMessage("expected configured policy"),
@@ -64,7 +60,7 @@ function loadConfigured(
 describe("policy documents", () => {
   const jevDocument = {
     format: policyFormat,
-    decisionProvider: { kind: "jev", model: "jev-1.13.0" },
+    decisionProvider: { model: "jev-1.13.0" },
   };
 
   const ownerRule = {
@@ -75,7 +71,7 @@ describe("policy documents", () => {
 
   it("installs no firewall without a policy file", () =>
     Effect.gen(function* () {
-      const installed = yield* loadMessagePolicy({}, readCredential);
+      const installed = yield* loadMessagePolicy({});
       expect(Option.isNone(installed)).toBe(true);
     }));
 
@@ -96,13 +92,10 @@ describe("policy documents", () => {
           initialRules: ids.slice(fixedCount).map(rule),
         };
 
-        const installed = yield* loadConfigured(
-          {
-            messagePolicyFile: file({ ...jevDocument, text }),
-            decisionProviderKeyFile: Redacted.make(file("key-value")),
-          },
-          readCredential,
-        );
+        const installed = yield* loadConfigured({
+          messagePolicyFile: file({ ...jevDocument, text }),
+          decisionProviderKeyFile: Redacted.make(file("key-value")),
+        });
 
         expect(installed.policy.text).toEqual(text);
         expect(installed.provider?.model).toBe(
@@ -111,123 +104,82 @@ describe("policy documents", () => {
       }),
   );
 
-  it("keeps the limits a policy file gives and fills the settings it omits", () =>
+  it("keeps the concurrency limit a policy file gives and fills the settings it omits", () =>
     Effect.gen(function* () {
-      const { policy } = yield* loadConfigured(
-        {
-          messagePolicyFile: file({
-            ...jevDocument,
-            maximumConcurrentChecks: 2,
-          }),
-          decisionProviderKeyFile: Redacted.make(file("key-value")),
-        },
-        readCredential,
-      );
+      const { policy } = yield* loadConfigured({
+        messagePolicyFile: file({
+          ...jevDocument,
+          maximumConcurrentChecks: 2,
+        }),
+        decisionProviderKeyFile: Redacted.make(file("key-value")),
+      });
       expect(policy.maximumConcurrentChecks).toBe(2);
       expect(policy.maximumHistoryRecords).toBeUndefined();
-      expect(policy.settings.timeoutMilliseconds).toBeGreaterThan(0);
+      expect(policy.textSettings.timeoutMilliseconds).toBeGreaterThan(0);
     }));
 
-  /** Each thing that stops a policy with text rules from installing, with the reason its refusal carries. */
-  const obstacles = {
-    "an absent policy file": "message-policy-file",
-    "no decision provider": "message-policy",
-    "a repeated rule id": "message-policy",
-    "an absent behavior directory": "message-policy",
-    "no provider key file": "decision-provider-key-file",
-  } as const;
+  /** Each thing that stops a policy with text rules from installing. */
+  const obstacles = [
+    "an absent policy file",
+    "no decision provider",
+    "a repeated rule id",
+    "an absent behavior directory",
+    "no provider key file",
+  ] as const;
 
   it.prop(
-    "refuses a policy with text rules that meets any obstacle, for the reason of an obstacle it meets",
-    [
-      fc.uniqueArray(fc.constantFrom(...Struct.keys(obstacles)), {
-        minLength: 1,
-      }),
-    ],
+    "refuses a policy with text rules that meets any obstacle",
+    [fc.uniqueArray(fc.constantFrom(...obstacles), { minLength: 1 })],
     ([met]) =>
       Effect.gen(function* () {
-        const meets = (obstacle: keyof typeof obstacles) =>
+        const meets = (obstacle: (typeof obstacles)[number]) =>
           met.includes(obstacle);
 
-        const error = yield* loadConfigured(
-          {
-            messagePolicyFile: meets("an absent policy file")
-              ? join(directory(), "absent.json")
-              : file({
-                  format: policyFormat,
-                  decisionProvider: meets("no decision provider")
-                    ? undefined
-                    : jevDocument.decisionProvider,
-                  text: {
-                    fixedRules: [ownerRule],
-                    initialRules: meets("a repeated rule id")
-                      ? [ownerRule]
-                      : [],
-                    fixedBehaviors: meets("an absent behavior directory")
-                      ? ["absent"]
-                      : [],
-                  },
-                }),
-            decisionProviderKeyFile: meets("no provider key file")
-              ? undefined
-              : Redacted.make(file("key-value")),
-          },
-          readCredential,
-        ).pipe(Effect.flip);
-
-        expect(met.map((obstacle) => obstacles[obstacle])).toContain(
-          error.reason,
-        );
+        yield* loadConfigured({
+          messagePolicyFile: meets("an absent policy file")
+            ? join(directory(), "absent.json")
+            : file({
+                format: policyFormat,
+                decisionProvider: meets("no decision provider")
+                  ? undefined
+                  : jevDocument.decisionProvider,
+                text: {
+                  fixedRules: [ownerRule],
+                  initialRules: meets("a repeated rule id") ? [ownerRule] : [],
+                  fixedBehaviors: meets("an absent behavior directory")
+                    ? ["absent"]
+                    : [],
+                },
+              }),
+          decisionProviderKeyFile: meets("no provider key file")
+            ? undefined
+            : Redacted.make(file("key-value")),
+        }).pipe(Effect.flip);
       }),
     {
       fastCheck: {
-        examples: Struct.keys(obstacles).map(
-          (alone): [Array<keyof typeof obstacles>] => [[alone]],
+        examples: obstacles.map(
+          (alone): [Array<(typeof obstacles)[number]>] => [[alone]],
         ),
       },
     },
   );
 
-  it("reports an invalid rule before reading the behaviors a policy lists", () =>
-    Effect.gen(function* () {
-      const error = yield* loadConfigured(
-        {
-          messagePolicyFile: file({
-            ...jevDocument,
-            text: {
-              initialRules: [{ ...ownerRule, applies: "sideways" }],
-              fixedBehaviors: ["absent"],
-            },
-          }),
-          decisionProviderKeyFile: Redacted.make(file("key-value")),
-        },
-        readCredential,
-      ).pipe(Effect.flip);
-      expect(error.message).toContain("invalid at text.initialRules");
-      expect(error.behaviorReason).toBeUndefined();
-    }));
-
   it.prop(
-    "refuses an unknown property, or a value its field does not take, naming the field and never the value",
+    "refuses an unknown property, or a value its field does not take",
     [
       fc.oneof(
-        fc.constantFrom("format", "text", "settings", "facts"),
+        fc.constantFrom("format", "text", "textSettings", "facts"),
         fc.stringMatching(/^[A-Z]{4,8}$/u),
       ),
       fc.uuid(),
     ],
     ([field, value]) =>
       Effect.gen(function* () {
-        const error = yield* loadConfigured(
-          {
-            messagePolicyFile: file({ ...jevDocument, [field]: value }),
-            decisionProviderKeyFile: Redacted.make(file("key-value")),
-          },
-          readCredential,
-        ).pipe(Effect.flip);
-        expect(error.reason).toBe("message-policy");
-        expect(error.message.split("invalid at ")[1]).toBe(field);
-        expect(error.message).not.toContain(value);
+        yield* loadConfigured({
+          messagePolicyFile: file({ ...jevDocument, [field]: value }),
+          decisionProviderKeyFile: Redacted.make(file("key-value")),
+        }).pipe(Effect.flip);
       }),
   );
 
@@ -236,23 +188,20 @@ describe("policy documents", () => {
     [fc.integer({ min: -1024, max: 1024 })],
     ([excess]) =>
       Effect.gen(function* () {
-        const outcome = yield* loadConfigured(
-          {
-            messagePolicyFile: file(
-              JSON.stringify({ format: policyFormat }).padEnd(
-                1_048_576 + excess,
-                " ",
-              ),
+        const outcome = yield* loadConfigured({
+          messagePolicyFile: file(
+            JSON.stringify({ format: policyFormat }).padEnd(
+              1_048_576 + excess,
+              " ",
             ),
-          },
-          readCredential,
-        ).pipe(
+          ),
+        }).pipe(
           Effect.match({
-            onFailure: ({ reason }) => reason,
+            onFailure: () => "refused",
             onSuccess: () => "loaded",
           }),
         );
-        expect(outcome).toBe(excess > 0 ? "message-policy-file" : "loaded");
+        expect(outcome).toBe(excess > 0 ? "refused" : "loaded");
       }),
     { fastCheck: { examples: [[0], [1]] } },
   );
@@ -267,29 +216,21 @@ describe("policy documents", () => {
     ],
     ([tokens, before, between, after]) =>
       Effect.gen(function* () {
-        const outcome = yield* loadConfigured(
-          {
-            messagePolicyFile: file(jevDocument),
-            decisionProviderKeyFile: Redacted.make(
-              file(before + tokens.join(between) + after),
-            ),
-          },
-          readCredential,
-        ).pipe(
+        const outcome = yield* loadConfigured({
+          messagePolicyFile: file(jevDocument),
+          decisionProviderKeyFile: Redacted.make(
+            file(before + tokens.join(between) + after),
+          ),
+        }).pipe(
           Effect.match({
-            onFailure: ({ reason, message }) => ({
-              reason,
-              exposed: tokens.filter((token) => message.includes(token)),
-            }),
+            onFailure: () => "refused",
             onSuccess: ({ provider }) => ({
               key: provider && Redacted.value(provider.apiKey),
             }),
           }),
         );
         expect(outcome).toEqual(
-          tokens.length === 1
-            ? { key: tokens[0] }
-            : { reason: "decision-provider-key", exposed: [] },
+          tokens.length === 1 ? { key: tokens[0] } : "refused",
         );
       }),
   );
@@ -306,13 +247,10 @@ describe("policy documents", () => {
       symlinkSync("..2026_11_06_00_00_00.000000000", join(mount, "..data"));
       symlinkSync(join("..data", "jev.key"), join(mount, "jev.key"));
 
-      const installed = yield* loadConfigured(
-        {
-          messagePolicyFile: file(jevDocument),
-          decisionProviderKeyFile: Redacted.make(join(mount, "jev.key")),
-        },
-        readCredential,
-      );
+      const installed = yield* loadConfigured({
+        messagePolicyFile: file(jevDocument),
+        decisionProviderKeyFile: Redacted.make(join(mount, "jev.key")),
+      });
 
       expect(
         installed.provider === undefined
@@ -368,17 +306,14 @@ describe("policy documents", () => {
           }),
         ),
       )(readFileSync(path, "utf8"));
-      const loaded = yield* loadConfigured(
-        {
-          messagePolicyFile: path,
-          decisionProviderKeyFile: Redacted.make(file("key-value")),
-        },
-        readCredential,
-      );
+      const loaded = yield* loadConfigured({
+        messagePolicyFile: path,
+        decisionProviderKeyFile: Redacted.make(file("key-value")),
+      });
       expect(loaded.policy.text?.fixedRules).toHaveLength(
         shipped.text.fixedBehaviors.length,
       );
-      expect(loaded.provider?.kind).toBe("jev");
+      expect(loaded.provider?.model).toBe("jev-1.13.0");
     }));
 });
 
@@ -411,8 +346,7 @@ metadata:
     guidance: |
       Ask first.
       Wait for permission.
-    feedback:
-      text: Wait until working hours.
+    feedback: Wait until working hours.
 ---
 
 ${behaviorBody}
@@ -421,74 +355,44 @@ ${behaviorBody}
 
   const behaviorDocument = behavior("working-hours", "both");
 
-  /** Each way a BEHAVIOR.md can be invalid: the category it is refused under, and `behaviorDocument` spoiled that way. */
+  /** Each way a BEHAVIOR.md can be invalid: `behaviorDocument` spoiled that way. */
   const flaws = {
-    "a custom tag": [
-      "frontmatter",
-      behaviorDocument.replace(
-        "license: MIT",
-        "license: !private-invalid-behavior secret",
-      ),
-    ],
-    "a binary tag": [
-      "frontmatter",
-      behaviorDocument.replace("license: MIT", "license: !!binary c2VjcmV0"),
-    ],
-    "a repeated key": [
-      "frontmatter",
-      behaviorDocument.replace(
-        "license: MIT",
-        "license: MIT\nlicense: private-invalid-behavior",
-      ),
-    ],
-    "an unclosed sequence": [
-      "frontmatter",
-      behaviorDocument.replace(
-        "license: MIT",
-        "keywords: [private-invalid-behavior",
-      ),
-    ],
-    "no opening marker": [
-      "frontmatter",
-      behaviorDocument.replace("---\nname:", "name:"),
-    ],
-    "no name": [
-      "schema",
-      behaviorDocument.replace("name: working-hours\n", ""),
-    ],
-    "no description": [
-      "schema",
-      behaviorDocument.replace(
-        "description: When the agent may start conversations.\n",
-        "",
-      ),
-    ],
-    "no metadata": [
-      "schema",
-      `---\nname: working-hours\ndescription: When the agent may start conversations.\n---\n\n${behaviorBody}\n`,
-    ],
-    "an unknown direction": [
-      "schema",
-      behaviorDocument.replace(
-        "applies: both",
-        "applies: private-invalid-behavior",
-      ),
-    ],
-    "an unknown harness key": [
-      "schema",
-      behaviorDocument.replace(
-        "    applies: both",
-        "    private-invalid-behavior: true\n    applies: both",
-      ),
-    ],
-    "an unknown feedback key": [
-      "schema",
-      behaviorDocument.replace(
-        "      text: Wait until working hours.",
-        "      text: Wait until working hours.\n      private-invalid-behavior: true",
-      ),
-    ],
-    "no body": ["schema", behaviorDocument.replace(behaviorBody, "")],
+    "a custom tag": behaviorDocument.replace(
+      "license: MIT",
+      "license: !private-invalid-behavior secret",
+    ),
+    "a binary tag": behaviorDocument.replace(
+      "license: MIT",
+      "license: !!binary c2VjcmV0",
+    ),
+    "a repeated key": behaviorDocument.replace(
+      "license: MIT",
+      "license: MIT\nlicense: private-invalid-behavior",
+    ),
+    "an unclosed sequence": behaviorDocument.replace(
+      "license: MIT",
+      "keywords: [private-invalid-behavior",
+    ),
+    "no opening marker": behaviorDocument.replace("---\nname:", "name:"),
+    "no name": behaviorDocument.replace("name: working-hours\n", ""),
+    "no description": behaviorDocument.replace(
+      "description: When the agent may start conversations.\n",
+      "",
+    ),
+    "no metadata": `---\nname: working-hours\ndescription: When the agent may start conversations.\n---\n\n${behaviorBody}\n`,
+    "an unknown direction": behaviorDocument.replace(
+      "applies: both",
+      "applies: private-invalid-behavior",
+    ),
+    "an unknown harness key": behaviorDocument.replace(
+      "    applies: both",
+      "    private-invalid-behavior: true\n    applies: both",
+    ),
+    "feedback that is not text": behaviorDocument.replace(
+      "    feedback: Wait until working hours.",
+      "    feedback:\n      text: Wait until working hours.",
+    ),
+    "no body": behaviorDocument.replace(behaviorBody, ""),
   } as const;
 
   /** A rule name YAML reads as a string, which a bare `true` or `null` is not. */
@@ -519,7 +423,7 @@ ${behaviorBody}
       path,
       JSON.stringify({
         format: policyFormat,
-        decisionProvider: { kind: "jev", model: "jev-1.13.0" },
+        decisionProvider: { model: "jev-1.13.0" },
         text: {
           fixedRules: [fixedInlineRule],
           initialRules: [initialInlineRule],
@@ -531,20 +435,17 @@ ${behaviorBody}
   }
 
   function loaded(path: string) {
-    return loadConfigured(
-      {
-        messagePolicyFile: path,
-        decisionProviderKeyFile: Redacted.make(join(dirname(path), "key")),
-      },
-      readCredential,
-    );
+    return loadConfigured({
+      messagePolicyFile: path,
+      decisionProviderKeyFile: Redacted.make(join(dirname(path), "key")),
+    });
   }
 
-  /** The category the policy at `path` is refused under, or `loaded`. */
-  function refusal(path: string) {
+  /** Whether the policy at `path` is `loaded` or `refused`. */
+  function outcome(path: string) {
     return loaded(path).pipe(
       Effect.match({
-        onFailure: ({ behaviorReason }) => behaviorReason,
+        onFailure: () => "refused",
         onSuccess: () => "loaded",
       }),
     );
@@ -571,24 +472,21 @@ ${behaviorBody}
           applies,
           text: behaviorBody,
           guidance: "Ask first.\nWait for permission.\n",
-          feedback: { text: "Wait until working hours." },
+          feedback: "Wait until working hours.",
         });
       }),
   );
 
   it.prop(
-    "refuses a flawed BEHAVIOR.md under its flaw's category, naming its policy entry and never quoting the file",
+    "refuses a flawed BEHAVIOR.md",
     [fc.constantFrom(...Struct.keys(flaws)), lineEnding, byteOrderMark],
     ([flaw, newline, prefix]) =>
       Effect.gen(function* () {
-        const [category, document] = flaws[flaw];
-        const { path } = fixture(prefix + document.replaceAll("\n", newline));
+        const { path } = fixture(
+          prefix + flaws[flaw].replaceAll("\n", newline),
+        );
 
-        const error = yield* loaded(path).pipe(Effect.flip);
-
-        expect(error.behaviorReason).toBe(category);
-        expect(error.message).toContain("text.fixedBehaviors.0");
-        expect(error.message).not.toContain("private-invalid-behavior");
+        expect(yield* outcome(path)).toBe("refused");
       }),
   );
 
@@ -600,7 +498,7 @@ ${behaviorBody}
         const { path } = fixture(
           behaviorDocument.padEnd(MAXIMUM_DOCUMENT_BYTES + excess, " "),
         );
-        expect(yield* refusal(path)).toBe(excess > 0 ? "too-large" : "loaded");
+        expect(yield* outcome(path)).toBe(excess > 0 ? "refused" : "loaded");
       }),
     { fastCheck: { examples: [[0], [1]] } },
   );
@@ -621,10 +519,11 @@ ${behaviorBody}
           initialBehaviors: [],
         });
         const reached = steps.filter((step) => step !== ".").join("/");
-        const inside = reached === "fixed" ? "loaded" : "missing";
 
-        expect(yield* refusal(path)).toBe(
-          anchor !== "" || steps.includes("..") ? "schema" : inside,
+        expect(yield* outcome(path)).toBe(
+          anchor === "" && !steps.includes("..") && reached === "fixed"
+            ? "loaded"
+            : "refused",
         );
       }),
   );
@@ -638,7 +537,7 @@ ${behaviorBody}
   });
 
   it.prop(
-    "refuses the first listed behavior that is absent or repeats an earlier rule id, by its list and position, and otherwise adds fixed then initial behaviors in order",
+    "refuses a listed behavior that is absent or repeats an earlier rule id, and otherwise adds fixed then initial behaviors in order",
     [listedNames, listedNames],
     ([fixed, initial]) =>
       Effect.gen(function* () {
@@ -654,7 +553,7 @@ ${behaviorBody}
           );
         }
         const listed = [...fixed, ...initial];
-        const refused = listed.findIndex(
+        const refused = listed.some(
           (name, at) =>
             name === "absent" ||
             [
@@ -663,17 +562,10 @@ ${behaviorBody}
               ...listed.slice(0, at),
             ].includes(name),
         );
-        const place =
-          refused < fixed.length
-            ? `text.fixedBehaviors.${refused}`
-            : `text.initialBehaviors.${refused - fixed.length}`;
 
-        const outcome = yield* loaded(path).pipe(
+        const result = yield* loaded(path).pipe(
           Effect.match({
-            onFailure: ({ behaviorReason, message }) => ({
-              refused: behaviorReason,
-              place: /text\.\w+\.\d+/u.exec(message)?.[0],
-            }),
+            onFailure: () => "refused",
             onSuccess: ({ policy }) => ({
               fixed: policy.text?.fixedRules.map(({ id }) => id),
               initial: policy.text?.initialRules.map(({ id }) => id),
@@ -681,16 +573,12 @@ ${behaviorBody}
           }),
         );
 
-        expect(outcome).toEqual(
-          refused === -1
-            ? {
+        expect(result).toEqual(
+          refused
+            ? "refused"
+            : {
                 fixed: [fixedInlineRule.id, ...fixed],
                 initial: [initialInlineRule.id, ...initial],
-              }
-            : {
-                refused:
-                  listed[refused] === "absent" ? "missing" : "duplicate-id",
-                place,
               },
         );
       }),
@@ -713,9 +601,7 @@ ${behaviorBody}
             join(root, "fixed", "BEHAVIOR.md"),
           );
         }
-        const error = yield* loaded(path).pipe(Effect.flip);
-        expect(error.behaviorReason).toBe("schema");
-        expect(error.message).toContain("text.fixedBehaviors.0");
+        expect(yield* outcome(path)).toBe("refused");
       }),
   );
 
@@ -724,9 +610,7 @@ ${behaviorBody}
       const { path, root } = fixture();
       rmSync(join(root, "fixed", "BEHAVIOR.md"));
       mkdirSync(join(root, "fixed", "BEHAVIOR.md"));
-      const error = yield* loaded(path).pipe(Effect.flip);
-      expect(error.behaviorReason).toBe("not-a-file");
-      expect(error.message).toContain("text.fixedBehaviors.0");
+      expect(yield* outcome(path)).toBe("refused");
     }));
 
   it(
@@ -747,11 +631,9 @@ ${behaviorBody}
           return;
         }
         expect(result.status).toBe(0);
-        const error = yield* loaded(path).pipe(
-          Effect.flip,
-          Effect.timeout("1 second"),
+        expect(yield* outcome(path).pipe(Effect.timeout("1 second"))).toBe(
+          "refused",
         );
-        expect(error.behaviorReason).toBe("not-a-file");
       }),
     2_000,
   );

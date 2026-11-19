@@ -1,6 +1,6 @@
 /** @file Explicit firewall rules, edit contracts and bounded configuration loading. */
 
-import { Data, Effect, Option, ParseResult, Redacted, Schema } from "effect";
+import { Data, Effect, Option, Redacted, Schema } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
@@ -25,12 +25,11 @@ export type FirewallRefusalReason = typeof firewallRefusalReasonSchema.Type;
 /** Whether the agent received the message under check or is sending it. */
 export type Direction = "incoming" | "outgoing";
 
-/** Trusted callers supply facts. Visibility limits what guidance may reference. */
+/** A fact the owner states for every check, with where it comes from. */
 export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
   id: identifier,
   source: identifier,
   text: Schema.NonEmptyString,
-  visibility: Schema.Literal("runtime", "assessor"),
 }) {}
 
 /**
@@ -46,17 +45,10 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
   guidance: Schema.optional(Schema.NonEmptyString),
-  feedback: Schema.optional(exactStruct({ text: Schema.NonEmptyString })),
+  feedback: Schema.optional(Schema.NonEmptyString),
   action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
-}) {}
-
-/** The time and byte limits of one check against the text rules. */
-export class CheckLimits extends Schema.Class<CheckLimits>("CheckLimits")({
-  timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
-  maximumInputBytes: Schema.Positive.pipe(Schema.int()),
-  maximumResultBytes: Schema.Positive.pipe(Schema.int()),
 }) {}
 
 /**
@@ -141,8 +133,8 @@ const firewallActivationSchema = exactStruct({
 });
 
 /**
- * Contains one row per peer without message content or provider traces.
- * `judgment` is what the check concluded. `decidedBy[].advice` contains the
+ * Contains one row per peer without message content.
+ * `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
  * allowed one. `from` identifies a contract stage as `contract`, or a fixed or
  * editable text rule. `checkedRuleIds` lists the rules the check judged: a
@@ -151,7 +143,6 @@ const firewallActivationSchema = exactStruct({
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
   peer: AgentCard,
-  judgment: Schema.Literal("allow", "reject", "hold"),
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
     exactStruct({
@@ -165,7 +156,7 @@ export const firewallDecisionSummarySchema = exactStruct({
 });
 
 /**
- * Reports each saved check with its judgment and the decision the daemon
+ * Reports each saved check with the decision the daemon
  * applied, and each policy activation. A sent message is `allowed` or
  * `refused`; a received one is `allowed` or `withheld`.
  */
@@ -266,62 +257,23 @@ export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>
   }
 }
 
-/** Closed reasons the policy settings cannot start the daemon. */
-export type MessagePolicyConfigurationFailure =
-  | "message-policy-file"
-  | "message-policy"
-  | "decision-provider-key-file"
-  | "decision-provider-key";
-
-/** Behavior diagnostics reveal only a closed category and the policy entry. */
-export type BehaviorFailure =
-  | "missing"
-  | "too-large"
-  | "not-a-file"
-  | "frontmatter"
-  | "schema"
-  | "duplicate-id"
-  | "editable-limit";
-
 /** Where the message-policy file and the decision provider's key file are. */
 export interface PolicyFilePaths {
   readonly messagePolicyFile?: string;
   readonly decisionProviderKeyFile?: Redacted.Redacted;
 }
 
-/** Policy loading fails with a closed reason and a safe operator message. */
-export class MessagePolicyConfigurationError extends Data.TaggedError(
+/** The message-policy file, a behavior it lists or the decision provider's key file cannot be loaded. */
+class MessagePolicyConfigurationError extends Data.TaggedError(
   "MessagePolicyConfigurationError",
-)<{
-  readonly reason: MessagePolicyConfigurationFailure;
-  readonly message: string;
-  readonly behaviorReason?: BehaviorFailure;
-}> {}
+) {}
 
-/** The daemon supplies secret-file access without granting policy loading bootstrap authority. */
-export type CredentialReader = (
-  path: Redacted.Redacted,
-  grammar: Schema.Schema<string>,
-) => Effect.Effect<Redacted.Redacted, { readonly stage: "file" | "value" }>;
-
-const failureMessages: Readonly<
-  Record<MessagePolicyConfigurationFailure, string>
-> = {
-  "message-policy-file":
-    "messagePolicyFile must name a readable regular file of at most 1 MiB",
-  "message-policy":
-    "messagePolicyFile must contain a valid org.social-harness/message-policy/v2 document",
-  "decision-provider-key-file":
-    "decisionProviderKeyFile must name a readable file for the message policy's jev decision provider",
-  "decision-provider-key":
-    "decisionProviderKeyFile must contain one key without inner whitespace",
-};
+const refused = () => new MessagePolicyConfigurationError();
 
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
 /** Jev judges text rules with the key `decisionProviderKeyFile` holds. */
 const decisionProvider = Schema.Struct({
-  kind: Schema.Literal("jev"),
   model: Schema.NonEmptyTrimmedString,
 });
 
@@ -334,15 +286,9 @@ const defaultProviderRequestSettings = {
   timeoutMilliseconds: 15_000,
 };
 
-const defaultCheckLimits = {
-  timeoutMilliseconds: 150_000,
-  maximumInputBytes: 512_000,
-  maximumResultBytes: 2_000_000,
-};
-
 const textDocument = Schema.Struct({
   fixedRules: textRules,
-  initialRules: Schema.optionalWith(Schema.Array(editableRuleSchema), {
+  initialRules: Schema.optionalWith(editableRulesSchema, {
     default: () => [],
   }),
   fixedBehaviors: Schema.optional(Schema.Array(Schema.String)),
@@ -359,9 +305,6 @@ const document = Schema.Struct({
       default: () => defaultProviderRequestSettings,
     },
   ),
-  settings: Schema.optionalWith(Schema.Struct(CheckLimits.fields), {
-    default: () => defaultCheckLimits,
-  }),
   facts: Schema.optionalWith(Schema.Array(OwnerFact), {
     default: () => [],
   }),
@@ -439,69 +382,41 @@ const decisionProviderKey = Schema.Trim.pipe(
 export interface LoadedMessagePolicy {
   readonly policy: MessagePolicy;
   readonly provider?: {
-    readonly kind: "jev";
     readonly model: string;
     readonly apiKey: Redacted.Redacted;
   };
 }
 
 /**
- * Setup reads bounded UTF-8 credential files before validating the provider's
- * token grammar. Like the policy file, the key file is read at its resolved
- * path, so a symbolic link to it works, as a Kubernetes Secret volume
- * presents every key.
- */
-export function readPolicyCredential(
-  path: Redacted.Redacted,
-  grammar: Schema.Schema<string>,
-) {
-  return Effect.tryPromise({
-    try: () => realpath(Redacted.value(path)),
-    catch: () => ({ stage: "file" as const }),
-  }).pipe(
-    Effect.flatMap((canonical) =>
-      readBoundedFile(canonical, 16_384, () =>
-        policyConfigurationError("decision-provider-key-file"),
-      ).pipe(Effect.mapError(() => ({ stage: "file" as const }))),
-    ),
-    Effect.flatMap((bytes) =>
-      Effect.try({
-        try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-        catch: () => ({ stage: "file" as const }),
-      }),
-    ),
-    Effect.flatMap((text) =>
-      Schema.decodeUnknown(grammar)(text).pipe(
-        Effect.mapError(() => ({ stage: "value" as const })),
-      ),
-    ),
-    Effect.map(Redacted.make),
-  );
-}
-
-/**
- * Resolves the configured policy during setup, returning none when unset. Only Jev
- * reads `decisionProviderKeyFile` through the supplied credential
- * reader. Invalid documents or keys fail without exposing file contents.
+ * Resolves the configured policy during setup, returning none when unset. A
+ * policy that names a `decisionProvider` reads its key from
+ * `decisionProviderKeyFile`, even without text rules of its own: the norms an
+ * agent holds can add rules for it to judge. Invalid documents or keys fail
+ * without exposing file contents.
  */
 export const loadMessagePolicy = Effect.fn("loadMessagePolicy")(function* (
   paths: PolicyFilePaths,
-  readCredential: CredentialReader,
 ) {
   const path = paths.messagePolicyFile;
   if (path === undefined) {
-    return Option.none();
+    return Option.none<LoadedMessagePolicy>();
   }
-  const policy = yield* readPolicyText(path).pipe(
-    Effect.flatMap((text) =>
-      decodeMessagePolicy(text).pipe(Effect.mapError(invalidPolicy)),
+  const policy = yield* readCanonicalFile(path, MAXIMUM_POLICY_BYTES).pipe(
+    Effect.flatMap((bytes) =>
+      decodeMessagePolicy(bytes.toString("utf8")).pipe(
+        Effect.mapError(refused),
+      ),
     ),
   );
   const resolved = yield* resolveBehaviors(policy, dirname(path));
-  const provider = yield* loadDecisionProvider(resolved, paths, readCredential);
-  return Option.some({
+  const setting = resolved.decisionProvider;
+  if (setting === undefined) {
+    return Option.some<LoadedMessagePolicy>({ policy: resolved });
+  }
+  const apiKey = yield* readDecisionProviderKey(paths.decisionProviderKeyFile);
+  return Option.some<LoadedMessagePolicy>({
     policy: resolved,
-    ...(provider === undefined ? {} : { provider }),
+    provider: { model: setting.model, apiKey },
   });
 });
 
@@ -511,16 +426,6 @@ interface BehaviorLoad {
   readonly ids: Set<string>;
   readonly initialRuleCount: number;
 }
-
-/** The owner facts and the check concurrency limit are part of the installed policy identity. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Installing a policy validates fixed settings with the same grammar saved checks decode.
-export const firewallConfigurationSchema = Schema.Struct({
-  facts: Schema.Array(OwnerFact),
-  maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
-});
-
-/** The fixed facts and the concurrency limit are immutable for a process installation. */
-export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
  * Maps a `BEHAVIOR.md` to an editable rule. Callers must bound `bytes` by
@@ -585,25 +490,19 @@ function decodeFrontmatter<Failure>(
   });
 }
 
-/** Reports only the policy entry because YAML diagnostics may expose private content. */
-function invalidBehavior(path: string, reason: BehaviorFailure) {
-  return policyConfigurationError("message-policy", path, reason);
-}
-
-function readBehavior(root: string, directory: string, path: string) {
-  const refused = (reason: BehaviorFailure) => invalidBehavior(path, reason);
+function readBehavior(root: string, directory: string) {
   if (
     isAbsolute(directory) ||
     win32.isAbsolute(directory) ||
     directory.split(/[\\/]/u).includes("..")
   ) {
-    return Effect.fail(refused("schema"));
+    return Effect.fail(refused());
   }
   return Effect.gen(function* () {
     const canonical = (location: string) =>
       Effect.tryPromise({
         try: () => realpath(location),
-        catch: () => refused("missing"),
+        catch: refused,
       });
     const locations = yield* Effect.all({
       root: canonical(root),
@@ -614,12 +513,11 @@ function readBehavior(root: string, directory: string, path: string) {
       !contained(locations.root, locations.directory) ||
       !contained(locations.root, locations.file)
     ) {
-      return yield* refused("schema");
+      return yield* refused();
     }
     const bytes = yield* readBoundedFile(
       locations.file,
       MAXIMUM_DOCUMENT_BYTES,
-      refused,
     );
     return yield* decodeBehavior(bytes, refused);
   });
@@ -631,12 +529,6 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     const text = policy.text;
     if (text === undefined) {
       return policy;
-    }
-    if (text.initialRules.length > MAXIMUM_EDITABLE_RULES) {
-      return yield* policyConfigurationError(
-        "message-policy",
-        "text.initialRules",
-      );
     }
     const load = {
       root,
@@ -677,17 +569,16 @@ function loadBehaviors(
   let count = load.initialRuleCount;
   return Effect.forEach(
     directories,
-    (directory, index) =>
+    (directory) =>
       Effect.gen(function* () {
-        const path = `text.${field}.${index}`;
-        const behavior = yield* readBehavior(load.root, directory, path);
+        const behavior = yield* readBehavior(load.root, directory);
         if (load.ids.has(behavior.id)) {
-          return yield* invalidBehavior(path, "duplicate-id");
+          return yield* refused();
         }
         if (field === "initialBehaviors") {
           count += 1;
           if (count > MAXIMUM_EDITABLE_RULES) {
-            return yield* invalidBehavior(path, "editable-limit");
+            return yield* refused();
           }
         }
         load.ids.add(behavior.id);
@@ -703,30 +594,46 @@ function contained(root: string, path: string) {
   return !isAbsolute(child) && child !== ".." && !child.startsWith(`..${sep}`);
 }
 
-function readPolicyText(path: string) {
-  return Effect.tryPromise({
-    try: () => realpath(path),
-    catch: () => policyConfigurationError("message-policy-file"),
-  }).pipe(
-    Effect.flatMap((canonical) =>
-      readBoundedFile(canonical, MAXIMUM_POLICY_BYTES, () =>
-        policyConfigurationError("message-policy-file"),
+/** The key `path` holds: bounded UTF-8 text of one token. */
+function readDecisionProviderKey(path?: Redacted.Redacted) {
+  if (path === undefined) {
+    return Effect.fail(refused());
+  }
+  return readCanonicalFile(Redacted.value(path), 16_384).pipe(
+    Effect.flatMap((bytes) =>
+      Effect.try({
+        try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        catch: refused,
+      }),
+    ),
+    Effect.flatMap((text) =>
+      Schema.decodeUnknown(decisionProviderKey)(text).pipe(
+        Effect.mapError(refused),
       ),
     ),
-    Effect.map((bytes) => bytes.toString("utf8")),
+    Effect.map(Redacted.make),
+  );
+}
+
+/**
+ * Reads the file `path` leads to through any symbolic links, as a Kubernetes
+ * Secret volume presents every key.
+ */
+function readCanonicalFile(path: string, maximumBytes: number) {
+  return Effect.tryPromise({
+    try: () => realpath(path),
+    catch: refused,
+  }).pipe(
+    Effect.flatMap((canonical) => readBoundedFile(canonical, maximumBytes)),
   );
 }
 
 /** The descriptor owns both the file-kind check and the bounded read. */
-function readBoundedFile(
-  path: string,
-  maximumBytes: number,
-  refused: (reason: BehaviorFailure) => MessagePolicyConfigurationError,
-) {
+function readBoundedFile(path: string, maximumBytes: number) {
   return Effect.gen(function* () {
     const before = yield* Effect.tryPromise({
       try: () => lstat(path),
-      catch: () => refused("missing"),
+      catch: refused,
     });
     const file = yield* Effect.acquireRelease(
       Effect.tryPromise({
@@ -735,29 +642,26 @@ function readBoundedFile(
             path,
             constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
           ),
-        catch: () => refused("missing"),
+        catch: refused,
       }),
       (file) =>
         Effect.tryPromise({
           try: () => file.close(),
-          catch: () => refused("missing"),
+          catch: refused,
         }).pipe(Effect.orDie),
     );
     const stat = yield* Effect.tryPromise({
       try: () => file.stat(),
-      catch: () => refused("missing"),
+      catch: refused,
     });
-    if (!stat.isFile()) {
-      return yield* refused("not-a-file");
-    }
-    if (stat.dev !== before.dev || stat.ino !== before.ino) {
-      return yield* refused("missing");
+    if (!stat.isFile() || stat.dev !== before.dev || stat.ino !== before.ino) {
+      return yield* refused();
     }
     const bytes = yield* readDescriptor(file, maximumBytes).pipe(
-      Effect.mapError(() => refused("missing")),
+      Effect.mapError(refused),
     );
     if (bytes.byteLength > maximumBytes) {
-      return yield* refused("too-large");
+      return yield* refused();
     }
     return bytes;
   }).pipe(Effect.scoped);
@@ -782,23 +686,6 @@ function readDescriptor(file: FileHandle, maximumBytes: number) {
   });
 }
 
-/** Names where the document is invalid, never what it holds there. */
-function invalidPolicy(
-  error: ParseResult.ParseError,
-): MessagePolicyConfigurationError {
-  const paths = [
-    ...new Set(
-      ParseResult.ArrayFormatter.formatErrorSync(error).map((issue) =>
-        issue.path.length === 0 ? "(document)" : issue.path.join("."),
-      ),
-    ),
-  ];
-  return new MessagePolicyConfigurationError({
-    reason: "message-policy",
-    message: `${failureMessages["message-policy"]}; invalid at ${paths.join(", ")}`,
-  });
-}
-
 function editSubject(
   path?: FirewallPolicyError["path"],
   ruleId?: string,
@@ -808,63 +695,4 @@ function editSubject(
   return place !== undefined && rule !== undefined
     ? `${place} (${rule})`
     : (place ?? rule);
-}
-
-/**
- * A policy that names a `decisionProvider` reads its key, even without text
- * rules of its own: the norms an agent holds can add rules for it to judge.
- */
-function loadDecisionProvider(
-  policy: MessagePolicy,
-  paths: PolicyFilePaths,
-  readCredential: CredentialReader,
-): Effect.Effect<
-  LoadedMessagePolicy["provider"],
-  MessagePolicyConfigurationError
-> {
-  const setting = policy.decisionProvider;
-  if (setting === undefined) {
-    return Effect.succeed(undefined);
-  }
-  return readDecisionProviderKey(paths, readCredential).pipe(
-    Effect.map((apiKey) => ({
-      kind: "jev" as const,
-      model: setting.model,
-      apiKey,
-    })),
-  );
-}
-
-function readDecisionProviderKey(
-  paths: PolicyFilePaths,
-  readCredential: CredentialReader,
-): Effect.Effect<Redacted.Redacted, MessagePolicyConfigurationError> {
-  const path = paths.decisionProviderKeyFile;
-  return path === undefined
-    ? Effect.fail(policyConfigurationError("decision-provider-key-file"))
-    : readCredential(path, decisionProviderKey).pipe(
-        Effect.mapError((error) =>
-          policyConfigurationError(
-            error.stage === "file"
-              ? "decision-provider-key-file"
-              : "decision-provider-key",
-          ),
-        ),
-      );
-}
-
-function policyConfigurationError(
-  reason: MessagePolicyConfigurationFailure,
-  path = "",
-  behaviorReason?: BehaviorFailure,
-): MessagePolicyConfigurationError {
-  const category = behaviorReason === undefined ? "" : ` (${behaviorReason})`;
-  return new MessagePolicyConfigurationError({
-    reason,
-    behaviorReason,
-    message:
-      path === ""
-        ? failureMessages[reason]
-        : `${failureMessages[reason]}; invalid at ${path}${category}`,
-  });
 }

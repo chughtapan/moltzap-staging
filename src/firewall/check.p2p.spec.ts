@@ -3,18 +3,13 @@
 import { effect as it } from "@effect/vitest";
 import { Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
-import { checkCapturedMessage, validateChecks } from "./check.js";
+import { checkCapturedMessage, validateTextRules } from "./check.js";
 
 const agentId = "organizer-agent";
 const configuration = {
   textRules: [
     { id: "privacy", applies: "both", text: "Keep private records private." },
   ],
-  limits: {
-    timeoutMilliseconds: 2000,
-    maximumInputBytes: 300000,
-    maximumResultBytes: 1000000,
-  },
   providerSettings: {
     minimumProbability: 0.5,
     maximumRequestBytes: 60000,
@@ -51,8 +46,8 @@ const others = fc.tuple(
   fc.uuid(),
   fc.array(fc.uuid(), { maxLength: 2 }),
 );
-/** The reasons the check refuses the cases `build` makes from sampled agents. */
-const refusals = (
+/** The failures of the check for the cases `build` makes from sampled agents. */
+const failures = (
   build: (
     ...sampled: [boolean, string, string[]]
   ) => Parameters<typeof checkCapturedMessage>[1],
@@ -60,7 +55,7 @@ const refusals = (
   Effect.forEach(
     fc.sample(others, 60),
     (sampled) =>
-      validateChecks(configuration).pipe(
+      validateTextRules(configuration).pipe(
         Effect.zipRight(
           checkCapturedMessage(
             { ...configuration, provider },
@@ -68,14 +63,14 @@ const refusals = (
           ),
         ),
         Effect.flip,
-        Effect.map((refused) => refused.reason),
+        Effect.map((refused) => refused._tag),
       ),
     { concurrency: 1 },
-  ).pipe(Effect.map((reasons) => new Set(reasons)));
+  ).pipe(Effect.map((tags) => new Set(tags)));
 
 it("refuses a message in either direction that names a recipient twice", () =>
   Effect.gen(function* () {
-    const reasons = yield* refusals((incoming, repeated, rest) => ({
+    const refused = yield* failures((incoming, repeated, rest) => ({
       event: message(
         incoming,
         incoming
@@ -84,21 +79,21 @@ it("refuses a message in either direction that names a recipient twice", () =>
       ),
       evidence,
     }));
-    expect(reasons).toEqual(new Set(["message"]));
+    expect(refused).toEqual(new Set(["InvalidCheckError"]));
   }));
 
 it("refuses an incoming message to several agents that does not name its agent", () =>
   Effect.gen(function* () {
-    const reasons = yield* refusals((...[, stranger, rest]) => ({
+    const refused = yield* failures((...[, stranger, rest]) => ({
       event: message(true, [stranger, ...rest]),
       evidence,
     }));
-    expect(reasons).toEqual(new Set(["message"]));
+    expect(refused).toEqual(new Set(["InvalidCheckError"]));
   }));
 
 it("refuses evidence of several participants that lists one twice", () =>
   Effect.gen(function* () {
-    const reasons = yield* refusals((incoming, repeated, rest) => ({
+    const refused = yield* failures((incoming, repeated, rest) => ({
       event: message(incoming, incoming ? [agentId] : [repeated]),
       evidence: {
         ...evidence,
@@ -108,5 +103,5 @@ it("refuses evidence of several participants that lists one twice", () =>
         })),
       },
     }));
-    expect(reasons).toEqual(new Set(["evidence"]));
+    expect(refused).toEqual(new Set(["InvalidCheckError"]));
   }));

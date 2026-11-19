@@ -15,6 +15,7 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResponse,
+  LoadedMessagePolicy,
 } from "../../firewall/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { CommunicationError, Message } from "../../communication/index.js";
@@ -26,10 +27,7 @@ import {
 } from "../../communication/service.js";
 import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import { compareAscii } from "../../encoding.js";
-import {
-  type ComposedMessagePolicy,
-  Firewall,
-} from "../../firewall/service.js";
+import { Firewall } from "../../firewall/service.js";
 import {
   type AgentCard,
   type AgentName,
@@ -52,10 +50,6 @@ export function decisionResponse(
   probability = 1,
 ): DecisionResponse {
   return {
-    provider: "test",
-    model: "test",
-    raw: "private model explanation",
-    usage: {},
     answers: Object.fromEntries(
       Object.entries(request.questions).map(([id, question]) => [
         id,
@@ -85,38 +79,48 @@ export const decisionState = Schema.decodeUnknownSync(
   ),
 );
 
+/** A message policy and the provider that judges its text rules in place of Jev. */
+interface TestPolicy {
+  readonly source: LoadedMessagePolicy;
+  readonly provider: DecisionProvider;
+}
+
 /**
  * One text rule makes check order and saved advice
  * observable. With `action`, the rule replies to or silently withholds the
- * incoming messages it rejects.
+ * incoming messages it rejects. `maximumConcurrentChecks` bounds how many
+ * checks run at once.
  */
 export function composedPolicy(
   provider: DecisionProvider,
   action?: "deny" | "reply",
-): ComposedMessagePolicy {
+  maximumConcurrentChecks?: number,
+): TestPolicy {
   return {
-    facts: [],
-    limits: {
-      timeoutMilliseconds: 10_000,
-      maximumInputBytes: 1_000_000,
-      maximumResultBytes: 100_000,
-    },
-    text: {
-      initialRules: [
-        {
-          id: "privacy",
-          applies: "both",
-          text: "Protect the owner's private information.",
-          guidance: "Check before sharing private information.",
-          feedback: { text: "Keep private information private." },
-          ...(action === undefined ? {} : { action }),
+    provider,
+    source: {
+      policy: {
+        format: "org.social-harness/message-policy/v2",
+        facts: [],
+        text: {
+          fixedRules: [],
+          initialRules: [
+            {
+              id: "privacy",
+              applies: "both",
+              text: "Protect the owner's private information.",
+              guidance: "Check before sharing private information.",
+              feedback: "Keep private information private.",
+              ...(action === undefined ? {} : { action }),
+            },
+          ],
         },
-      ],
-      provider,
-      providerSettings: {
-        minimumProbability: 0.8,
-        maximumRequestBytes: 100_000,
-        timeoutMilliseconds: 5_000,
+        textSettings: {
+          minimumProbability: 0.8,
+          maximumRequestBytes: 100_000,
+          timeoutMilliseconds: 5_000,
+        },
+        maximumConcurrentChecks,
       },
     },
   };
@@ -160,7 +164,7 @@ interface Network {
 }
 /** How a harness opens. */
 interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
-  readonly policy?: ComposedMessagePolicy;
+  readonly policy?: TestPolicy;
   /** The contracts the agent starts with. */
   readonly contracts?: readonly CompiledContract[];
   readonly decorateFirewall?: (firewall: Policy) => Policy;
@@ -235,9 +239,12 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
       ),
     );
     const services = yield* Layer.build(
-      Firewall.layer(agentKey, options.policy, options.contracts).pipe(
-        Layer.provideMerge(identity),
-      ),
+      Firewall.layer(
+        agentKey,
+        options.policy?.source,
+        options.contracts,
+        options.policy?.provider,
+      ).pipe(Layer.provideMerge(identity)),
     );
     const firewall = Context.get(services, Firewall);
     const provided =

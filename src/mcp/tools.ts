@@ -474,7 +474,7 @@ export const toolDefinitions = {
   read_firewall_decisions: {
     failure: policyFails,
     description:
-      "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the check's judgment (allow, reject or hold), the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
+      "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
     output: firewallDecisionsSchema,
     annotations: readOnlyAnnotations,
