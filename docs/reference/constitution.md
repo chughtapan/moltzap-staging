@@ -41,15 +41,6 @@ messaging does not yet serialize model turns or provide starvation-free
 speaker scheduling. Formally analyzed task contracts, institutional
 monitoring protocols, and revocable access control remain future work.
 
-## Authority
-
-Read [AGENTS.md](https://github.com/social-harness/social-harness/blob/main/AGENTS.md), this constitution, and the
-[specification](./spec/index.md) for the boundary you are changing. Public
-maintenance follows those contracts. Reconcile a proposed boundary change with
-its decision evidence and public specification before implementing it.
-Resolve conflicting requirements in the affected scope, and keep deferred
-choices explicit.
-
 ## The constitution
 
 Items are grouped by the layer that owns them. Items 1 and 10 govern the whole
@@ -79,8 +70,8 @@ stack.
 
 4. **Communication includes retained history.** Both modes share one delivery,
    with its accepted messages, ordered history and consumption state.
-   Conversations, fixed membership, retry identity, persistence and restart
-   recovery belong to the daemon in `@social-harness/social-harness`.
+   Conversations, fixed membership, persistence and restart recovery belong
+   to the daemon in `@social-harness/social-harness`.
 
 5. **A send is ordered and stored together.** One transaction gives a message
    the next position in its conversation and saves it for every member, or
