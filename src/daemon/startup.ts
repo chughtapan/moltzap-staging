@@ -117,7 +117,7 @@ export const runDaemon = Effect.gen(function* () {
     ).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
         refused(
-          "The OAuth issuer did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.",
+          `The OAuth issuer ${settings.authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
         ),
       ),
     );
