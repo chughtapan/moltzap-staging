@@ -21,7 +21,11 @@ import {
 import { Effect, Schema } from "effect";
 import { expect, it } from "vitest";
 import { send } from "../agent-fixture.js";
-import { sharedDaemon, type SignedIn } from "../daemon/daemon-fixture.js";
+import {
+  SERVER_AGENT_OWNER,
+  sharedDaemon,
+  type SignedIn,
+} from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { callTool as call } from "../tool-call.js";
 import {
@@ -152,9 +156,9 @@ it(
 
 const serverOwnsNorms = Effect.gen(function* () {
   const daemon = yield* normsDaemon({
-    serverAgentName: "norms-server",
+    serverAgent: { name: "norms-server", subject: SERVER_AGENT_OWNER },
   });
-  const server = yield* daemon.signIn(daemon.serverAgentBearer);
+  const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
   const client = yield* daemon.signInAs("client");
 
   const serverNorms = yield* call(server.connection.mcp, {

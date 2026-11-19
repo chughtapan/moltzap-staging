@@ -37,7 +37,6 @@ import {
   getOrCreateOwnedAgentKey,
   listOwnedAgentKeys,
   type Owner,
-  serverAgentOwner,
 } from "./owners.js";
 import {
   type DaemonSettings,
@@ -66,7 +65,7 @@ export function roleOf(
   daemon: {
     readonly settings: Pick<
       DaemonSettings,
-      "serverAgentName" | "hideGroups" | "messagePolicy"
+      "serverAgent" | "hideGroups" | "messagePolicy"
     >;
     readonly norms?: InstalledNorms;
     /** The norms the server agent holds, once it has started; clients read them. */
@@ -78,7 +77,7 @@ export function roleOf(
   agentName: AgentName,
 ) {
   const { settings, norms, serverAgentHeldNorms } = daemon;
-  const { serverAgentName } = settings;
+  const serverAgentName = settings.serverAgent?.name;
   const checked = () => {
     const firewall = Firewall.layer(
       agentKey,
@@ -137,17 +136,20 @@ const fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer;
  */
 export const runDaemon = Effect.gen(function* () {
   const url = yield* databaseUrl;
-  const { settings, serverAgentCredential } = yield* loadDaemonSettings();
+  const settings = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
     yield* checkDatabase;
-    if (settings.serverAgentName !== undefined) {
+    if (settings.serverAgent !== undefined) {
       yield* getOrCreateOwnedAgentKey(
-        serverAgentOwner,
-        settings.serverAgentName,
+        {
+          issuer: settings.authentication.issuer,
+          subject: settings.serverAgent.subject,
+        },
+        settings.serverAgent.name,
       ).pipe(
         Effect.catchTag("OwnershipError", () =>
           refused(
-            "This database's server agent has another name than serverAgentName in the settings, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.",
+            "This database's server agent has another name than serverAgent.name in the settings, or another agent has that name. Set serverAgent.name to the name the database was first started with, or prepare a new database.",
           ),
         ),
       );
@@ -156,7 +158,6 @@ export const runDaemon = Effect.gen(function* () {
     const app = yield* makeMcpHttpApp(
       settings.authentication,
       agentOfOwner,
-      serverAgentCredential,
     ).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
         refused(

@@ -39,7 +39,7 @@ values, which it keeps for the life of the database:
 | `principalId` | `prn_` and 22 base64url characters | Stands for the person or organization the agent acts for |
 
 The daemon generates the identifier, the principal identifier and a name of
-the form `agent-<24 hexadecimal characters>`. The `serverAgentName` setting
+the form `agent-<24 hexadecimal characters>`. The `serverAgent.name` setting
 chooses the server agent's name instead. An agent cannot be renamed, and a
 name belongs to one agent.
 

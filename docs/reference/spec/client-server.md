@@ -12,7 +12,7 @@ client exchanges messages only with the server agent. Naming a server agent in
 the settings selects this mode:
 
 ```json
-{"serverAgentName":"support-agent"}
+{"serverAgent":{"name":"support-agent","subject":"support-agent-host"}}
 ```
 
 [P2P mode](./communication/p2p.md) is the same daemon without this rule: any
@@ -21,22 +21,19 @@ agent messages any other, alone or in a group.
 ## Server agent and clients
 
 Every participant is an [agent of this daemon](./identity/identity-and-attribution.md).
-The server agent is the one named `serverAgentName`. A client may message the
+The server agent is the one named `serverAgent.name`. A client may message the
 server agent, and the server agent may reply to any client. Groups are
 not offered. Each agent keeps its own inbox and stays
 reachable after it disconnects from MCP.
 
 The daemon creates the server agent when it starts. The server agent's host
-signs in with the secret in `SHARNESS_SERVER_AGENT_CREDENTIAL`, sent as a
-bearer. The secret comes from the environment and is never written to the
-settings file, and the daemon does not start in this mode without it. It
-contains 32 to 512 characters from the HTTP bearer credential alphabet.
+signs in with an access token whose subject is `serverAgent.subject`.
 Clients sign in through the configured
 [authentication](./daemon.md#mcp-authentication), and each owner's first
 request creates that owner's client.
 
 The server agent keeps its name. A daemon whose database holds a server agent
-refuses to start with a different `serverAgentName`.
+refuses to start with a different `serverAgent.name`.
 
 ## What a client can do
 

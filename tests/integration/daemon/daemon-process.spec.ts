@@ -13,7 +13,12 @@ import {
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
 import { callTool } from "../tool-call.js";
-import { sharedDaemon, type SignedIn, stopProcess } from "./daemon-fixture.js";
+import {
+  SERVER_AGENT_OWNER,
+  sharedDaemon,
+  type SignedIn,
+  stopProcess,
+} from "./daemon-fixture.js";
 
 /** Each trace starts one daemon, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
@@ -46,7 +51,7 @@ const receivedOrder = (participant: Participant, count: number) =>
   );
 
 /** The settings a refused start tells the operator to change. */
-const serverNameSetting = "serverAgentName";
+const serverNameSetting = "serverAgent.name";
 
 const greeting = "hello from the first owner";
 const reply = "reply from the second owner";
@@ -251,7 +256,9 @@ it(
   "refuses another server agent name on a database started with one, naming the setting",
   processTrace(
     Effect.gen(function* () {
-      const named = (name: string) => ({ [serverNameSetting]: name });
+      const named = (name: string) => ({
+        serverAgent: { name, subject: SERVER_AGENT_OWNER },
+      });
       const daemon = yield* sharedDaemon({ settings: named("front-desk") });
       yield* stopProcess(yield* daemon.start());
 

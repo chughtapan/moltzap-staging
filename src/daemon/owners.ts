@@ -11,12 +11,6 @@ export interface Owner {
   readonly subject: string;
 }
 
-/** The owner of the server agent, which signs in with the daemon's own credential. */
-export const serverAgentOwner = {
-  issuer: "urn:social-harness:server-agent",
-  subject: "owner",
-};
-
 const cardRow = Schema.Struct({
   agent_key: Schema.UUID,
   agent_id: AgentId,

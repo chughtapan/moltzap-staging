@@ -11,6 +11,7 @@ import {
   type Daemon,
   type DaemonOptions,
   ProcessTestError,
+  SERVER_AGENT_OWNER,
   sharedDaemon,
   type SignedIn,
 } from "../daemon/daemon-fixture.js";
@@ -260,9 +261,11 @@ export const acquirePeers = acquireScenario({}, (daemon) =>
 export const acquireGuardedServer = acquireScenario(
   {
     firewall: true,
-    settings: { serverAgentName: "openclaw-host" },
+    settings: {
+      serverAgent: { name: "openclaw-host", subject: SERVER_AGENT_OWNER },
+    },
   },
-  (daemon) => daemon.signIn(daemon.serverAgentBearer),
+  (daemon) => daemon.signInAs(SERVER_AGENT_OWNER),
 );
 
 /** Loads the real plugin and validates its host-facing registration hooks. */

@@ -12,8 +12,8 @@
  * - `startupFailure(environment?)`: runs a process that must exit before it
  *   listens, and returns its exit code and output.
  * - `configure(changes)`: changes the settings the next start reads.
- * - `bearer(owner)` and `serverAgentBearer`: what the host of a named owner,
- *   or of the server agent in client/server mode, presents.
+ * - `bearer(owner)`: what the host of a named owner presents. The owner
+ *   `SERVER_AGENT_OWNER` is the server agent's in client/server mode.
  * - `signIn(bearer)` and `signInAs(owner)`: an MCP connection, and the agent
  *   `status` reports for it.
  *
@@ -50,7 +50,6 @@ import {
   type Scope,
 } from "effect";
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
@@ -67,6 +66,9 @@ export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
   readonly cause?: unknown;
 }> {}
 
+/** The owner whose token signs the server agent in, as the `serverAgent` setting names it. */
+export const SERVER_AGENT_OWNER = "server-agent-owner";
+
 /** A child process and everything it has printed. */
 export interface RunningProcess {
   readonly child: ChildProcess;
@@ -76,7 +78,7 @@ export interface RunningProcess {
 /** What `sharedDaemon` prepares differently from its defaults. */
 export interface DaemonOptions {
   /**
-   * Settings that replace the fixture's: `serverAgentName` for client/server
+   * Settings that replace the fixture's: `serverAgent` for client/server
    * mode, a message policy, norms.
    */
   readonly settings?: Readonly<Record<string, unknown>>;
@@ -119,7 +121,6 @@ export interface Daemon {
   readonly bearer: (
     owner: string,
   ) => Effect.Effect<Redacted.Redacted, ProcessTestError>;
-  readonly serverAgentBearer: Redacted.Redacted;
   readonly signIn: (
     bearer: Redacted.Redacted,
   ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
@@ -413,14 +414,10 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   const port = yield* reservePort;
   const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
   const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
-  const serverAgentBearer = Redacted.make(
-    randomBytes(32).toString("base64url"),
-  );
   const database = yield* openTestDatabase();
   const restrictedUrl = yield* restrictedLogin(database);
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
-    SHARNESS_SERVER_AGENT_CREDENTIAL: Redacted.value(serverAgentBearer),
     SHARNESS_DATABASE_URL: Redacted.value(restrictedUrl),
   };
   const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
@@ -470,7 +467,6 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
       startupFailure(spawned(changes), endpoint),
     configure,
     bearer,
-    serverAgentBearer,
     signIn: (presented) => signIn(endpoint, directory, presented),
     signInAs: (owner) =>
       Effect.flatMap(bearer(owner), (presented) =>

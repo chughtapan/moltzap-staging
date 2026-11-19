@@ -24,7 +24,6 @@ Startup requires:
 | --- | --- |
 | `SHARNESS_DATABASE_URL` | A PostgreSQL connection URL (`postgres://user:password@host:5432/database`) |
 | `SHARNESS_CONFIG_FILE` | Path to the private settings file |
-| `SHARNESS_SERVER_AGENT_CREDENTIAL` | In [client/server mode](./client-server.md), the secret the server agent's host signs in with. Required in that mode and unread in P2P mode |
 
 Start the daemon with `sharnessd`. Standard `OTEL_*` environment
 variables configure tracing. A missing or invalid settings file or a database
@@ -39,7 +38,7 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required OAuth configuration, below |
-| `serverAgentName` | Optional name of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
+| `serverAgent` | Optional `name` and `subject` of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
@@ -54,19 +53,19 @@ editable rules in SQL.
 
 The mode decides which agents may message each other.
 
-Without `serverAgentName` the daemon runs in
+Without `serverAgent` the daemon runs in
 [P2P mode](./communication/p2p.md): any agent on the daemon messages any
 other, alone or in a group, and each agent has its own firewall and norms.
 
-With `serverAgentName` it runs in [client/server mode](./client-server.md):
+With `serverAgent` it runs in [client/server mode](./client-server.md):
 every conversation is the server agent and one client, and only the server
 agent has a firewall and norms:
 
 ```json
-{"serverAgentName":"support-agent"}
+{"serverAgent":{"name":"support-agent","subject":"support-agent-host"}}
 ```
 
-`serverAgentName` follows the
+`serverAgent.name` follows the
 [agent name rule](./identity/identity-and-attribution.md#agents).
 
 ### MCP authentication
