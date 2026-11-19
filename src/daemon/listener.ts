@@ -4,15 +4,13 @@
  */
 
 import {
-  FetchHttpClient,
   type HttpApp,
   HttpBody,
-  HttpClient,
-  HttpClientResponse,
   HttpServerRequest,
   HttpServerResponse,
 } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
+import { discoverAuthorizationServerMetadata } from "@modelcontextprotocol/client";
 import {
   bearerAuthChallengeResponse,
   getOAuthProtectedResourceMetadataUrl,
@@ -24,7 +22,7 @@ import {
   originValidationResponse,
   verifyBearerToken,
 } from "@modelcontextprotocol/server";
-import { Data, Effect, Match, Schema, type Scope, Stream } from "effect";
+import { Data, Effect, Match, type Scope, Stream } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
@@ -47,7 +45,7 @@ const invalidToken = new OAuthError(
 /** Request admission uses the validated authentication settings without translating them. */
 type McpAuthentication = DaemonSettings["authentication"];
 
-/** The issuer's metadata could not be read, or names another issuer. */
+/** The issuer's metadata could not be read, names another issuer or names no key set. */
 class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
 
 /** The running agent of an owner: its tools and its Events calls. */
@@ -68,7 +66,13 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
   E extends { readonly _tag: string },
 >(authentication: McpAuthentication, agentOfOwner: AgentOfOwner<E>) {
   const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
-  const issuer = yield* issuerMetadataOf(authentication);
+  const issuer = yield* Effect.tryPromise({
+    try: () => discoverAuthorizationServerMetadata(authentication.issuer),
+    catch: () => new AuthenticationRefused(),
+  });
+  if (typeof issuer?.jwks_uri !== "string") {
+    return yield* new AuthenticationRefused();
+  }
   const hostnames = [authentication.resource.hostname];
   const discovery = {
     oauthMetadata: issuer,
@@ -76,7 +80,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
     scopesSupported: [authentication.scope],
   };
   const bearer = {
-    verifier: tokenVerifier(authentication, issuer.jwks_uri),
+    verifier: tokenVerifier(authentication, new URL(issuer.jwks_uri)),
     requiredScopes: [authentication.scope],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(
       authentication.resource,
@@ -198,44 +202,4 @@ function tokenVerifier(
         Effect.runPromise,
       ),
   };
-}
-
-/** The issuer's metadata, which the daemon also serves as its authorization-server document. */
-const issuerMetadata = Schema.Struct(
-  {
-    issuer: Schema.String,
-    jwks_uri: Schema.URL,
-    authorization_endpoint: Schema.String,
-    token_endpoint: Schema.String,
-    response_types_supported: Schema.mutable(Schema.Array(Schema.String)),
-  },
-  Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-);
-
-/** Reads the configured issuer's metadata, which must name that issuer, before the listener opens. */
-function issuerMetadataOf(oauth: McpAuthentication) {
-  return HttpClient.get(
-    new URL(
-      `${oauth.issuer.replace(/\/$/u, "")}/.well-known/openid-configuration`,
-    ),
-  ).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(issuerMetadata)),
-    Effect.filterOrFail(
-      (metadata) => metadata.issuer === oauth.issuer,
-      () => new AuthenticationRefused(),
-    ),
-    Effect.timeoutFail({
-      duration: "10 seconds",
-      onTimeout: () => new AuthenticationRefused(),
-    }),
-    Effect.catchTags({
-      RequestError: () => Effect.fail(new AuthenticationRefused()),
-      ResponseError: () => Effect.fail(new AuthenticationRefused()),
-      ParseError: () => Effect.fail(new AuthenticationRefused()),
-    }),
-    Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-    Effect.provide(FetchHttpClient.layer),
-    Effect.scoped,
-  );
 }

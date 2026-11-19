@@ -39,7 +39,7 @@ export const issuerFixture = Effect.fn("issuerFixture")(function* (
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       return yield* HttpServerResponse.json(
-        request.url === "/.well-known/openid-configuration"
+        request.url.startsWith("/.well-known/")
           ? {
               issuer,
               jwks_uri: `${issuer}jwks`,
