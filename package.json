@@ -41,7 +41,8 @@
     }
   },
   "bin": {
-    "sharnessd": "./dist/main.js"
+    "sharnessd": "./dist/main.js",
+    "sharness-mcp": "./dist/call-tool.js"
   },
   "scripts": {
     "build": "nx run-many -t build",
@@ -81,13 +82,12 @@
         ]
       },
       "lint": {
-        "command": "eslint src '*.ts' 'images/*.ts' 'scripts/**/*.ts' --cache --max-warnings=0",
+        "command": "eslint src '*.ts' 'scripts/**/*.ts' --cache --max-warnings=0",
         "inputs": [
           "default",
           "^production",
           "lintConfiguration",
           "{workspaceRoot}/*.ts",
-          "{workspaceRoot}/images/*.ts",
           "{workspaceRoot}/scripts/**/*.ts"
         ]
       },

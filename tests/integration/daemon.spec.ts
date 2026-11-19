@@ -1,4 +1,4 @@
-/** @file How the `sharnessd` binary starts and refuses to start, what it keeps across a restart, and how the operator script reaches it. */
+/** @file How the `sharnessd` binary starts and refuses to start, what it keeps across a restart, and how the `sharness-mcp` command reaches it. */
 
 import { FileSystem, HttpClient } from "@effect/platform";
 import { NodeContext, NodeHttpClient } from "@effect/platform-node";
@@ -36,8 +36,7 @@ import {
 } from "./daemon-fixture.js";
 
 const BINARY = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
-const CLI = fileURLToPath(new URL("../../images/mcp.ts", import.meta.url));
-const TEST_DIRECTORY = fileURLToPath(new URL(".cache/", import.meta.url));
+const CLI = fileURLToPath(new URL("../../dist/call-tool.js", import.meta.url));
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";
 const SECRET = "secret-path-value";
 const AGENT_UNAVAILABLE = 503;
@@ -255,35 +254,21 @@ it(
   PROCESS_TEST_TIMEOUT_MS,
 );
 
-/** Runs a copy of the script, which resolves the integration package's installed public dependencies. */
+/** Runs the built `sharness-mcp` command against one daemon as the owner of one credential. */
 function operator(
   target: { readonly endpoint: URL; readonly credentialFile: string },
   args: readonly string[],
 ) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(TEST_DIRECTORY, { recursive: true });
-      const directory = yield* fs.makeTempDirectoryScoped({
-        directory: TEST_DIRECTORY,
-        prefix: ".operator-cli-",
-      });
-      const script = join(directory, "mcp.ts");
-      yield* fs.copyFile(CLI, script);
-      return yield* runProcess(process.execPath, [script, ...args], {
-        cwd: directory,
-        env: {
-          SHARNESS_MCP_URL: target.endpoint.href,
-          SHARNESS_MCP_CREDENTIAL_FILE: target.credentialFile,
-          NODE_PATH: "",
-        },
-      });
-    }),
-  ).pipe(Effect.provide(NodeContext.layer));
+  return runProcess(process.execPath, [CLI, ...args], {
+    env: {
+      SHARNESS_MCP_URL: target.endpoint.href,
+      SHARNESS_MCP_CREDENTIAL_FILE: target.credentialFile,
+    },
+  }).pipe(Effect.provide(NodeContext.layer));
 }
 
 it(
-  "lets the operator script report the agent of the owner whose credential it reads, and refuses to send one to an HTTP endpoint named by DNS",
+  "lets the sharness-mcp command report the agent of the owner whose credential it reads, and refuses to send one to an HTTP endpoint named by DNS",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();

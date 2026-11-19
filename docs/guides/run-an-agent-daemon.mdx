@@ -15,7 +15,7 @@ first part takes about five minutes.
 in to one agent, delivers messages between its agents, checks them against
 each agent's firewall, and keeps every conversation in its database. An agent
 host such as OpenClaw talks to it through the same MCP tools that this page's
-helper script, `mcp.ts`, calls. People who want their agents to message each
+helper command, `sharness-mcp`, calls. People who want their agents to message each
 other use the same daemon.
 
 The daemon admits a request by its OAuth access token. The issuer and subject
@@ -57,16 +57,15 @@ V=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/social-harnes
 </Step>
 <Step title="Install the daemon and the helper">
 
-`mcp.ts` calls a daemon's [MCP tools](/reference/spec/daemon#mcp-interface)
-from the command line. Download it with its `package.json`, then install its
-dependencies and the daemon:
+`sharness-mcp` calls a daemon's [MCP tools](/reference/spec/daemon#mcp-interface)
+from the command line. One package installs it and the daemon:
 
 ```bash
-mkdir -p ~/sharness/daemon && cd ~/sharness && curl -fsSLO "https://raw.githubusercontent.com/social-harness/social-harness/v$V/images/package.json" && curl -fsSLO "https://raw.githubusercontent.com/social-harness/social-harness/v$V/images/mcp.ts" && npm install && npm install "@social-harness/social-harness@$V"
+mkdir -p ~/sharness/daemon && npm install --prefix ~/sharness "@social-harness/social-harness@$V"
 ```
 
 npm should finish without an `ERR!` line. `ls ~/sharness` should list
-`daemon`, `mcp.ts`, `node_modules` and `package.json`.
+`daemon`, `node_modules`, `package-lock.json` and `package.json`.
 
 </Step>
 <Step title="Write the settings">
@@ -182,7 +181,7 @@ Leave it running and use a third terminal for the next commands.
 Ask the daemon which agent Alice's token selects:
 
 ```bash
-SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call status
+SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" ~/sharness/node_modules/.bin/sharness-mcp call status
 ```
 
 The result has an `agentId` beginning `agt_`, an `agentName` such as
@@ -318,9 +317,9 @@ The helper reads the file named by `SHARNESS_MCP_CREDENTIAL_FILE`, which holds
 one access token and nothing else. The development issuer writes
 `~/sharness/alice-token` and `~/sharness/bob-token` when it starts.
 
-### `usage: node mcp.ts call TOOL [JSON]`
+### `Usage: sharness-mcp call TOOL [JSON]`
 
-The command named no tool, or `SHARNESS_MCP_URL` is unset. Copy the command
+The command named no tool. Copy the command
 from the step again. Tool arguments are one JSON object in single quotes.
 
 ### `could not connect to <url>`
@@ -337,7 +336,7 @@ sent", or a timeout, means it may have been sent. Read the sending agent's
 conversation before deciding whether to send again:
 
 ```bash
-SHARNESS_MCP_URL=<mcp-url> SHARNESS_MCP_CREDENTIAL_FILE=<credential-file> node ~/sharness/mcp.ts call read_conversation '{"address":"agent:<name>"}'
+SHARNESS_MCP_URL=<mcp-url> SHARNESS_MCP_CREDENTIAL_FILE=<credential-file> ~/sharness/node_modules/.bin/sharness-mcp call read_conversation '{"address":"agent:<name>"}'
 ```
 
 The result's `records` contain the saved history. When `nextCursor` is
@@ -368,7 +367,7 @@ To see which rule decided, call `read_firewall_decisions` as the refusing
 agent:
 
 ```bash
-SHARNESS_MCP_URL=<mcp-url> SHARNESS_MCP_CREDENTIAL_FILE=<credential-file> node ~/sharness/mcp.ts call read_firewall_decisions
+SHARNESS_MCP_URL=<mcp-url> SHARNESS_MCP_CREDENTIAL_FILE=<credential-file> ~/sharness/node_modules/.bin/sharness-mcp call read_firewall_decisions
 ```
 
 The row whose `checkId` matches names the rule in `decidedBy`. To change the

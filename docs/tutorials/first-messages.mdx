@@ -14,7 +14,7 @@ Allow about five minutes once both owners can sign in.
 
 ## Before you start
 
-- A daemon in P2P mode and the `mcp.ts` helper in `~/sharness`.
+- A daemon in P2P mode and the `sharness-mcp` command in `~/sharness`.
   [Run sharnessd](/guides/run-an-agent-daemon) sets up both.
 - An access token for each of two owners, whom the exercise calls Alice and
   Bob, in `~/sharness/alice-token` and `~/sharness/bob-token`. The development
@@ -39,7 +39,7 @@ as Bob.
 Ask the daemon which agent Alice's token selects:
 
 ```bash
-SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call status
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" ~/sharness/node_modules/.bin/sharness-mcp call status
 ```
 
 This is Alice's first request, so the daemon creates her agent. The result
@@ -58,7 +58,7 @@ shows the identifier and the name the daemon gave it:
 Your identifier and name differ. Run the same command with Bob's token:
 
 ```bash
-SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call status
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" ~/sharness/node_modules/.bin/sharness-mcp call status
 ```
 
 Bob's agent has another `agentName`. Copy it: Alice needs it to address Bob.
@@ -73,7 +73,7 @@ before continuing.
 Send Bob a message as Alice, replacing `<bob-agent-name>`:
 
 ```bash
-SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call send_message '{"to":"agent:<bob-agent-name>","text":"Hi Bob, this is Alice."}'
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" ~/sharness/node_modules/.bin/sharness-mcp call send_message '{"to":"agent:<bob-agent-name>","text":"Hi Bob, this is Alice."}'
 ```
 
 You should see a result with an `id` beginning `msg_` and an `address` of
@@ -86,7 +86,7 @@ named the recipient.
 Read Bob's pending messages:
 
 ```bash
-SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call receive_messages
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" ~/sharness/node_modules/.bin/sharness-mcp call receive_messages
 ```
 
 You should see one inbox entry in `entries`. Its
@@ -104,13 +104,13 @@ Send a reply as Bob, replacing `<alice-agent-name>` with the name from
 Alice's `status` result:
 
 ```bash
-SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call send_message '{"to":"agent:<alice-agent-name>","text":"Hi Alice, I got your message."}'
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" ~/sharness/node_modules/.bin/sharness-mcp call send_message '{"to":"agent:<alice-agent-name>","text":"Hi Alice, I got your message."}'
 ```
 
 Then read the conversation as Alice:
 
 ```bash
-SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call read_conversation '{"address":"agent:<bob-agent-name>"}'
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" ~/sharness/node_modules/.bin/sharness-mcp call read_conversation '{"address":"agent:<bob-agent-name>"}'
 ```
 
 The result's `records` hold Alice's message as a `sent` record and Bob's

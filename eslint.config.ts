@@ -1,7 +1,7 @@
 /**
  * @file The repository's one ESLint flat configuration. Each section names
- * the paths it covers: the root package's `src/`, the root modules with the
- * `images/` helper and `scripts/`, each plugin, the agent-image tooling and
+ * the paths it covers: the root package's `src/`, the root modules with
+ * `scripts/`, each plugin, the agent-image tooling and
  * the integration tests.
  */
 import type { Rule } from "eslint";
@@ -146,14 +146,11 @@ function packageSections() {
 }
 
 /**
- * The strict preset on the root modules, the `images/` helper, and the
- * Node-run scripts under `scripts/`.
+ * The strict preset on the root modules and the Node-run scripts under
+ * `scripts/`.
  */
 function rootSection() {
-  return makeStrictBlock(
-    ["*.ts", "images/*.ts", "scripts/**/*.ts"],
-    makeStrictRules(),
-  );
+  return makeStrictBlock(["*.ts", "scripts/**/*.ts"], makeStrictRules());
 }
 
 /**

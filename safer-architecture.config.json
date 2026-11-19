@@ -19,6 +19,10 @@
     {
       "path": "src/main.ts",
       "reason": "Where the sharnessd process starts"
+    },
+    {
+      "path": "src/call-tool.ts",
+      "reason": "Where the sharness-mcp process starts"
     }
   ],
   "domains": [
@@ -188,7 +192,7 @@
       "reason": "Test databases and an OAuth issuer fixture for suites outside the package"
     }
   ],
-  "maxFolderChildren": 12,
+  "maxFolderChildren": 13,
   "maxPublicExports": 25,
   "disabledRules": [
     {

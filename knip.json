@@ -6,8 +6,7 @@
         "src/**/*.spec.ts",
         "vitest*.config.ts",
         "scripts/copy-social-harness-skills.ts",
-        "scripts/test-*-package.ts",
-        "images/*.ts"
+        "scripts/test-*-package.ts"
       ],
       "project": [
         "src/**/*.ts",
