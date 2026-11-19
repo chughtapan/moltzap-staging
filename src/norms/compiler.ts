@@ -6,13 +6,13 @@
 
 import { Data, Effect, Either, Schema } from "effect";
 import { createHash } from "node:crypto";
-import { RequestedSchema } from "../communication/index.js";
 import { readSExpressions, type SExpression } from "../encoding.js";
 import {
   type CompiledContract,
   compiledContractSchema,
   type MessageForm,
-} from "../firewall/index.js";
+  RequestedSchema,
+} from "../firewall/contract.js";
 
 /** Source diagnostics identify a declaration without echoing private document text. */
 class NormDocumentError extends Data.TaggedError("NormDocumentError")<{

@@ -1,7 +1,8 @@
 /** @file Checks one captured message against text rules and the evidence the check may read. */
 
 import { Cause, Data, Effect, Either, ParseResult, Schema } from "effect";
-import type { Message, RequestedSchema } from "../communication/index.js";
+import type { Message } from "../communication/index.js";
+import type { RequestedSchema } from "./forms.js";
 import type {
   Direction,
   FirewallRefusalReason,
