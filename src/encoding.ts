@@ -145,20 +145,6 @@ export const plainUrl = (
     : undefined;
 };
 
-/** Formats issues in reported order as `field.path: expectation`, joined with semicolons. */
-export function issuesText(
-  issues: ReadonlyArray<{
-    readonly path: readonly PropertyKey[];
-    readonly message: string;
-  }>,
-): string {
-  return issues
-    .map(({ path, message }) =>
-      path.length === 0 ? message : `${path.map(String).join(".")}: ${message}`,
-    )
-    .join("; ");
-}
-
 /**
  * One value of parenthesized data, as norm documents and acts are written: a
  * symbol, a quoted string or a list. It is inert: nothing in it is evaluated.

@@ -30,18 +30,20 @@ import {
   type IncomingDecision,
 } from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
+import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 import {
   addressedAgent,
   addressOf,
   type AgentAddress,
+  type Conversations,
   HistoryError,
   type HistoryRecord,
+  type HistoryRecordsPage,
+  type InboxPage,
   SendError,
   type SendRequest,
   type SendResult,
-  type ToolResult,
-} from "../mcp/tools.js";
-import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
+} from "./values.js";
 
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
@@ -65,19 +67,16 @@ interface SocialHarnessService {
    */
   readonly receive: (request: {
     readonly cursor?: string;
-  }) => Effect.Effect<ToolResult<"receive_messages">>;
+  }) => Effect.Effect<InboxPage>;
   /** The address of every conversation of the agent, in order. */
-  readonly listConversations: () => Effect.Effect<
-    ToolResult<"list_conversations">,
-    HistoryError
-  >;
+  readonly listConversations: () => Effect.Effect<Conversations, HistoryError>;
   /**
    * A page of a conversation's records, oldest first, after the cursor an
    * earlier page returned. Rule edits leave stored inbox entries as they are.
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
+  ) => Effect.Effect<HistoryRecordsPage, HistoryError>;
 }
 
 /**

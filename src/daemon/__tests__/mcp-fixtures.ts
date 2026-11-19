@@ -6,19 +6,15 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { type Context, Effect, Redacted, Ref } from "effect";
+import type { AgentName } from "../../identity.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { Firewall } from "../../firewall/service.js";
-import { type AgentName, Identity } from "../../identity.js";
-import { AgentAddress } from "../../mcp/tools.js";
 import { openTestDatabase } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
 import { issuerFixture, requiredScope } from "../testing.js";
-import {
-  clientTools,
-  makeInboxEvents,
-  serverAgentTools,
-} from "../tool-server.js";
+import { makeInboxEvents } from "../tool-server.js";
+import { AgentAddress } from "../values.js";
 
 /** The Host of the fixture's resource, unless a test names another resource. */
 const mcpTestHeaders = { host: "127.0.0.1" };
@@ -40,10 +36,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
 ) {
   const database = yield* openTestDatabase();
   const card = testAgentCard("alice");
-  const identity = Identity.of({
-    me: card,
-    resolve: () => Effect.dieMessage("Unexpected identity resolution"),
-  });
   const harness = SocialHarness.of({
     send: () => Effect.dieMessage("Unexpected send"),
     receive: () => Effect.succeed({ entries: [], nextCursor: "0" }),
@@ -58,17 +50,16 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readContracts: () => Effect.succeed([]),
     readDecisions: unused,
   });
-  const tools =
-    options.serverAgentName === undefined
-      ? serverAgentTools(false)
-      : clientTools(AgentAddress.make(`agent:${options.serverAgentName}`));
   const agent = {
     agentKey: card.agentName,
-    tools: yield* tools().pipe(
-      Effect.provideService(SocialHarness, harness),
-      Effect.provideService(Identity, identity),
-      Effect.provideService(Firewall, firewall),
-    ),
+    card,
+    harness,
+    firewall,
+    serverAgent:
+      options.serverAgentName === undefined
+        ? undefined
+        : AgentAddress.make(`agent:${options.serverAgentName}`),
+    norms: undefined,
     events: yield* makeInboxEvents.pipe(
       Effect.provideService(SqlClient.SqlClient, database.sql),
     ),

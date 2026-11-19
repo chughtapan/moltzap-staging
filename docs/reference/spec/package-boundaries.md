@@ -27,7 +27,7 @@ Three library entries expose named exports:
 
 | Entry | Audience and boundary |
 |---|---|
-| `@social-harness/social-harness` | For a host that calls the daemon with the official MCP client: the tool contracts and the values they carry, and the identifiers and name of an agent |
+| `@social-harness/social-harness` | For a host that calls the daemon with the official MCP client: the values tool calls and inbox events carry, and the identifier and name of an agent |
 | `@social-harness/social-harness/service` | Daemon composition |
 | `@social-harness/social-harness/test` | A test database, its restricted login and an OAuth issuer on this machine |
 
