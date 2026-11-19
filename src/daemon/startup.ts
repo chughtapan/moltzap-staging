@@ -25,11 +25,7 @@ import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
 import { clientToolDefinitions, toolDefinitions } from "../mcp/tools.js";
-import {
-  compiledPolicyEdit,
-  HeldNorms,
-  type InstalledNorms,
-} from "../norms/index.js";
+import { compiledPolicyEdit, HeldNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
@@ -65,9 +61,8 @@ export function roleOf(
   daemon: {
     readonly settings: Pick<
       DaemonSettings,
-      "serverAgent" | "hideGroups" | "messagePolicy"
+      "serverAgent" | "hideGroups" | "messagePolicy" | "norms"
     >;
-    readonly norms?: InstalledNorms;
     /** The norms the server agent holds, once it has started; clients read them. */
     readonly serverAgentHeldNorms: Ref.Ref<
       Option.Option<Context.Tag.Service<typeof HeldNorms>>
@@ -76,7 +71,8 @@ export function roleOf(
   agentKey: string,
   agentName: AgentName,
 ) {
-  const { settings, norms, serverAgentHeldNorms } = daemon;
+  const { settings, serverAgentHeldNorms } = daemon;
+  const { norms } = settings;
   const serverAgentName = settings.serverAgent?.name;
   const checked = () => {
     const firewall = Firewall.layer(
@@ -327,7 +323,6 @@ function runningAgents(settings: DaemonSettings) {
     const sql = yield* SqlClient.SqlClient;
     const daemon = {
       settings,
-      norms: settings.norms,
       serverAgentHeldNorms: yield* Ref.make(
         Option.none<Context.Tag.Service<typeof HeldNorms>>(),
       ),
@@ -395,7 +390,6 @@ function startAgent(
             agentKey,
             card,
             consumers,
-            maximumHistoryRecords: policy?.maximumHistoryRecords,
           }),
         ),
         Layer.provideMerge(

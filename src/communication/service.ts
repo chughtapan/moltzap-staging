@@ -100,8 +100,6 @@ export interface CommunicationSettings {
   /** The key the agent's rows are stored under. */
   readonly agentKey: string;
   readonly card: AgentCard;
-  /** The most messages one newest-first history read may ask for. */
-  readonly maximumHistoryRecords?: number;
   /**
    * The latch each agent's consumer waits on, by agent key. Every agent of a
    * daemon is given the same map, so a send opens its recipients' latches.
@@ -139,7 +137,6 @@ export function restarting(agentKey: string, loop: string) {
 interface HistoryAgent {
   readonly agentKey: string;
   readonly card: AgentCard;
-  readonly maximumHistoryRecords: number;
   readonly session: string;
 }
 interface HistoryWindow {
@@ -321,13 +318,6 @@ function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
     }
     const through = newestStored?.ordinal ?? -1;
     if (query.order === "newest") {
-      if (
-        !Number.isSafeInteger(query.limit) ||
-        query.limit < 1 ||
-        query.limit > agent.maximumHistoryRecords
-      ) {
-        return yield* refused("content-invalid");
-      }
       return {
         conversationId,
         after: -1,
@@ -476,7 +466,6 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
   const history = messageHistory({
     agentKey: settings.agentKey,
     card: settings.card,
-    maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
   });
   const oneConsumer = yield* Effect.makeSemaphore(1);
   return {

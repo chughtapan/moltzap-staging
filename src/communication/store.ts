@@ -18,11 +18,7 @@ export class EndpointStoreError extends Data.TaggedError("EndpointStoreError")<{
 }> {}
 
 /** Closed storage failures that never expose database diagnostics. */
-type EndpointStoreFailure =
-  | "conflict"
-  | "corrupt"
-  | "invalid-input"
-  | "persistence";
+type EndpointStoreFailure = "conflict" | "corrupt" | "persistence";
 
 type CommunicationTables = Record<
   "message_log",
