@@ -73,12 +73,14 @@ interface SocialHarnessService {
   readonly send: (
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | FirewallRefusal>;
-  /** The delivery token of each pending inbox entry. */
-  readonly pendingTokens: Inbox["pendingTokens"];
+  /** The newest read number an inbox entry holds and the one the host has read to. */
+  readonly inboxPosition: Inbox["position"];
   /**
-   * Hands over a page of pending inbox entries and marks each delivered. With
-   * `wait`, a read that finds nothing waits up to that many seconds, and
-   * returns as soon as an entry is pending or empty when the wait ends.
+   * Hands over a page of pending inbox entries in read order. A `cursor` is
+   * the `nextCursor` of an earlier page: it commits the read position there
+   * first, so the entries up to it are not handed over again. With `wait`, a
+   * read that finds nothing waits up to that many seconds, and returns as
+   * soon as an entry is pending or empty when the wait ends.
    */
   readonly receive: (
     request: PaginatedRequest & { readonly wait?: number },
@@ -109,7 +111,7 @@ interface SocialHarnessService {
 
 /**
  * Hosts use this service for identity, messaging and local policy. It stores
- * an inbox entry before notifying of it. A stored entry survives delivery,
+ * an inbox entry before notifying of it. A stored entry survives its reading,
  * policy edits and restart.
  */
 export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
@@ -217,7 +219,7 @@ function makeHarness(settings: HarnessSettings) {
     );
     return SocialHarness.of({
       send: (request) => send(agent, request),
-      pendingTokens: inbox.pendingTokens,
+      inboxPosition: inbox.position,
       receive: (request) => receive(agent, request),
       listConversations: (request = {}) => listConversations(agent, request),
       readHistory: (request) => readHistory(agent, request),
@@ -299,16 +301,15 @@ function outgoingFor(
 
 function receive(
   agent: Agent,
-  { wait, ...request }: PaginatedRequest & { readonly wait?: number },
+  { wait, cursor }: PaginatedRequest & { readonly wait?: number },
 ) {
   return Effect.gen(function* () {
-    const page = yield* wait === undefined
-      ? agent.inbox.listInbox(request)
-      : waitForInbox(agent, request, Duration.seconds(wait));
-    yield* agent.inbox.markDelivered(
-      page.entries.map((entry) => entry.deliveryToken),
-    );
-    return page;
+    if (cursor !== undefined) {
+      yield* agent.inbox.commitPosition(cursor);
+    }
+    return yield* wait === undefined
+      ? agent.inbox.listInbox()
+      : waitForInbox(agent, Duration.seconds(wait));
   }).pipe(
     Effect.catchAll((error) =>
       error._tag === "InboxError" ? Effect.fail(error) : Effect.die(error),
@@ -321,14 +322,10 @@ function receive(
  * until `wait` ends. Subscribing before the first read keeps an entry that
  * becomes pending between that read and the wait from being missed.
  */
-function waitForInbox(
-  agent: Agent,
-  request: PaginatedRequest,
-  wait: Duration.Duration,
-) {
+function waitForInbox(agent: Agent, wait: Duration.Duration) {
   return Effect.gen(function* () {
     const arrivals = yield* PubSub.subscribe(agent.changes);
-    const read = agent.inbox.listInbox(request);
+    const read = agent.inbox.listInbox();
     const first = yield* read;
     if (first.entries.length > 0) {
       return first;

@@ -10,12 +10,7 @@ import {
   PaginatedRequest,
   wellFormedString,
 } from "../communication/index.js";
-import {
-  canonicalIdentifier,
-  compareAscii,
-  exactStruct,
-  isStrictlyAscending,
-} from "../encoding.js";
+import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
 import {
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
@@ -170,23 +165,20 @@ export function addressOf(
     : groupAddressOf(members.map((member) => member.agentName));
 }
 
-/** Identifies one inbox entry: what a host names to mark that entry delivered. */
-export const DeliveryToken = canonicalIdentifier("DeliveryToken", "dlv_", 32);
-/** @useDeclaredType */
-export type DeliveryToken = typeof DeliveryToken.Type;
-
-/** One message as the host reads it. It keeps its delivery token once delivered. */
+/** One message as the host reads it. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
   address: MessageAddress,
   message: Message,
   guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-  deliveryToken: DeliveryToken,
 });
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/** Reading leaves entries pending. Absence of nextCursor ends the page traversal. */
+/**
+ * Pending entries in read order. `nextCursor` is present whenever entries
+ * are: passed to the next read, it commits the read position after them.
+ */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxPage = Schema.Struct({
   ...Page.fields,
@@ -197,10 +189,10 @@ export type InboxPage = typeof InboxPage.Type;
 
 const inboxFailureText = {
   "invalid-cursor":
-    "the cursor is not one this inbox returned; call again without a cursor",
+    "the cursor is not the nextCursor of this inbox's latest page; call again without a cursor",
 } as const;
 
-/** An inbox read rejects a cursor it did not return. */
+/** An inbox read rejects a cursor that is malformed, behind the committed read position or ahead of the newest entry. */
 export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
   reason: Schema.Literal("invalid-cursor"),
 }) {
@@ -417,7 +409,7 @@ export const toolDefinitions = {
   receive_messages: {
     failure: { toData: (error: InboxError) => reasonData(error) },
     description:
-      "Receive pending inbox entries, each with its conversation address, its message and any guidance. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
+      "Receive pending inbox entries in order, each with its conversation address, its message and any guidance. Once you have handled a page, pass its nextCursor as cursor on the next call: the entries up to it are then not returned again. Without cursor the call returns the same pending entries as before. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: receiveMessagesInput,
     output: receiveMessagesOutput,
     annotations: {

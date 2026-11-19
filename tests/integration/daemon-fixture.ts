@@ -54,6 +54,7 @@ import {
   restrictedLogin,
 } from "@social-harness/social-harness/test";
 import {
+  Chunk,
   ConfigProvider,
   Console,
   Data,
@@ -61,6 +62,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  Option,
   Queue,
   Redacted,
   Ref,
@@ -459,16 +461,23 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   return daemon;
 }, Effect.provide(NodeFileSystem.layer));
 
-/** The agent's inbox entries as they arrive. Each read records delivery before its entries reach the test. */
+/** The agent's inbox entries as they arrive, each once: every read commits the page before it. */
 export function inboxStream(connection: McpConnection) {
-  return Stream.repeatEffect(
-    callTool(connection.mcp, { name: "receive_messages", arguments: {} }),
-  ).pipe(
-    Stream.flatMap((page) =>
-      page.entries.length === 0
-        ? Stream.fromEffect(Effect.sleep("50 millis")).pipe(Stream.drain)
-        : Stream.fromIterable(page.entries),
-    ),
+  return Stream.paginateChunkEffect(
+    undefined,
+    Effect.fn(function* (cursor?: string) {
+      const page = yield* callTool(connection.mcp, {
+        name: "receive_messages",
+        arguments: cursor === undefined ? {} : { cursor },
+      });
+      if (page.entries.length === 0) {
+        yield* Effect.sleep("50 millis");
+      }
+      return [
+        Chunk.fromIterable(page.entries),
+        Option.some(page.nextCursor ?? cursor),
+      ];
+    }),
   );
 }
 

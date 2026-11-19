@@ -121,7 +121,7 @@ it(
 );
 
 it(
-  "fails the gateway when the host fails a turn, without replaying the message, and runs the turn in the peer's own session in private mode",
+  "fails the gateway when the host fails a turn, leaving the message pending, and runs the turn in the peer's own session in private mode",
   processTrace(
     Effect.gen(function* () {
       const hosted = yield* startQueuedGateway(yield* acquireServer, {
@@ -144,7 +144,7 @@ it(
           name: "receive_messages",
           arguments: {},
         })).entries,
-      ).toHaveLength(0);
+      ).toHaveLength(1);
     }),
   ),
   300_000,

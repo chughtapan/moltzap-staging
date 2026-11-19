@@ -33,12 +33,12 @@ const rows: Readonly<
   Record<string, Readonly<Record<string, string | number>>>
 > = {
   inbox_entries: {
-    delivery_token: "token",
     address: "agent:alice",
     author: "author",
     message_id: "message",
     status: "unchecked",
   },
+  inbox_positions: { newest: 0, committed: 0 },
   subscriptions: { subscription: "{}" },
   firewall_checks: {
     check_id: "check",

@@ -74,9 +74,9 @@ connect a native host plugin to the daemon, the connection's `consumeInbox`
 hands each inbox entry to a callback, and `sendMessage` calls `send_message`
 once and answers `outcome-unknown` when the daemon gives no readable answer.
 A failed call returns a result marked as an error, whose text is for the model
-and whose structured content names a `reason`. Reading the MCP
-inbox records delivery before host callbacks run. Callback failures stop
-reception; history remains available. Closing the
+and whose structured content names a `reason`. `consumeInbox` commits a page of the MCP
+inbox when it reads the next one, after its callbacks have run. Callback failures stop
+reception, and the next reader is given that page again. Closing the
 connection interrupts active reception and pending callbacks.
 
 `connectFromEnvironment` reads three variables from the host process:

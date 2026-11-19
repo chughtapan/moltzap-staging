@@ -147,8 +147,7 @@ subscription exists, whether it is stalled, and the last error. Correct the
 receiver, then disable and enable the subscription in Dot to resume.
 
 Nothing is lost while delivery is stalled. Entries stay in the inbox, and any
-host with the daemon credential can read them with `receive_messages`, which
-marks the entries it returns as delivered. Running Dot and a native receiver at
+host with the daemon credential can read them with `receive_messages`. Running Dot and a native receiver at
 once can trigger the same entry twice. See the
 [delivery contract](/reference/spec/host/receiving).
 

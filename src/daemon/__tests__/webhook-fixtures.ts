@@ -16,8 +16,6 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { digest } from "../../__tests__/agents.js";
-import { DeliveryToken } from "../../mcp/tools.js";
 import { openTestDatabase } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { INBOX_PENDING_EVENT, makeWebhookEvents } from "../subscriptions.js";
@@ -89,22 +87,8 @@ const callbackResponse = (
     ),
   );
 
-/**
- * The delivery token the scripted inbox entry `byte` carries.
- * @param byte Distinguishes one fixture token from another.
- * @returns A delivery token that differs for each `byte`.
- */
-const token = (byte: number) =>
-  Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", byte));
-
-/**
- * Put the scripted inbox entry `byte` into `store`.
- * @param store The store wake-ups are counted from.
- * @param byte Distinguishes the entry's token.
- * @returns The store's mutation.
- */
-export const enqueue = (store: InboxFixture, byte: number) =>
-  store.save(token(byte));
+/** Puts one more pending entry into `store`, the inbox wake-ups are counted from. */
+export const enqueue = (store: InboxFixture) => store.save;
 
 /**
  * Webhook events over `store` whose callback is scripted: it records each
@@ -161,32 +145,29 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
 export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* () {
   const database = yield* openTestDatabase();
   const sql = database.sql;
-  yield* sql.unsafe("CREATE TABLE callback_fixture (token TEXT PRIMARY KEY)");
+  yield* sql.unsafe("CREATE TABLE callback_fixture (entry SERIAL PRIMARY KEY)");
   const changes = yield* PubSub.unbounded<undefined>();
-  const save = (deliveryToken: DeliveryToken) =>
-    sql`INSERT INTO callback_fixture(token) VALUES (${deliveryToken})`.pipe(
-      Effect.zipRight(PubSub.publish(changes, undefined)),
-      Effect.asVoid,
-    );
-  const pendingTokens = sql<{
-    readonly token: string;
-  }>`SELECT token FROM callback_fixture`.pipe(
-    Effect.map((rows) =>
-      rows.map((row) => Schema.decodeUnknownSync(DeliveryToken)(row.token)),
-    ),
+  const save = sql`INSERT INTO callback_fixture DEFAULT VALUES`.pipe(
+    Effect.zipRight(PubSub.publish(changes, undefined)),
+    Effect.asVoid,
   );
-  const harness = SocialHarness.of({
-    send: () => Effect.dieMessage("Unexpected send"),
-    pendingTokens,
-    receive: () => Effect.dieMessage("Unexpected receive"),
-    listConversations: () => Effect.succeed({ addresses: [] }),
-    readHistory: () => Effect.succeed({ records: [] }),
-    inboxChanged: Stream.fromPubSub(changes),
-  });
   const pending = sql<{
     readonly total: number;
   }>`SELECT COUNT(*)::int AS total FROM callback_fixture`.pipe(
     Effect.map((rows) => ({ pendingCount: rows[0]?.total ?? 0 })),
   );
+  const harness = SocialHarness.of({
+    send: () => Effect.dieMessage("Unexpected send"),
+    inboxPosition: pending.pipe(
+      Effect.map(({ pendingCount }) => ({
+        newest: pendingCount,
+        committed: 0,
+      })),
+    ),
+    receive: () => Effect.dieMessage("Unexpected receive"),
+    listConversations: () => Effect.succeed({ addresses: [] }),
+    readHistory: () => Effect.succeed({ records: [] }),
+    inboxChanged: Stream.fromPubSub(changes),
+  });
   return { ...database, harness, save, pending };
 });

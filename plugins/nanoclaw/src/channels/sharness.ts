@@ -262,8 +262,8 @@ function isGroup(address: MessageAddressInput): boolean {
 
 /**
  * One daemon connection lives from setup until reception ends or teardown completes.
- * Inbox reads record delivery before native callbacks. NanoClaw owns subsequent
- * processing and retry policy.
+ * A page of inbox entries is committed after the native callback has returned
+ * for each. NanoClaw owns subsequent processing and retry policy.
  */
 class HarnessChannelAdapter {
   readonly name = CHANNEL_ID;

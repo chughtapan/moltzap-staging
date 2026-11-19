@@ -53,9 +53,10 @@ export interface McpConnectionSettings {
 }
 
 /**
- * Allows one inbox consumer at a time. Reading marks entries delivered before
- * the callback runs. Callback failure stops reception; saved history retains
- * the entry.
+ * Allows one inbox consumer at a time. A page is committed when the reader
+ * comes back for the next one, after the callback has accepted every entry in
+ * it. Callback failure stops reception; the entries of that page are read
+ * again by the next consumer.
  */
 export interface McpConnection {
   /** The MCP SDK's connected `Client`, which a host calls tools on. */
@@ -227,26 +228,10 @@ function requestNotSent(cause: unknown): boolean {
 }
 
 /**
- * Hands over everything pending. The first read waits for a message when the
- * inbox is empty, so calling this in a loop neither spins nor misses one.
+ * One page of the pending inbox, waiting for a message when it is empty.
+ * `cursor` is the `nextCursor` of the page before it, which the daemon then
+ * does not return again.
  */
-function readPending<E, R>(
-  mcp: Pick<Client, "callTool">,
-  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-): Effect.Effect<void, E | McpReceiveError, R> {
-  return Effect.gen(function* () {
-    let cursor: string | undefined;
-    do {
-      const page = yield* receivePage(mcp, cursor);
-      for (const entry of page.entries) {
-        yield* accept(entry);
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
-  });
-}
-
-/** One page of the pending inbox. A read without a cursor waits for a message when the inbox is empty. */
 function receivePage(mcp: Pick<Client, "callTool">, cursor?: string) {
   const unreadable = () =>
     Effect.fail(new McpReceiveError({ reason: "transport-failed" }));
@@ -254,8 +239,10 @@ function receivePage(mcp: Pick<Client, "callTool">, cursor?: string) {
     mcp.callTool(
       {
         name: "receive_messages",
-        arguments:
-          cursor === undefined ? { wait: MAXIMUM_WAIT_SECONDS } : { cursor },
+        arguments: {
+          wait: MAXIMUM_WAIT_SECONDS,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
       },
       { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
     ),
@@ -297,7 +284,14 @@ function receiveInbox<E, R>(
         ),
         () => Ref.set(receiving, false),
       );
-      return yield* Effect.forever(readPending(mcp, accept));
+      let cursor: string | undefined;
+      while (true) {
+        const page = yield* receivePage(mcp, cursor);
+        for (const entry of page.entries) {
+          yield* accept(entry);
+        }
+        cursor = page.nextCursor ?? cursor;
+      }
     }),
   );
 }

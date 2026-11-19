@@ -2,7 +2,6 @@
 
 import { it } from "@effect/vitest";
 import {
-  Array,
   type Duration,
   Effect,
   PubSub,
@@ -102,11 +101,7 @@ const scenario = <A, E>(
 const reportsPendingCount = (count: number) =>
   scenario(({ store, callback, events }) =>
     Effect.gen(function* () {
-      yield* Effect.forEach(
-        Array.makeBy(count, (index) => index + 1),
-        (byte) => enqueue(store, byte),
-        { concurrency: 1 },
-      );
+      yield* Effect.replicateEffect(enqueue(store), count, { discard: true });
       yield* events.subscribe(subscribeRequest);
       yield* awaitWakeUps(callback, 1);
       expect(decodeWakeUp(wakeUps(callback)[0]?.body).data).toEqual({
@@ -133,7 +128,7 @@ describe("a subscribed callback", () => {
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
           yield* events.subscribe(subscribeRequest);
-          yield* enqueue(store, 1);
+          yield* enqueue(store);
           yield* awaitWakeUps(callback, 1);
           const [post] = wakeUps(callback);
           const signature = createHmac("sha256", Buffer.alloc(32, 1))
@@ -164,9 +159,9 @@ describe("a subscribed callback", () => {
           ...store,
           harness: {
             ...store.harness,
-            pendingTokens: store.harness.pendingTokens.pipe(
-              Effect.tap((tokens) =>
-                tokens.length === 0
+            inboxPosition: store.harness.inboxPosition.pipe(
+              Effect.tap(({ newest }) =>
+                newest === 0
                   ? Effect.void
                   : Ref.getAndSet(signalled, true).pipe(
                       Effect.flatMap((already) =>
@@ -185,7 +180,7 @@ describe("a subscribed callback", () => {
         });
         const events = yield* callback.acquire;
         yield* events.subscribe(subscribeRequest);
-        yield* enqueue(store, 1);
+        yield* enqueue(store);
         yield* awaitWakeUps(callback, 1);
         yield* advance();
         yield* advance();
@@ -206,9 +201,9 @@ describe("a subscribed callback", () => {
     scenario(({ store, callback, events }) =>
       Effect.gen(function* () {
         yield* events.subscribe(subscribeRequest);
-        yield* enqueue(store, 1);
+        yield* enqueue(store);
         yield* awaitWakeUps(callback, 1);
-        yield* enqueue(store, 2);
+        yield* enqueue(store);
         yield* awaitWakeUps(callback, 2);
         const [first, second] = wakeUps(callback);
         expect(second?.headers["webhook-id"]).not.toBe(
@@ -228,7 +223,7 @@ describe("a callback that fails", () => {
         Effect.gen(function* () {
           yield* events.subscribe(subscribeRequest);
           callback.status(unavailable);
-          yield* enqueue(store, 1);
+          yield* enqueue(store);
           yield* awaitWakeUps(callback, 1);
           expect((yield* events.status).lastError).toBe(serverError);
           yield* advance("1 minute");
@@ -252,7 +247,7 @@ describe("a callback that fails", () => {
         Effect.gen(function* () {
           yield* events.subscribe(subscribeRequest);
           callback.status(gone);
-          yield* enqueue(store, 1);
+          yield* enqueue(store);
           yield* awaitWakeUps(callback, 1);
           expect((yield* events.status).stalled).toBe(callbackGone);
           yield* advance("1 minute");
@@ -274,7 +269,7 @@ describe("a callback that fails", () => {
         Effect.gen(function* () {
           yield* events.subscribe(subscribeRequest);
           callback.status(unavailable);
-          yield* enqueue(store, 1);
+          yield* enqueue(store);
           yield* TestClock.adjust("5 minutes").pipe(
             Effect.repeat({
               until: () => wakeUps(callback).length >= 100,
@@ -301,7 +296,7 @@ describe("a callback across restarts and leases", () => {
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
           const granted = yield* events.subscribe(subscribeRequest);
-          yield* enqueue(store, 1);
+          yield* enqueue(store);
           yield* awaitWakeUps(callback, 1);
           const restarted = yield* callback.acquire;
           expect((yield* restarted.status).id).toBe(granted.id);
@@ -317,7 +312,7 @@ describe("a callback across restarts and leases", () => {
         Effect.gen(function* () {
           yield* events.subscribe(subscribeRequest);
           yield* events.unsubscribe(subscribeRequest);
-          yield* enqueue(store, 1);
+          yield* enqueue(store);
           yield* advance();
           expect(wakeUps(callback)).toEqual([]);
           expect((yield* events.status).mode).toBe(notSubscribed);
@@ -329,7 +324,7 @@ describe("a callback across restarts and leases", () => {
           yield* events.subscribe({ ...subscribeRequest, ttlMs: 60_000 });
           yield* awaitWakeUps(callback, 1);
           yield* advance("2 minutes");
-          yield* enqueue(store, 2);
+          yield* enqueue(store);
           yield* advance();
           yield* advance();
           expect(wakeUps(callback)).toHaveLength(1);

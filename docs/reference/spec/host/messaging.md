@@ -73,7 +73,7 @@ repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
 ## Receiving inbox entries
 
 MCP inbox reads
-record delivery under the [receiving contract](./receiving.md), which owns
+follow the [receiving contract](./receiving.md), which owns
 contents, ordering and replay.
 
 ## Reading history
@@ -87,7 +87,7 @@ outside that read. A page holds at most 50 addresses or 50 records. Listing retu
 `invalid-cursor`.
 
 An invalid history page returns no messages. Reading history neither
-marks an inbox entry delivered nor authorizes a send.
+moves the inbox's read position nor authorizes a send.
 
 ## Connection lifetime
 

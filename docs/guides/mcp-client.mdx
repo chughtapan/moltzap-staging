@@ -89,11 +89,11 @@ const result = await client.callTool({ name: "receive_messages", arguments: {} }
 console.log(JSON.stringify(result.structuredContent, null, 2));
 ```
 
-The result contains `entries` and may include `nextCursor`. Each entry supplies its
-conversation `address`, `deliveryToken`, content and any local guidance. Reading
-marks returned entries delivered. To continue the same traversal, call `receive_messages` with
-`arguments: { cursor: "<nextCursor>" }` until `nextCursor` is absent. Begin a new
-traversal after reconnecting or when checking for later arrivals.
+The result contains `entries` and, when it has any, `nextCursor`. Each entry supplies its
+conversation `address`, content and any local guidance. Once you have handled
+the entries, call `receive_messages` with
+`arguments: { cursor: "<nextCursor>" }`: the daemon then returns only later
+entries. A call without `cursor` returns the same pending entries again.
 
 The [receiving contract](/reference/spec/host/receiving) defines handoff and
 the optional subscription for wake-ups.

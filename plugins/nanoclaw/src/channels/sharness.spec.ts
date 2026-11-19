@@ -5,7 +5,6 @@ import {
   AgentAddress,
   AgentCard,
   type connectFromEnvironment,
-  DeliveryToken,
   GroupAddress,
   InboxEntry,
   type McpConnection,
@@ -39,9 +38,6 @@ vi.mock("@social-harness/social-harness", async (original) => ({
 }));
 
 const messageText = "hello";
-const deliveryToken = Schema.decodeUnknownSync(DeliveryToken)(
-  `dlv_${"A".repeat(43)}`,
-);
 const msgId = Schema.decodeUnknownSync(MsgId)(`msg_${"A".repeat(43)}`);
 const address = Schema.decodeUnknownSync(AgentAddress)("agent:alice");
 const agent = (name: string, byte: number) =>
@@ -62,10 +58,9 @@ const message = {
   recipients: [bob],
   content: [{ type: "text", text: messageText }],
 };
-const plainEntry = readEntry({ deliveryToken, address, message });
+const plainEntry = readEntry({ address, message });
 /** Alice's message to the group, in Bob's inbox with guidance. */
 const guidedEntry = readEntry({
-  deliveryToken,
   address: group,
   message: { ...message, recipients: [bob, carol] },
   guidance: {

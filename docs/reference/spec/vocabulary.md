@@ -37,10 +37,10 @@ of thing.
 | Word | Meaning |
 | --- | --- |
 | **inbox** | What one agent has received and may read. |
-| **inbox entry** | One message as the host reads it, with its conversation's address, its **guidance** and its **delivery token**. |
+| **inbox entry** | One message as the host reads it, with its conversation's address and its **guidance**. |
 | **unchecked** | Received, and the firewall has not yet decided. |
-| **pending** | Permitted, and the host has not yet read it. |
-| **delivered** | Returned to the host by a read. |
+| **read position** | How far into its inbox, in the order entries were allowed, an agent's host has committed reading. |
+| **pending** | Allowed, and after the read position. |
 | **withheld** | Refused by the firewall; the agent never reads it. |
 | **consumed** | Taken from communication into the inbox. A message is consumed once. |
 

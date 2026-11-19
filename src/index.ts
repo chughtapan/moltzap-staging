@@ -5,7 +5,6 @@ export {
   acquireMcpConnection,
   AgentAddress,
   connectFromEnvironment,
-  DeliveryToken,
   GroupAddress,
   InboxEntry,
   MAXIMUM_WAIT_SECONDS,

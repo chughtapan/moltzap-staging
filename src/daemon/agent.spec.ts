@@ -29,11 +29,7 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
-import {
-  type HistoryRecord,
-  type InboxEntry,
-  MessageAddressInput,
-} from "../mcp/tools.js";
+import { type HistoryRecord, MessageAddressInput } from "../mcp/tools.js";
 import {
   composedPolicy,
   decisionResponse,
@@ -93,33 +89,20 @@ function receive(subject: Fixture, text: string, author?: AgentCard) {
   return Effect.flatMap(subject.message(text, sender), subject.deliver);
 }
 
-/** Waits for a pending inbox entry, then receives the pending ones. */
+/** Waits for a pending inbox entry, then reads the pending ones. */
 function acknowledgeNext(runtime: Runtime) {
   return Effect.zipRight(waitForInbox(runtime), runtime.harness.receive({}));
 }
 
 /** Waits until the inbox holds `count` pending entries across all its pages. */
 function waitForPending(runtime: Runtime, count: number) {
-  return readInbox(runtime).pipe(
+  return runtime.harness.inboxPosition.pipe(
     Effect.repeat({
-      until: (entries) => entries.length === count,
+      until: ({ newest, committed }) => newest - committed === count,
       schedule: Schedule.spaced("5 millis"),
     }),
     Effect.timeout("10 seconds"),
   );
-}
-
-function readInbox(runtime: Runtime) {
-  return Effect.gen(function* () {
-    const entries: InboxEntry[] = [];
-    let page = yield* runtime.inbox.listInbox();
-    entries.push(...page.entries);
-    while (page.nextCursor !== undefined) {
-      page = yield* runtime.inbox.listInbox({ cursor: page.nextCursor });
-      entries.push(...page.entries);
-    }
-    return entries;
-  });
 }
 
 /** Gives alice a conversation with a new peer `name` and returns its address. */
@@ -200,7 +183,7 @@ it("ends a send that could not be stored as a defect without sending it again", 
     expect(subject.submitted).toHaveLength(1);
   }));
 
-it("checks each conversation in order while another conversation progresses", () =>
+it("checks each conversation in order while another conversation progresses, and hands entries over in the order they became readable", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const entered = yield* Deferred.make<undefined>();
@@ -232,11 +215,11 @@ it("checks each conversation in order while another conversation progresses", ()
     yield* Deferred.succeed(release, undefined);
     expect(
       (yield* waitForInbox(runtime, 3)).entries.map((entry) => entry.address),
-    ).toEqual(["agent:bob", "agent:bob", "agent:carol"]);
+    ).toEqual(["agent:carol", "agent:bob", "agent:bob"]);
     expect(assessed).toEqual(["First", "Independent", "Second"]);
   }));
 
-it("recovers an interrupted check and keeps its inbox entry after edits, delivery and restart", () =>
+it("recovers an interrupted check and keeps its inbox entry in history after edits, a committed read and restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
@@ -264,8 +247,9 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
         }),
       })
       .pipe(Scope.extend(resumedScope));
-    const [delivery] = (yield* waitForInbox(resumed)).entries;
-    if (delivery === undefined) {
+    const { entries, nextCursor } = yield* waitForInbox(resumed);
+    const [delivery] = entries;
+    if (delivery === undefined || nextCursor === undefined) {
       return yield* Effect.dieMessage("Expected recovered delivery");
     }
     const stored = {
@@ -275,9 +259,9 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     };
     expect(stored.guidance).toBeDefined();
     yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
-    yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
-    yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
-    expect((yield* resumed.inbox.listInbox()).entries).toEqual([]);
+    const afterCommitting = resumed.harness.receive({ cursor: nextCursor });
+    expect((yield* afterCommitting).entries).toEqual([]);
+    expect((yield* afterCommitting).entries).toEqual([]);
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "received", ...stored }]);
@@ -290,7 +274,7 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     expect((yield* reopened.inbox.listInbox()).entries).toEqual([]);
   }));
 
-it("keeps an inbox page boundary while arrivals and deliveries change what is pending", () =>
+it("hands a page over again until its cursor is committed, continues after it with later arrivals, and refuses a cursor behind the committed position", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -298,32 +282,33 @@ it("keeps an inbox page boundary while arrivals and deliveries change what is pe
       yield* receive(subject, "Hello", yield* subject.addPeer(`peer-${index}`));
     }
     yield* waitForPending(runtime, 57);
-    const first = yield* runtime.inbox.listInbox();
+    const first = yield* runtime.harness.receive({});
     expect(first.entries).toHaveLength(50);
+    expect(yield* runtime.harness.receive({})).toEqual(first);
     if (first.nextCursor === undefined) {
       return yield* Effect.dieMessage("Expected inbox cursor");
     }
-    const preview = yield* runtime.inbox.listInbox({
+    const second = yield* runtime.harness.receive({
       cursor: first.nextCursor,
     });
-    const delivered = preview.entries[0];
-    if (delivered === undefined) {
-      return yield* Effect.dieMessage("Expected remaining delivery");
+    expect(second.entries).toHaveLength(7);
+    expect(first.entries).not.toContainEqual(second.entries[0]);
+    yield* receive(subject, "Later", yield* subject.addPeer("later"));
+    yield* waitForPending(runtime, 8);
+    expect(yield* runtime.harness.receive({})).toMatchObject({
+      entries: [...second.entries, { address: "agent:later" }],
+    });
+    if (second.nextCursor === undefined) {
+      return yield* Effect.dieMessage("Expected inbox cursor");
     }
-    yield* runtime.inbox.markDelivered([delivered.deliveryToken]);
-    yield* receive(subject, "Hello", yield* subject.addPeer("later"));
-    yield* waitForPending(runtime, 57);
-    const remainder = yield* runtime.inbox.listInbox({
-      cursor: first.nextCursor,
-    });
-    expect(remainder.entries.map((entry) => entry.deliveryToken)).toEqual(
-      preview.entries.slice(1).map((entry) => entry.deliveryToken),
-    );
-    expect(remainder.nextCursor).toBeUndefined();
     expect(
-      (yield* runtime.harness.receive({ cursor: "invalid" }).pipe(Effect.flip))
-        .reason,
-    ).toBe("invalid-cursor");
+      (yield* runtime.harness.receive({ cursor: second.nextCursor })).entries,
+    ).toMatchObject([{ address: "agent:later" }]);
+    for (const cursor of [first.nextCursor, "invalid"]) {
+      expect(
+        (yield* runtime.harness.receive({ cursor }).pipe(Effect.flip)).reason,
+      ).toBe("invalid-cursor");
+    }
   }));
 
 it("withholds peer content from both the inbox and history", () =>
@@ -528,7 +513,9 @@ it.prop(
         );
         yield* waitForInbox(runtime, instance);
       }
-      expect((yield* readInbox(runtime)).length).toBe(instances);
+      expect((yield* runtime.inbox.listInbox()).entries).toHaveLength(
+        instances,
+      );
     }),
   { fastCheck: { numRuns: 6 } },
 );

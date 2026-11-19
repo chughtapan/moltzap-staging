@@ -176,8 +176,8 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 
 /**
  * Each account retains its own channel services and daemon connection until
- * reception ends or OpenClaw aborts it. Inbox reads record delivery before the
- * host's turn. OpenClaw owns processing and retries. Final assistant text stays
+ * reception ends or OpenClaw aborts it. A page of inbox entries is committed after
+ * the host's turn for each. OpenClaw owns processing and retries. Final assistant text stays
  * private.
  *
  * @internal
@@ -900,10 +900,7 @@ function refusedSend(reason: OpenClawOutboundFailure): OpenClawChannelError {
   });
 }
 
-/**
- * The host's send result carries the message id the send returned, never the
- * delivery token of an inbox entry.
- */
+/** The host's send result carries the message id the send returned. */
 function makeMessageSendResult(sent: SendResult): ChannelMessageSendResult {
   return {
     messageId: sent.id,

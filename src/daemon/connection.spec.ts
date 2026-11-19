@@ -26,7 +26,6 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
   {
     entries: [
       {
-        deliveryToken: `dlv_${"A".repeat(43)}`,
         address: "agent:bob",
         message: {
           author: {
@@ -56,34 +55,38 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/**
+ * A daemon whose first inbox read returns one entry with a cursor and whose
+ * later reads wait. `cursors` holds the cursor each read presented, and
+ * `returned` completes when a second read arrives.
+ */
 const inboxFixture = Effect.gen(function* () {
-  const acknowledged = yield* Ref.make(0);
-  const receipt = yield* Deferred.make<undefined>();
+  const cursors = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+  const returned = yield* Deferred.make<undefined>();
   const fixture = yield* loopbackMcpFixture({
     harness: {
-      receive: () =>
-        Ref.get(acknowledged).pipe(
-          Effect.flatMap((count) =>
-            count === 0
-              ? Ref.set(acknowledged, 1).pipe(
-                  Effect.zipRight(Deferred.succeed(receipt, undefined)),
-                  Effect.as({ entries: [entry] }),
-                )
-              : Effect.never,
+      receive: ({ cursor }: { readonly cursor?: string }) =>
+        Ref.getAndUpdate(cursors, (earlier) => [...earlier, cursor]).pipe(
+          Effect.flatMap((earlier) =>
+            earlier.length === 0
+              ? Effect.succeed({ entries: [entry], nextCursor: "after-entry" })
+              : Deferred.succeed(returned, undefined).pipe(
+                  Effect.zipRight(Effect.never),
+                ),
           ),
         ),
     },
   });
   return {
-    acknowledged,
-    receipt,
+    cursors,
+    returned,
     endpoint: fixture.endpoint,
     credential: fixture.credential,
   };
 });
 
 describe("shared inbox reception", () => {
-  it("records delivery before host acceptance", () =>
+  it("commits a page by presenting its cursor on the next read, once the host has accepted every entry in it", () =>
     Effect.gen(function* () {
       const fixture = yield* inboxFixture;
       const connection = yield* acquireMcpConnection(
@@ -101,14 +104,17 @@ describe("shared inbox reception", () => {
         })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
-      expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined]);
       yield* Deferred.succeed(accepted, undefined);
-      yield* Deferred.await(fixture.receipt);
+      yield* Deferred.await(fixture.returned);
       yield* Fiber.interrupt(receiver);
-      expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([
+        undefined,
+        "after-entry",
+      ]);
     }).pipe(Effect.scoped, Effect.runPromise));
 
-  it("keeps a failed callback from undoing delivery", () =>
+  it("stops at a failed callback without committing its page", () =>
     Effect.gen(function* () {
       const fixture = yield* inboxFixture;
       const connection = yield* acquireMcpConnection(
@@ -121,7 +127,7 @@ describe("shared inbox reception", () => {
           .consumeInbox(() => Effect.fail(refusal))
           .pipe(Effect.flip),
       ).toBe(refusal);
-      expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined]);
     }).pipe(Effect.scoped, Effect.runPromise));
 
   it("interrupts a pending callback when its connection closes", () =>
@@ -146,7 +152,7 @@ describe("shared inbox reception", () => {
       yield* Scope.close(scope, Exit.void);
       yield* Deferred.await(interrupted);
       yield* Fiber.await(receiver);
-      expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined]);
     }).pipe(Effect.scoped, Effect.runPromise));
 });
 

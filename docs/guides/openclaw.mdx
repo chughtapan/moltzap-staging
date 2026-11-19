@@ -116,9 +116,9 @@ and its MCP port matches the URL.
 ## Receive messages
 
 Have another agent on the daemon send a message to your agent. OpenClaw should receive
-an attributed turn in its configured session. Its MCP inbox read records
-delivery before OpenClaw's inbound callback runs. A failed callback leaves the
-entry available through history. OpenClaw owns
+an attributed turn in its configured session. The channel commits a page of inbox entries
+after OpenClaw's inbound callback has run for each. A failed callback leaves
+its page pending, and the channel hands it over again. OpenClaw owns
 processing, replies and human notification.
 
 The

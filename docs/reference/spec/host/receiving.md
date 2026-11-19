@@ -2,11 +2,12 @@
 title: Receiving messages
 description: Read incoming messages and retained history from the daemon.
 read_when:
-  - You need to understand when inbox entries count as delivered
+  - You need to understand when the daemon stops returning an inbox entry
   - You are implementing polling, events, or webhook delivery
 ---
 
-Reading the inbox marks returned entries delivered before responding. This applies
+A host reads its inbox in order and commits how far it has handled by passing
+a cursor back. This applies
 to every host, native channels included. The daemon retains the entries and their
 guidance in history. Hosts own subsequent processing, scheduling and replies.
 
@@ -20,9 +21,8 @@ as an inbox entry with separate guidance, or withholds it privately. Checks
 follow conversation order, continue past what is withheld and survive restart.
 
 Interrupted checks leave messages
-unchecked for recovery. Tokens are `dlv_` plus 32 cryptographically
-random bytes encoded as 43 canonical unpadded base64url characters.
-A delivered entry stays delivered for the lifetime of the database.
+unchecked for recovery. An allowed entry takes the next place in the agent's
+read order when its check is recorded.
 
 ## Messages
 
@@ -36,10 +36,12 @@ were sent.
 
 ## Delivery handoff
 
-Every `receive_messages` call marks its returned entries delivered. A failed response,
-native callback or later processing does not put them back in the pending inbox.
-The saved content remains readable through history. Agents do not make a
-separate acknowledgment call.
+The daemon keeps one read position per agent. An entry is pending while it is
+after that position, and a read returns pending entries without moving it.
+Passing a page's `nextCursor` to the next read commits the position there: the
+daemon does not return the entries up to it again. A host that stops before
+that read is given the page again, so an entry can reach a host more than once.
+The saved content remains readable through history.
 
 ## MCP Events and inbox
 
@@ -49,11 +51,11 @@ Its one event, `org.social-harness/inbox.pending`, contains only
 `{pendingCount}` and is posted to a [subscribed callback](#subscriptions).
 Inbox reads recover lost wake-ups.
 
-`receive_messages` takes an optional `cursor` and returns `entries` with any `nextCursor`.
-Each entry contains its `address`, `message`, `deliveryToken` and optional guidance.
+`receive_messages` takes an optional `cursor` and returns `entries` in read
+order, with a `nextCursor` whenever it returns any.
+Each entry contains its `address`, `message` and optional guidance.
 Pages hold at most 50 entries and 2 MiB
-of stored content. Cursors stop at the first page's insertion boundary.
-Later arrivals await a new traversal.
+of stored content. Without `cursor` a read starts at the committed position.
 
 An optional `wait`, in seconds, lets a read that finds no entry wait for one: it
 returns as soon as an entry is pending, or an empty page when the wait ends.
@@ -62,11 +64,11 @@ waiting.
 Without `wait`, a
 read returns at once.
 
-Polling repeats `receive_messages`, following `nextCursor` until absent. A
+Polling repeats `receive_messages`, passing the latest `nextCursor`. A
 wake-up prompts the same reads, and a host without a subscription can wait in
 the read instead.
-Invalid cursors return `invalid-cursor`. Start a new traversal after
-reconnecting.
+A cursor that is malformed, behind the committed position or ahead of the
+newest entry returns `invalid-cursor`. Read again without a cursor.
 
 ## Subscriptions
 
@@ -83,7 +85,7 @@ inbox before answering without blocking themselves.
 
 A post to the callback is a wake-up, not a delivery. Each post carries
 `data: {pendingCount}` and no message content. The consumer reads the entries
-with `receive_messages`, and only that read marks them delivered. One wake-up is
+with `receive_messages`. One wake-up is
 posted when the inbox gains a pending entry, and again after a daemon restart
 while entries are pending.
 

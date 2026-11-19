@@ -302,8 +302,8 @@ interface AgentWebhook {
   saved: SavedSubscription;
   /** The inbox may hold entries the callback has not been told about. */
   inboxChangedSinceLastWakeUp: boolean;
-  /** The delivery tokens of the pending entries the last wake-up counted. */
-  tokensInLastWakeUp: ReadonlySet<string>;
+  /** The newest read number among the pending entries the last wake-up counted. */
+  newestInLastWakeUp: number;
   wakeUp: WakeUp | null;
   /** Receives a value whenever there may be a wake-up to post. */
   readonly wakeUpSignal: Queue.Queue<undefined>;
@@ -336,7 +336,7 @@ const restartWakeUps = (webhook: AgentWebhook) =>
   Effect.suspend(() => {
     webhook.generation += 1;
     webhook.wakeUp = null;
-    webhook.tokensInLastWakeUp = new Set();
+    webhook.newestInLastWakeUp = 0;
     return noteInboxChanged(webhook);
   });
 const clearSubscription = (webhook: AgentWebhook) =>
@@ -486,16 +486,16 @@ const prepareWakeUp = (webhook: AgentWebhook) =>
       return webhook.wakeUp;
     }
     webhook.inboxChangedSinceLastWakeUp = false;
-    const pending = yield* webhook.harness.pendingTokens.pipe(
+    const { newest, committed } = yield* webhook.harness.inboxPosition.pipe(
       Effect.mapError(persistenceFailure),
     );
-    const tokensInLastWakeUp = webhook.tokensInLastWakeUp;
-    webhook.tokensInLastWakeUp = new Set(pending);
-    if (pending.every((token) => tokensInLastWakeUp.has(token))) {
+    const newestInLastWakeUp = webhook.newestInLastWakeUp;
+    webhook.newestInLastWakeUp = newest;
+    if (newest === committed || newest <= newestInLastWakeUp) {
       return null;
     }
     const timestamp = now(webhook);
-    const event = inboxPendingEvent(pending.length, timestamp);
+    const event = inboxPendingEvent(newest - committed, timestamp);
     webhook.wakeUp = {
       id: event.eventId,
       body: JSON.stringify(event),
@@ -812,7 +812,7 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     subscriptionLock: yield* Effect.makeSemaphore(1),
     generation: 0,
     inboxChangedSinceLastWakeUp: true,
-    tokensInLastWakeUp: new Set(),
+    newestInLastWakeUp: 0,
     wakeUp: null,
     wakeUpSignal: yield* Queue.sliding<undefined>(1),
   };
