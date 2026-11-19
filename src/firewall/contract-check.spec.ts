@@ -4,12 +4,10 @@ import { scopedLive as it } from "@effect/vitest";
 import { type Context, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import type { Chain, FirewallEvidence } from "./chain.js";
-import type { DecisionProvider } from "./check.js";
+import type { DecisionProvider, FirewallEvidence } from "./check.js";
 import { Message, type MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
-  always,
   certainProvider,
   contractOf,
   form,
@@ -169,7 +167,7 @@ it("refuses every text that is not an act of a held norm", () =>
           }),
         { concurrency: 1, discard: true },
       ),
-    (agentKey) => Firewall.layer(agentKey, policy(), undefined, [exchange]),
+    (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
   ));
 
 it.prop(
@@ -205,20 +203,16 @@ it.prop(
               },
             });
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), undefined, [exchange]),
+        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 8 } },
 );
 
 it.prop(
-  "asks the provider about an act's own contract rules even when a chain rule allows the message, and about the owner's rules only when none does",
-  [
-    fc.boolean(),
-    fc.constantFrom("ask", "tell"),
-    fc.constantFrom("incoming", "outgoing"),
-  ],
-  ([chainAllows, act, direction]) =>
+  "asks the provider about the owner's rules and an act's own contract rules",
+  [fc.constantFrom("ask", "tell"), fc.constantFrom("incoming", "outgoing")],
+  ([act, direction]) =>
     Effect.gen(function* () {
       const asked: string[] = [];
       const recording: DecisionProvider = {
@@ -230,17 +224,6 @@ it.prop(
           );
           return certainProvider.decide(request);
         },
-      };
-      const chain: Chain = {
-        rules: [
-          {
-            id: "allow-all",
-            applies: "both",
-            match: "always",
-            action: "allow",
-          },
-        ],
-        matchers: { always },
       };
       yield* withFirewall(
         {},
@@ -256,7 +239,7 @@ it.prop(
             );
             expect(decision.kind).toBe("allowed");
             const expected = [
-              ...(chainAllows ? [] : [brief.id]),
+              brief.id,
               act === "ask" ? "duo-rule-1" : "duo-rule-2",
               "duo-rule-3",
             ];
@@ -268,12 +251,7 @@ it.prop(
             );
           }),
         (agentKey) =>
-          Firewall.layer(
-            agentKey,
-            policy([brief], [], recording),
-            chainAllows ? chain : undefined,
-            [duo],
-          ),
+          Firewall.layer(agentKey, policy([brief], [], recording), [duo]),
       );
     }),
   { fastCheck: { numRuns: 8 } },
@@ -328,7 +306,7 @@ it.prop(
             expect(again.kind).toBe(replaced ? "refused" : "allowed");
             expect(begun.kind).toBe("allowed");
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), undefined, [exchange]),
+        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 6 } },
@@ -390,7 +368,7 @@ it.prop(
             });
             expect(sent.kind).toBe(repliesIntoInstance ? "allowed" : "refused");
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), undefined, [exchange]),
+        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 12 } },
@@ -443,7 +421,7 @@ it.prop(
               ]);
             }
           }),
-        (agentKey) => Firewall.layer(agentKey, policy(), undefined, [exchange]),
+        (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
       );
     }),
   { fastCheck: { numRuns: 12 } },
