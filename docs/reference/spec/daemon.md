@@ -42,7 +42,6 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
-| `hideGroups` | Optional boolean; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
 are read at startup. Restart to activate changes.

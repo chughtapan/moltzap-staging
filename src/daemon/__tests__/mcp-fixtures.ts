@@ -82,7 +82,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
           name: options.serverAgentName ?? card.agentName,
           subject: "server",
         },
-        hideGroups: false,
       },
       serverAgentHeldNorms: yield* Ref.make(
         Option.none<Context.Tag.Service<typeof HeldNorms>>(),

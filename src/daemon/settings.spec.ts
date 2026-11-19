@@ -224,7 +224,6 @@ it("loads the origins its authentication allows", () =>
 const knownSettings = new Set([
   ...Object.keys(settings),
   "serverAgent",
-  "hideGroups",
   "messagePolicyFile",
   "decisionProviderKeyFile",
   "normsDirectory",

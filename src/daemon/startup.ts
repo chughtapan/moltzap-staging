@@ -61,7 +61,7 @@ export function roleOf(
   daemon: {
     readonly settings: Pick<
       DaemonSettings,
-      "serverAgent" | "hideGroups" | "messagePolicy" | "norms"
+      "serverAgent" | "messagePolicy" | "norms"
     >;
     /** The norms the server agent holds, once it has started; clients read them. */
     readonly serverAgentHeldNorms: Ref.Ref<
@@ -86,7 +86,7 @@ export function roleOf(
   };
   if (serverAgentName === undefined) {
     return {
-      hideGroups: settings.hideGroups,
+      hideGroups: false,
       withheldReply: undefined,
       firewall: checked(),
       started: () => Effect.void,

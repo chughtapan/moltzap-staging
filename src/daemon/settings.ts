@@ -86,7 +86,6 @@ const settingsFile = exactStruct({
   serverAgent: Schema.optional(
     exactStruct({ name: AgentName, subject: Schema.NonEmptyString }),
   ),
-  hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),

@@ -39,7 +39,7 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   `message.send.text` serves OpenClaw's core-forced sends. Every path sends
   text that is a JSON object with a `replyToMsgId` property as
   `send_message` arguments, and any other text as a plain message. The
-  daemon validates the arguments and enforces experiment switches on every
+  daemon validates the arguments on every
   send; the channel surfaces its refusal unchanged. The host decides which tools invoke those callbacks.
 - Install the skills `@social-harness/social-harness` ships unchanged; the build copies them
   into `dist/skills`.
