@@ -8,7 +8,6 @@ import { expect } from "vitest";
 import { loadDaemonSettings } from "./settings.js";
 
 const settingsVariable = "SHARNESS_CONFIG_FILE";
-const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
 const providerKey = "private-decision-provider-key";
 const settings = {
   port: 4319,
@@ -117,8 +116,8 @@ it("loads the settings file its variable names", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     const loaded = yield* test.load;
-    expect(loaded.settings.port).toBe(settings.port);
-    expect(loaded.settings.authentication).toEqual({
+    expect(loaded.port).toBe(settings.port);
+    expect(loaded.authentication).toEqual({
       ...settings.authentication,
       resource: new URL(settings.authentication.resource),
       allowedOrigins: [],
@@ -147,7 +146,7 @@ it.prop(
         ...(yield* norms(test, unruledNorm, beneath)),
       });
 
-      const loaded = (yield* test.load).settings;
+      const loaded = yield* test.load;
 
       expect(
         loaded.messagePolicy?.provider?.kind === "jev" &&
@@ -171,9 +170,9 @@ it("loads the decision provider that judges initial norms' English rules, though
 
     const loaded = yield* test.load;
 
-    expect(loaded.settings.norms?.contracts).toHaveLength(1);
-    expect(loaded.settings.messagePolicy?.policy.text).toBeUndefined();
-    expect(loaded.settings.messagePolicy?.provider?.kind).toBe("jev");
+    expect(loaded.norms?.contracts).toHaveLength(1);
+    expect(loaded.messagePolicy?.policy.text).toBeUndefined();
+    expect(loaded.messagePolicy?.provider?.kind).toBe("jev");
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.each([
@@ -219,14 +218,12 @@ it("loads the origins its authentication allows", () =>
       authentication: { ...settings.authentication, allowedOrigins },
     });
     const loaded = yield* test.load;
-    expect(loaded.settings.authentication.allowedOrigins).toEqual(
-      allowedOrigins,
-    );
+    expect(loaded.authentication.allowedOrigins).toEqual(allowedOrigins);
   }).pipe(Effect.provide(NodeContext.layer)));
 
 const knownSettings = new Set([
   ...Object.keys(settings),
-  "serverAgentName",
+  "serverAgent",
   "hideGroups",
   "messagePolicyFile",
   "decisionProviderKeyFile",
@@ -251,7 +248,7 @@ const unservable = fc.oneof(
       fc.stringMatching(/^[A-Z ]{3,12}$/),
       fc.stringMatching(/^[a-z]{1,2}$/),
     )
-    .map((serverAgentName) => ({ serverAgentName })),
+    .map((name) => ({ serverAgent: { name, subject: "server" } })),
 );
 
 it.prop(
@@ -268,14 +265,3 @@ it.prop(
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 40 } },
 );
-
-it("refuses a server agent without its credential and names the variable to set", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.write({
-      ...settings,
-      serverAgentName: "server-agent",
-    });
-    const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure.message).toContain(serverCredentialVariable);
-  }).pipe(Effect.provide(NodeContext.layer)));

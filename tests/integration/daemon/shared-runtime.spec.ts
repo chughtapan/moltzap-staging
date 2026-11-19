@@ -24,6 +24,7 @@ import { processTrace } from "../scenario-fixture.js";
 import { callTool } from "../tool-call.js";
 import {
   type Daemon,
+  SERVER_AGENT_OWNER,
   sharedDaemon,
   type SignedIn,
   stopProcess,
@@ -200,7 +201,16 @@ function expectClientServerExchange(
 const scenario = (clientServer: boolean) =>
   Effect.gen(function* () {
     const daemon = yield* sharedDaemon(
-      clientServer ? { settings: { serverAgentName: SERVER_AGENT_NAME } } : {},
+      clientServer
+        ? {
+            settings: {
+              serverAgent: {
+                name: SERVER_AGENT_NAME,
+                subject: SERVER_AGENT_OWNER,
+              },
+            },
+          }
+        : {},
     );
     const sql = yield* openDatabase(daemon);
     const owners = sql`SELECT * FROM owner_bindings`;
@@ -211,9 +221,9 @@ const scenario = (clientServer: boolean) =>
     expect(yield* requestStatus(daemon)).toBe(UNAUTHORIZED);
     expect(yield* owners).toHaveLength(atStart);
 
-    const aliceBearer = clientServer
-      ? daemon.serverAgentBearer
-      : yield* daemon.bearer("alice");
+    const aliceBearer = yield* daemon.bearer(
+      clientServer ? SERVER_AGENT_OWNER : "alice",
+    );
     const bobBearer = yield* daemon.bearer("bob");
     const sent = yield* Effect.scoped(
       Effect.gen(function* () {

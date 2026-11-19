@@ -13,24 +13,14 @@ import {
 } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/server";
-import {
-  Data,
-  Effect,
-  Match,
-  Option,
-  Redacted,
-  Schema,
-  type Scope,
-  Stream,
-} from "effect";
+import { Data, Effect, Match, Schema, type Scope, Stream } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { createHash, timingSafeEqual } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { Owner } from "./owners.js";
 import type { DaemonSettings } from "./settings.js";
 import { plainUrl } from "../encoding.js";
 import { packageVersion } from "../version.js";
-import { type Owner, serverAgentOwner } from "./owners.js";
 import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
 
 /** What a request gets when its agent cannot serve it. */
@@ -65,16 +55,9 @@ type AgentOfOwner<E> = (
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
   E extends { readonly _tag: string },
->(
-  authentication: McpAuthentication,
-  agentOfOwner: AgentOfOwner<E>,
-  serverAgentCredential: Option.Option<Redacted.Redacted>,
-) {
+>(authentication: McpAuthentication, agentOfOwner: AgentOfOwner<E>) {
   const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
-  const admit = yield* makeRequestAdmission(
-    authentication,
-    serverAgentCredential,
-  );
+  const admit = yield* tokenAdmission(authentication);
   const trusted = trustedCallers(authentication);
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -200,30 +183,6 @@ type Admit = (
   authorization: string,
 ) => Effect.Effect<AdmittedCaller, AuthenticationRefused>;
 
-/**
- * One cached verifier serves every request, including Events and receipts. A
- * request carrying the server agent's credential is admitted as the server
- * agent; any other is admitted by its access token.
- */
-function makeRequestAdmission(
-  authentication: McpAuthentication,
-  serverAgentCredential: Option.Option<Redacted.Redacted>,
-): Effect.Effect<Admit, AuthenticationRefused> {
-  return Effect.map(tokenAdmission(authentication), (admit) => {
-    if (Option.isNone(serverAgentCredential)) {
-      return admit;
-    }
-    const admitServerAgent = bearerAdmission(
-      serverAgentCredential.value,
-      serverAgentOwner,
-    );
-    return (authorization: string) =>
-      Effect.orElse(admitServerAgent(authorization), () =>
-        admit(authorization),
-      );
-  });
-}
-
 /** Rejected requests disclose only the standard discovery challenge. */
 function authenticationChallenge(authentication: McpAuthentication): Response {
   return new Response("Unauthorized", {
@@ -235,7 +194,10 @@ function authenticationChallenge(authentication: McpAuthentication): Response {
   });
 }
 
-/** Admission of the owner an access token for the resource names. */
+/**
+ * Admission of the owner an access token for the resource names. One cached
+ * verifier serves every request, including Events and receipts.
+ */
 function tokenAdmission(
   oauth: McpAuthentication,
 ): Effect.Effect<Admit, AuthenticationRefused> {
@@ -271,26 +233,10 @@ function tokenAdmission(
   );
 }
 
-const digest = (value: string): Uint8Array =>
-  createHash("sha256").update(value).digest();
-
 function bearer(authorization: string): string {
   return /^Bearer +/iu.test(authorization)
     ? authorization.replace(/^Bearer +/iu, "")
     : "";
-}
-
-/** Admits a request whose bearer is `credential`, as `owner`. */
-function bearerAdmission(credential: Redacted.Redacted, owner: Owner) {
-  return (
-    authorization: string,
-  ): Effect.Effect<AdmittedCaller, AuthenticationRefused> =>
-    timingSafeEqual(
-      digest(bearer(authorization)),
-      digest(Redacted.value(credential)),
-    )
-      ? Effect.succeed({ owner })
-      : Effect.fail(new AuthenticationRefused());
 }
 
 function scopeIncludes(value: unknown, scope: string): boolean {

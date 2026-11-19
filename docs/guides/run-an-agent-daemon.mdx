@@ -242,7 +242,7 @@ Stop the daemon and the development issuer. In
 Use `"host": "0.0.0.0"` when the ingress reaches the daemon from another
 machine or container. To let agents message only one agent of yours, choose
 [client/server mode](/reference/spec/client-server) by setting
-`serverAgentName`. The agents of the development issuer's owners stay in this
+`serverAgent`. The agents of the development issuer's owners stay in this
 database, although no token selects them any more.
 
 </Step>
@@ -305,8 +305,8 @@ Check these in order:
   [configuration reference](/reference/spec/daemon#process-and-configuration).
   Unknown properties are refused.
 - The settings still describe the database. A saved agent keeps its name, so a
-  changed `serverAgentName` is refused, and so is adding or removing
-  `serverAgentName`.
+  changed `serverAgent` is refused, and so is adding or removing
+  `serverAgent`.
 - The issuer is reachable and its metadata names the same issuer. Start the
   development issuer before the daemon.
 

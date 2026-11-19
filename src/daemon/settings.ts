@@ -78,19 +78,14 @@ const authentication = exactStruct({
     { default: () => [] },
   ),
 });
-/** A secret a caller presents as an HTTP bearer. */
-const bearerSecret = Schema.String.pipe(
-  Schema.minLength(32),
-  Schema.maxLength(512),
-  Schema.pattern(/^[A-Za-z0-9\-._~+/]+=*$/u),
-);
-
 /** The settings file as an operator writes it. */
 const settingsFile = exactStruct({
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
   authentication,
-  serverAgentName: Schema.optional(AgentName),
+  serverAgent: Schema.optional(
+    exactStruct({ name: AgentName, subject: Schema.NonEmptyString }),
+  ),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
@@ -177,37 +172,8 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     messagePolicy: Option.getOrUndefined(messagePolicy),
     ...(norms === undefined ? {} : { norms }),
   };
-  return {
-    settings,
-    serverAgentCredential: yield* readServerAgentCredential(settings),
-  };
+  return settings;
 });
-
-/**
- * The secret the server agent signs in with, from the environment so that it
- * is never written to a file. A daemon whose settings name a server agent
- * requires it; one without a server agent does not read it.
- */
-function readServerAgentCredential(settings: DaemonSettings) {
-  return Effect.gen(function* () {
-    const configured = yield* Config.option(
-      Config.redacted("SHARNESS_SERVER_AGENT_CREDENTIAL"),
-    ).pipe(Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()));
-    if (settings.serverAgentName === undefined) {
-      return Option.none<Redacted.Redacted>();
-    }
-    if (Option.isNone(configured)) {
-      return yield* refused(
-        "Set SHARNESS_SERVER_AGENT_CREDENTIAL to the secret the server agent signs in with: 32 to 512 letters, digits or -._~+/ characters",
-      );
-    }
-    return Schema.is(bearerSecret)(Redacted.value(configured.value))
-      ? configured
-      : yield* refused(
-          "SHARNESS_SERVER_AGENT_CREDENTIAL must be 32 to 512 letters, digits or -._~+/ characters",
-        );
-  });
-}
 
 /** The settings file's norms directory, read and checked. */
 function configuredNorms(directory: string) {

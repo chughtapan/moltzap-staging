@@ -33,7 +33,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     /** Makes the agent a client of the server agent with this name. */
     readonly serverAgentName?: AgentName;
-    readonly serverAgentCredential?: Redacted.Redacted;
     /** The daemon's resource, whose host requests name. */
     readonly resource?: URL;
     readonly allowedOrigins?: readonly string[];
@@ -78,7 +77,10 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const role = roleOf(
     {
       settings: {
-        serverAgentName: options.serverAgentName,
+        serverAgent:
+          options.serverAgentName === undefined
+            ? undefined
+            : { name: options.serverAgentName, subject: "server" },
         hideGroups: false,
       },
       serverAgentHeldNorms: yield* Ref.make(
@@ -119,7 +121,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
       Ref.update(owners, (values) => [...values, admitted]).pipe(
         Effect.as(agent),
       ),
-    Option.fromNullable(options.serverAgentCredential),
   );
   const handle = HttpApp.toWebHandler(app);
   return {

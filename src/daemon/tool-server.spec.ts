@@ -42,7 +42,6 @@ import {
   mcpRequest,
 } from "./__tests__/mcp-fixtures.js";
 import { serveMcp } from "./listener.js";
-import { serverAgentOwner } from "./owners.js";
 
 const response = Schema.parseJson(
   Schema.Struct({
@@ -150,38 +149,28 @@ it("reports the agent's identifier and name in a result native draft-07 and 2020
     });
   }));
 
-const serverAgentCredential = "server-agent-credential-000000000001";
 const bearerSchemes = mostly(
   fc.constantFrom("Bearer ", "bearer   ", "BEARER "),
   fc.constantFrom("Basic ", "Bearer", ""),
 );
 
-it("answers 401 unless the bearer is the server agent's credential or an owner's token, and otherwise serves that credential's owner", () =>
+it("answers 401 unless the bearer is an owner's token, and otherwise serves that owner", () =>
   Effect.gen(function* () {
-    const fixture = yield* mcpFixture({
-      serverAgentCredential: Redacted.make(serverAgentCredential),
-    });
-    /** Whom each credential admits a request as. */
-    const owners = new Map([
-      [Redacted.value(fixture.credential), fixture.owner],
-      [serverAgentCredential, serverAgentOwner],
-    ]);
-    const tokens = fc
-      .constantFrom(...owners.keys())
-      .chain((known) =>
-        mostly(
-          fc.constant(known),
-          fc.constantFrom(`${known}x`, known.slice(1)),
-        ),
-      );
+    const fixture = yield* mcpFixture();
+    const known = Redacted.value(fixture.credential);
+    const tokens = mostly(
+      fc.constant(known),
+      fc.constantFrom(`${known}x`, known.slice(1)),
+    );
     yield* forAll(
       [bearerSchemes, tokens],
       Effect.fnUntraced(function* (scheme, token) {
         const headers = { authorization: `${scheme}${token}` };
         const reply = yield* exchange(fixture, "tools/list", {}, { headers });
-        const owner = /^bearer +$/iu.test(scheme)
-          ? owners.get(token)
-          : undefined;
+        const owner =
+          /^bearer +$/iu.test(scheme) && token === known
+            ? fixture.owner
+            : undefined;
         expect(reply.status).toBe(owner === undefined ? 401 : 200);
         expect(reply.headers.has("www-authenticate")).toBe(owner === undefined);
         expect(yield* Ref.getAndSet(fixture.owners, [])).toEqual(
