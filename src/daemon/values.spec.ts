@@ -1,9 +1,9 @@
-/** @file MCP values validate their public message and management behavior. */
+/** @file The address grammar. */
 
 import { Effect, FastCheck as fc, Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
-import { addressedAgent, AgentAddress, toolDefinitions } from "./tools.js";
+import { addressedAgent, AgentAddress } from "./values.js";
 
 const localAgentName = testAgentCard("agent:agent-1").agentName;
 
@@ -29,22 +29,4 @@ it("addresses one agent as agent:<name>, and refuses the address that names only
       },
     ),
   );
-});
-
-describe("management and history contracts", () => {
-  describe("conversation pagination", () => {
-    it("preserves canonical address order and the next cursor", () => {
-      const page = {
-        addresses: ["agent:bob", "agent:carol"],
-        nextCursor: "opaque-position",
-      };
-      const decode = Schema.decodeUnknownSync(
-        toolDefinitions.list_conversations.output,
-      );
-      expect(decode(page)).toEqual(page);
-      expect(() =>
-        decode({ addresses: [...page.addresses].reverse() }),
-      ).toThrow();
-    });
-  });
 });

@@ -1,86 +1,87 @@
 /**
- * @file The daemon's MCP handler and the tools it serves. Each request is
- * answered from one agent: a call's arguments are decoded, its operation run,
- * its result encoded and its failure worded by the tool's definition.
+ * @file The daemon's MCP handler and the tools it serves. Each request gets an
+ * MCP server built for the agent that answers it, with the tools of that
+ * agent's role registered on it.
  */
 
 import type { SqlClient } from "@effect/sql";
 import { HttpApp } from "@effect/platform";
 import {
   createMcpHandler,
-  fromJsonSchema,
   McpServer,
-  ProtocolError,
+  type StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
 import { EventsExtension } from "@modelcontextprotocol/server/ext/events";
 import { nodeWebhookSender } from "@modelcontextprotocol/server/ext/events/node";
 import {
-  Cause,
+  type Context,
   Data,
   Effect,
-  Exit,
   JSONSchema,
-  Option,
-  ParseResult,
   Runtime,
   Schema,
 } from "effect";
-import type { CompiledContract } from "../firewall/index.js";
-import { PAGE_SIZE } from "../communication/index.js";
-import { issuesText } from "../encoding.js";
-import { Firewall } from "../firewall/service.js";
-import { Identity } from "../identity.js";
+import type { Firewall } from "../firewall/service.js";
+import type { SocialHarness } from "./agent.js";
 import {
-  type AgentAddress,
-  clientToolDefinitions,
+  Message,
+  MsgId,
+  Page,
+  PAGE_SIZE,
+  PaginatedRequest,
+  wellFormedString,
+} from "../communication/index.js";
+import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
+import {
+  type CompiledContract,
+  firewallDecisionsRequestSchema,
+  firewallDecisionsSchema,
+  LocalGuidance,
+} from "../firewall/index.js";
+import { type AgentCard, AgentId, AgentName } from "../identity.js";
+import { makeInbox } from "./inbox.js";
+import {
+  AgentAddress,
   INBOX_EVENT,
   InboxCursor,
   InboxEntry,
-  toolDefinitions,
-} from "../mcp/tools.js";
-import { SocialHarness } from "./agent.js";
-import { makeInbox } from "./inbox.js";
+  SendError,
+  SendRequest,
+  SendResult,
+} from "./values.js";
 
 /**
- * What a request is answered from: the agent's key, its tools in listing
- * order, and the daemon's Events extension, which serves that agent's inbox.
+ * What a request is answered from: one running agent, its role and the
+ * daemon's Events extension, which serves that agent's inbox.
  */
 export interface AgentCalls {
   readonly agentKey: string;
-  readonly tools: ReadonlyArray<ReturnType<typeof bind>>;
+  readonly card: AgentCard;
+  readonly harness: Context.Tag.Service<typeof SocialHarness>;
+  readonly firewall: Context.Tag.Service<typeof Firewall>;
   readonly events: EventsExtension;
-}
-
-/** The JSON-RPC error a tool call is answered with. */
-export class JsonRpcError extends Data.TaggedError("JsonRpcError")<{
-  readonly code: number;
-  readonly message: string;
-  readonly data?: unknown;
-}> {
-  constructor(code: number, message: string, data?: unknown) {
-    super({ code, message, data });
-  }
+  /**
+   * The server agent's address when this agent is a client, which talks only
+   * to the server agent and so names no recipient and no conversation.
+   */
+  readonly serverAgent?: AgentAddress;
+  /**
+   * Reads the contracts `read_norms` lists: this agent's, or for a client the
+   * server agent's. An agent without it has no `read_norms`.
+   */
+  readonly norms?: Effect.Effect<readonly CompiledContract[]>;
 }
 
 /**
- * One admitted HTTP request: the agent that answers it, the runtime of the
- * fiber that carries it and the signal that it was aborted. It travels through
- * the MCP SDK as the request's authentication info, which the SDK reads
- * nothing from and hands to the server it builds for the request.
+ * One admitted HTTP request: the agent that answers it and the runtime of the
+ * fiber that carries it. It travels through the MCP SDK as the request's
+ * authentication info, which the SDK reads nothing from and hands to the
+ * server it builds for the request.
  */
 class AdmittedRequest extends Data.Class<{
   readonly agent: AgentCalls;
   readonly runtime: Runtime.Runtime<never>;
-  readonly signal: AbortSignal;
 }> {}
-
-/** A tool's arguments and its result are objects, which is the JSON Schema MCP lists a tool with. */
-const objectSchema = Schema.decodeUnknownSync(
-  Schema.Struct(
-    { type: Schema.Literal("object") },
-    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
-);
 
 /**
  * The daemon's one MCP handler. The returned function gives the HTTP app that
@@ -105,13 +106,7 @@ export function makeMcpHandler(implementation: {
               token: "",
               clientId: "",
               scopes: [],
-              extra: {
-                admitted: new AdmittedRequest({
-                  agent,
-                  runtime,
-                  signal: request.signal,
-                }),
-              },
+              extra: { admitted: new AdmittedRequest({ agent, runtime }) },
             },
           }),
         ),
@@ -149,9 +144,7 @@ export const makeInboxEvents = Effect.gen(function* () {
   events.registerEvent(INBOX_EVENT, {
     description:
       "An inbox entry: its conversation address, its message and any guidance.",
-    payloadSchema: fromJsonSchema<typeof InboxEntry.Encoded>(
-      objectSchema(jsonSchema(InboxEntry)),
-    ),
+    payloadSchema: standard(InboxEntry),
     check: (...[{ principal, maxEvents, signal }, , cursor]) =>
       run(
         Effect.gen(function* () {
@@ -179,148 +172,46 @@ export const makeInboxEvents = Effect.gen(function* () {
   return events;
 }).pipe(Effect.withSpan("makeInboxEvents"));
 
-/** What a tool definition says about a tool before any operation is attached. */
-interface Definition<A, I, B, J, E> {
-  readonly description: string;
-  readonly input: Schema.Schema<A, I>;
-  readonly output: Schema.Schema<B, J>;
-  readonly annotations: {
-    readonly readOnlyHint: boolean;
-    readonly openWorldHint: boolean;
-    readonly destructiveHint?: boolean;
-    readonly idempotentHint?: boolean;
-  };
-  readonly failure: {
-    readonly toData: (error: E) => unknown;
-    /** The failure to answer when the tool ends in a way it does not declare. */
-    readonly unexpected?: E;
-  };
+/** One request's MCP server and the runtime its tool calls run in. */
+interface Served {
+  readonly mcp: McpServer;
+  readonly runtime: Runtime.Runtime<never>;
 }
 
-/** `status` names this agent. */
-const statusTool = Effect.map(Identity, (identity) =>
-  bind("status", toolDefinitions.status, () =>
-    Effect.succeed({
-      agentId: identity.me.agentId,
-      agentName: identity.me.agentName,
-    }),
-  ),
-);
+const noArguments = Schema.Record({
+  key: Schema.String,
+  value: Schema.Never,
+}).annotations({
+  jsonSchema: { type: "object", properties: {}, additionalProperties: false },
+});
 
-/**
- * The tools of the server agent, which addresses any client. One that holds
- * norms lists them with `read_norms`.
- */
-export function serverAgentTools(holdsNorms: boolean) {
-  return Effect.fnUntraced(function* () {
-    const harness = yield* SocialHarness;
-    const firewall = yield* Firewall;
-    return [
-      yield* statusTool,
-      bind("send_message", toolDefinitions.send_message, harness.send),
-      bind(
-        "receive_messages",
-        toolDefinitions.receive_messages,
-        harness.receive,
-      ),
-      bind(
-        "list_conversations",
-        toolDefinitions.list_conversations,
-        harness.listConversations,
-      ),
-      bind(
-        "read_conversation",
-        toolDefinitions.read_conversation,
-        harness.readHistory,
-      ),
-      bind(
-        "read_firewall_decisions",
-        toolDefinitions.read_firewall_decisions,
-        firewall.readDecisions,
-      ),
-      ...(holdsNorms
-        ? [normsTool(toolDefinitions.read_norms, firewall.readContracts())]
-        : []),
-    ];
-  });
-}
+/** A page of one conversation's records: each a message the agent sent, or the stored inbox entry of one it received. */
+const historyRecordsPage = Schema.Struct({
+  records: Schema.Array(
+    Schema.Union(
+      Schema.Struct({
+        kind: Schema.Literal("sent"),
+        message: Schema.typeSchema(Message),
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("received"),
+        address: AgentAddress,
+        message: Schema.typeSchema(Message),
+        guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+      }),
+    ),
+  ).pipe(Schema.maxItems(PAGE_SIZE)),
+  ...Page.fields,
+});
 
-/**
- * The tools of a client. It sends to and reads its
- * conversation with the server agent, and names neither. With
- * `serverAgentContracts`, the norms the server agent holds, it has `read_norms`.
- */
-export function clientTools(
-  serverAgentAddress: AgentAddress,
-  serverAgentContracts?: Effect.Effect<readonly CompiledContract[]>,
-) {
-  return Effect.fnUntraced(function* () {
-    const harness = yield* SocialHarness;
-    return [
-      yield* statusTool,
-      bind("send_message", clientToolDefinitions.send_message, (message) =>
-        harness.send({ ...message, to: serverAgentAddress }),
-      ),
-      bind(
-        "receive_messages",
-        toolDefinitions.receive_messages,
-        harness.receive,
-      ),
-      bind(
-        "read_conversation",
-        clientToolDefinitions.read_conversation,
-        (page) => harness.readHistory({ ...page, address: serverAgentAddress }),
-      ),
-      ...(serverAgentContracts === undefined
-        ? []
-        : [normsTool(clientToolDefinitions.read_norms, serverAgentContracts)]),
-    ];
-  });
-}
+/** A send that ends unexpectedly may have been sent. */
+const sendOutcomeUnknown = new SendError({ reason: "outcome-unknown" });
 
-/** `read_norms` lists the contracts `held` reads: this agent's, or for a client the server agent's. */
-function normsTool(
-  definition: (
-    | typeof toolDefinitions
-    | typeof clientToolDefinitions
-  )["read_norms"],
-  held: Effect.Effect<readonly CompiledContract[]>,
-) {
-  const read = held.pipe(
-    Effect.map((contracts) => ({
-      norms: contracts.map((norm) => ({
-        name: norm.name,
-        description: norm.description,
-        document: norm.source,
-      })),
-    })),
-  );
-  return bind("read_norms", definition, () => read);
-}
+/** How a message states one act of a norm, as every reader of the norms needs it. */
+const ACT_SYNTAX =
+  "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
 
-/** Turns a tool definition and the operation behind it into a tool to serve. */
-function bind<A, I, B, J, E extends { readonly message: string }>(
-  name: string,
-  definition: Definition<A, I, B, J, E>,
-  execute: (input: A) => Effect.Effect<B, E>,
-) {
-  return {
-    tool: {
-      name,
-      description: definition.description,
-      inputSchema: objectSchema(jsonSchema(definition.input)),
-      outputSchema: objectSchema(openObjects(jsonSchema(definition.output))),
-      annotations: {
-        destructiveHint: true,
-        idempotentHint: false,
-        ...definition.annotations,
-      },
-    },
-    handle: handler(definition, execute),
-  };
-}
-
-/** The MCP server for one request, answering from the agent `admitted` names. */
+/** The MCP server for one request, with the tools of the agent `admitted` names. */
 function requestServer(
   implementation: { readonly name: string; readonly version: string },
   admitted: unknown,
@@ -328,193 +219,292 @@ function requestServer(
   if (!(admitted instanceof AdmittedRequest)) {
     return new McpServer(implementation);
   }
-  const { agent } = admitted;
-  const mcp = new McpServer(implementation, {
-    capabilities: { tools: {} },
-    extensions: [agent.events],
-  });
-  mcp.server.setRequestHandler("tools/list", () =>
-    run(
-      admitted,
-      Effect.succeed({ tools: agent.tools.map(({ tool }) => tool) }),
-    ),
+  const { agent, runtime } = admitted;
+  const { card, harness, norms, serverAgent } = agent;
+  const mcp = new McpServer(implementation, { extensions: [agent.events] });
+  const served = { mcp, runtime };
+  register(
+    served,
+    "status",
+    {
+      description:
+        "Read this agent's identifier and name. Other agents address this agent as agent:<agentName>.",
+      input: noArguments,
+      output: Schema.Struct({ agentId: AgentId, agentName: AgentName }),
+      readOnly: true,
+    },
+    () => Effect.succeed({ agentId: card.agentId, agentName: card.agentName }),
   );
-  mcp.server.setRequestHandler("tools/call", ({ params }) =>
-    run(
-      admitted,
-      Effect.gen(function* () {
-        const called = agent.tools.find(
-          ({ tool }) => tool.name === params.name,
-        );
-        if (called === undefined) {
-          return yield* Effect.fail(new JsonRpcError(-32602, "Tool not found"));
-        }
-        return yield* called.handle(params.arguments ?? {});
+  register(
+    served,
+    "receive_messages",
+    {
+      description:
+        "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries.",
+      input: exactStruct({ cursor: Schema.optional(InboxCursor) }),
+      output: Schema.Struct({
+        entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
+        nextCursor: InboxCursor,
       }),
-    ),
+      readOnly: true,
+    },
+    harness.receive,
   );
+  if (serverAgent === undefined) {
+    registerServerAgentTools(served, agent);
+  } else {
+    registerClientTools(served, harness, serverAgent);
+  }
+  if (norms !== undefined) {
+    register(
+      served,
+      "read_norms",
+      {
+        description: `${
+          serverAgent === undefined
+            ? "List the installed norms and their complete documents: the roles, when each act may be sent and the fields it takes."
+            : "List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them."
+        } ${ACT_SYNTAX}`,
+        input: noArguments,
+        output: exactStruct({
+          norms: Schema.Array(
+            exactStruct({
+              name: Schema.String,
+              description: Schema.String,
+              document: Schema.String,
+            }),
+          ),
+        }),
+        readOnly: true,
+      },
+      () =>
+        Effect.map(norms, (contracts) => ({
+          norms: contracts.map((norm) => ({
+            name: norm.name,
+            description: norm.description,
+            document: norm.source,
+          })),
+        })),
+    );
+  }
   return mcp;
 }
 
-/**
- * Runs the Effect that answers one MCP request in the runtime of the HTTP
- * request's fiber, so its spans keep their parent, and interrupts it when the
- * request is aborted. A failure rejects with the SDK's error for it, which the
- * SDK answers as the JSON-RPC error.
- */
-function run<A>(
-  { runtime, signal }: AdmittedRequest,
-  effect: Effect.Effect<A, JsonRpcError>,
+/** The tools only the server agent has: it addresses any client and reads its firewall's decisions. */
+function registerServerAgentTools(
+  served: Served,
+  { firewall, harness }: AgentCalls,
 ) {
-  return new Promise<A>((resolve, reject) => {
-    const interrupt = Runtime.runCallback(runtime)(effect, {
-      onExit: Exit.match({
-        onSuccess: resolve,
-        onFailure: (cause) => {
-          const { code, message, data } = Option.getOrElse(
-            Cause.failureOption(cause),
-            () => new JsonRpcError(-32603, "Internal error"),
-          );
-          reject(new ProtocolError(code, message, data));
-        },
+  register(
+    served,
+    "send_message",
+    {
+      description:
+        "Send a message. Returns id, the message id, and address, the canonical conversation address. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
+      input: SendRequest,
+      output: SendResult,
+      unexpected: sendOutcomeUnknown,
+    },
+    harness.send,
+  );
+  register(
+    served,
+    "list_conversations",
+    {
+      description:
+        "List canonical conversation addresses with completed messages. Follow nextCursor until absent. Use read_conversation to read one address.",
+      input: exactStruct({ ...PaginatedRequest.fields }),
+      output: Schema.Struct({
+        addresses: Schema.Array(AgentAddress).pipe(Schema.maxItems(PAGE_SIZE)),
+        ...Page.fields,
+      }).pipe(
+        Schema.filter((page) =>
+          isStrictlyAscending(page.addresses, compareAscii),
+        ),
+      ),
+      readOnly: true,
+    },
+    harness.listConversations,
+  );
+  register(
+    served,
+    "read_conversation",
+    {
+      description:
+        "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
+      input: exactStruct({
+        address: AgentAddress,
+        ...PaginatedRequest.fields,
       }),
-    });
-    signal.addEventListener("abort", () => {
-      interrupt();
-    });
-  });
+      output: historyRecordsPage,
+      readOnly: true,
+    },
+    harness.readHistory,
+  );
+  register(
+    served,
+    "read_firewall_decisions",
+    {
+      description:
+        "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
+      input: firewallDecisionsRequestSchema,
+      output: firewallDecisionsSchema,
+      readOnly: true,
+    },
+    firewall.readDecisions,
+  );
+}
+
+/** The tools of a client, which name no recipient and no conversation: both are `serverAgent`. */
+function registerClientTools(
+  served: Served,
+  harness: AgentCalls["harness"],
+  serverAgent: AgentAddress,
+) {
+  register(
+    served,
+    "send_message",
+    {
+      description:
+        "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
+      input: exactStruct({
+        text: Schema.propertySignature(wellFormedString).annotations({
+          description: "The message text.",
+        }),
+        replyToMsgId: Schema.optional(MsgId),
+      }),
+      output: SendResult,
+      unexpected: sendOutcomeUnknown,
+    },
+    (message) => harness.send({ ...message, to: serverAgent }),
+  );
+  register(
+    served,
+    "read_conversation",
+    {
+      description:
+        "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent. The first page fixes the history boundary.",
+      input: exactStruct({ ...PaginatedRequest.fields }),
+      output: historyRecordsPage,
+      readOnly: true,
+    },
+    (page) => harness.readHistory({ ...page, address: serverAgent }),
+  );
 }
 
 /**
- * Answers a call of a tool: arguments are decoded with the definition's
- * input and the result is encoded with its output. A call that fails is
- * answered with a result marked as an error, whose text is the failure's
- * message and whose structured content is what the definition writes for it.
- * A call that ends any other way is logged and answered as unexpected.
+ * Registers a tool whose calls `execute` answers. A call runs in the runtime
+ * of the HTTP request's fiber, so its spans keep their parent, and is
+ * interrupted when the request is aborted. Its value is the result's
+ * structured content. A typed failure is a result marked as an error. A call
+ * that ends any other way is logged and answered as `unexpected`, or with a
+ * fixed text that says nothing of what went wrong.
  */
-function handler<A, I, B, J, E extends { readonly message: string }>(
-  definition: Definition<A, I, B, J, E>,
+function register<A, I, B extends object, J extends object, E extends Failure>(
+  { mcp, runtime }: Served,
+  name: string,
+  tool: {
+    readonly description: string;
+    readonly input: Schema.Schema<A, I>;
+    readonly output: Schema.Schema<B, J>;
+    readonly readOnly?: true;
+    readonly unexpected?: E;
+  },
   execute: (input: A) => Effect.Effect<B, E>,
 ) {
-  const refusal = (error: E) =>
-    failed(error.message, definition.failure.toData(error));
-  const unexpected =
-    definition.failure.unexpected === undefined
-      ? failed(
-          "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-        )
-      : refusal(definition.failure.unexpected);
-  return (input: unknown) =>
-    Effect.gen(function* () {
-      const decoded = yield* Schema.decodeUnknown(definition.input, {
-        onExcessProperty: "error",
-        errors: "all",
-      })(input).pipe(Effect.mapError(invalidArguments));
-      const output = yield* execute(decoded).pipe(Effect.mapError(refusal));
-      const encoded = yield* Schema.encode(definition.output)(output, {
-        onExcessProperty: "error",
-      }).pipe(Effect.mapError(() => unexpected));
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(encoded) }],
-        structuredContent: encoded,
-      };
-    }).pipe(
-      Effect.catchAllCause((cause) =>
-        Option.match(Cause.failureOption(cause), {
-          onSome: Effect.succeed,
-          onNone: () =>
-            Effect.logError("A tool call ended unexpectedly", cause).pipe(
-              Effect.as(unexpected),
+  const outputSchema: StandardSchemaWithJSON<object, object> = standard(
+    tool.output,
+  );
+  mcp.registerTool(
+    name,
+    {
+      description: tool.description,
+      inputSchema: standard(tool.input),
+      outputSchema,
+      annotations: tool.readOnly && {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+    },
+    (input, ctx) =>
+      Runtime.runPromise(runtime)(
+        execute(input).pipe(
+          Effect.flatMap((value) =>
+            Effect.orDie(Schema.encode(tool.output)(value)),
+          ),
+          Effect.map((structuredContent) => ({ structuredContent })),
+          Effect.catchAll((failure) =>
+            Effect.succeed(failed(failure.message, failure)),
+          ),
+          Effect.catchAllDefect((defect) =>
+            Effect.logError("A tool call ended unexpectedly", defect).pipe(
+              Effect.as(
+                tool.unexpected === undefined
+                  ? failed(
+                      "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+                    )
+                  : failed(tool.unexpected.message, tool.unexpected),
+              ),
             ),
-        }),
+          ),
+        ),
+        { signal: ctx.mcpReq.signal },
       ),
-    );
-}
-
-const MAXIMUM_VALIDATION_ISSUES = 20;
-
-/** A field path and schema expectation, without the rejected value. */
-interface ValidationIssue {
-  readonly path: ReadonlyArray<string | number>;
-  readonly message: string;
+  );
 }
 
 /**
- * A refusal of arguments that names at most 20 wrong fields, each by its path
- * and what the tool expects there. Submitted values are left out, and so is
- * the absent alternative of an optional field unless it is all there is to say.
+ * `schema` as the Standard Schema the MCP SDK validates a value with and
+ * lists as JSON Schema. Effect's own Standard Schema carries no JSON Schema,
+ * which the SDK requires. A value with a field the schema does not name is
+ * invalid.
  */
-function invalidArguments(error: ParseResult.ParseError) {
-  const found = ParseResult.ArrayFormatter.formatErrorSync(error).map(
-    (issue): ValidationIssue => ({
-      path: issue.path.map((key) =>
-        typeof key === "number" ? key : String(key),
-      ),
-      message: expectation(issue),
-    }),
-  );
-  const present = found.filter(
-    ({ message }) => message !== "Expected undefined",
-  );
-  const issues = (present.length === 0 ? found : present).slice(
-    0,
-    MAXIMUM_VALIDATION_ISSUES,
-  );
-  return failed(`Invalid tool arguments: ${issuesText(issues)}`, {
-    reason: "invalid-arguments",
-    issues,
-  });
-}
-
-/** What the tool expects where an issue was found, without the value that was there. */
-function expectation(issue: ParseResult.ArrayFormatterIssue): string {
-  if (issue._tag === "Missing") {
-    return "Required field is missing";
-  }
-  if (
-    issue._tag === "Unexpected" ||
-    issue.message.startsWith("Expected never")
-  ) {
-    return "Unexpected field";
-  }
-  return issue.message.replace(/, actual [\s\S]*$/u, "");
-}
-
-/** The result of a call that failed: `message` for the model to read, and the failure's fields. */
-function failed(message: string, structuredContent?: unknown) {
-  return {
-    isError: true,
-    content: [{ type: "text" as const, text: message }],
-    structuredContent,
-  };
-}
-
-function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
+function standard<A, I>(
+  schema: Schema.Schema<A, I>,
+): StandardSchemaWithJSON<I, A> {
   const definitions: Record<string, JSONSchema.JsonSchema7> = {};
   const root = JSONSchema.fromAST(schema.ast, {
     definitions,
     target: "jsonSchema2020-12",
     topLevelReferenceStrategy: "skip",
   });
-  return {
+  const json = () => ({
     ...root,
     ...(Object.keys(definitions).length === 0 ? {} : { $defs: definitions }),
+  });
+  return {
+    "~standard": {
+      ...Schema.standardSchemaV1(schema, { onExcessProperty: "error" })[
+        "~standard"
+      ],
+      jsonSchema: { input: json, output: json },
+    },
   };
 }
 
-/** The schema without `additionalProperties: false`, so a host accepts fields a result gains. */
-function openObjects(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(openObjects);
-  }
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(
-        ([key, nested]) => key !== "additionalProperties" || nested !== false,
-      )
-      .map(([key, nested]) => [key, openObjects(nested)]),
-  );
+/** A typed failure of a tool: what a model reads of it and the fields a host reads. */
+interface Failure {
+  readonly message: string;
+  readonly reason: string;
+  readonly detail?: unknown;
+  readonly checkId?: string;
+  readonly refusal?: string;
+  readonly rule?: string;
+  readonly feedback?: readonly string[];
+}
+
+/** The result of a call that failed: `message` as its text, and the failure's fields. */
+function failed(text: string, failure?: Failure) {
+  return {
+    isError: true as const,
+    content: [{ type: "text" as const, text }],
+    structuredContent: failure && {
+      reason: failure.reason,
+      checkId: failure.checkId,
+      refusal: failure.refusal,
+      rule: failure.rule,
+      feedback: failure.feedback,
+      detail: failure.detail,
+    },
+  };
 }

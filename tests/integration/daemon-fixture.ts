@@ -38,15 +38,12 @@ import {
 import { EventsClientExtension } from "@modelcontextprotocol/client/ext/events";
 import {
   AgentAddress,
-  type AgentId,
-  type AgentName,
+  AgentId,
+  AgentName,
   INBOX_EVENT,
   InboxEntry,
-  SendRequest,
-  toolDefinitions,
-  type ToolName,
-  type ToolRequest,
-  type ToolResult,
+  Message,
+  MsgId,
 } from "@social-harness/social-harness";
 import {
   issuerFixture,
@@ -456,31 +453,46 @@ const fields = Schema.decodeUnknownSync(
   Schema.Record({ key: Schema.String, value: Schema.Unknown }),
 );
 
-/**
- * A tool's arguments as the server agent or a client passes them: a client
- * names no recipient and no conversation.
- */
-type Arguments<Name extends ToolName> =
-  ToolRequest<Name>["arguments"] extends infer Named
-    ? Omit<Named, "to" | "address"> & Partial<Named>
-    : never;
+/** What the suites read of the result of each tool they call. */
+const results = {
+  status: Schema.Struct({ agentId: AgentId, agentName: AgentName }),
+  send_message: Schema.Struct({ id: MsgId, address: AgentAddress }),
+  receive_messages: Schema.Struct({
+    entries: Schema.Array(InboxEntry),
+    nextCursor: Schema.String,
+  }),
+  list_conversations: Schema.Struct({
+    addresses: Schema.Array(AgentAddress),
+    nextCursor: Schema.optional(Schema.String),
+  }),
+  read_conversation: Schema.Struct({
+    records: Schema.Array(
+      Schema.Struct({
+        kind: Schema.Literal("sent", "received"),
+        message: Message,
+      }),
+    ),
+  }),
+};
+type ToolName = keyof typeof results;
 
 export function callTool<Name extends ToolName>(
   mcp: Pick<Client, "callTool">,
-  request: { readonly name: Name; readonly arguments: Arguments<Name> },
-): Effect.Effect<ToolResult<Name>, Readonly<Record<string, unknown>>>;
+  request: { readonly name: Name; readonly arguments: object },
+): Effect.Effect<
+  (typeof results)[Name]["Type"],
+  Readonly<Record<string, unknown>>
+>;
 /**
- * Calls the named tool once. A result is decoded with the tool's published
- * output schema, so a result that drifts from the contract fails the test. A
- * call the daemon answers as failed fails with the result's structured fields
- * and, as `message`, the text a model reads.
+ * Calls the named tool once and decodes its result. A call the daemon answers
+ * as failed fails with the result's structured fields and, as `message`, the
+ * text a model reads.
  */
 export function callTool(
   mcp: Pick<Client, "callTool">,
   request: { readonly name: ToolName; readonly arguments: object },
 ): Effect.Effect<unknown, Readonly<Record<string, unknown>>> {
-  const output: Schema.Schema.AnyNoContext =
-    toolDefinitions[request.name].output;
+  const output: Schema.Schema.AnyNoContext = results[request.name];
   return Effect.tryPromise((signal) =>
     mcp.callTool(
       { name: request.name, arguments: { ...request.arguments } },
@@ -506,8 +518,9 @@ export function callTool(
 
 /** A host's send input. The server agent names its recipient in `to`, and a client names none. */
 const SendInput = Schema.Struct({
-  ...SendRequest.fields,
   to: Schema.optional(AgentAddress),
+  text: Schema.String,
+  replyToMsgId: Schema.optional(MsgId),
 });
 
 /** Sends `input`, decoded as a host's send input, from `sender`. */

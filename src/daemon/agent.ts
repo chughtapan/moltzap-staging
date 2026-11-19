@@ -31,17 +31,6 @@ import {
 } from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
-  addressedAgent,
-  addressOf,
-  AgentAddress,
-  HistoryError,
-  type HistoryRecord,
-  SendError,
-  type SendRequest,
-  type SendResult,
-  type ToolResult,
-} from "../mcp/tools.js";
-import {
   type CursorError,
   decodeCursor,
   encodeCursor,
@@ -49,6 +38,19 @@ import {
   makeInbox,
   type Unchecked,
 } from "./inbox.js";
+import {
+  addressedAgent,
+  addressOf,
+  AgentAddress,
+  type ConversationsPage,
+  HistoryError,
+  type HistoryRecord,
+  type HistoryRecordsPage,
+  type InboxPage,
+  SendError,
+  type SendRequest,
+  type SendResult,
+} from "./values.js";
 
 const conversationsCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
@@ -77,7 +79,7 @@ interface SocialHarnessService {
    */
   readonly receive: (request: {
     readonly cursor?: string;
-  }) => Effect.Effect<ToolResult<"receive_messages">>;
+  }) => Effect.Effect<InboxPage>;
   /**
    * Lists the addresses of the agent's conversations.
    * Omitting the cursor starts a live traversal. Follow `nextCursor` until
@@ -85,7 +87,7 @@ interface SocialHarnessService {
    */
   readonly listConversations: (
     request?: PaginatedRequest,
-  ) => Effect.Effect<ToolResult<"list_conversations">, HistoryError>;
+  ) => Effect.Effect<ConversationsPage, HistoryError>;
   /**
    * Pages include only history available at the first read. Rule edits leave
    * stored inbox entries as they are. Start a new traversal after reconnecting
@@ -93,7 +95,7 @@ interface SocialHarnessService {
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
+  ) => Effect.Effect<HistoryRecordsPage, HistoryError>;
 }
 
 /**
