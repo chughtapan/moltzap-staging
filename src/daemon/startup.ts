@@ -21,7 +21,6 @@ import {
 } from "../database.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
-import { AgentAddress } from "../mcp/tools.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
@@ -37,11 +36,8 @@ import {
   refused,
   spanExport,
 } from "./settings.js";
-import {
-  clientTools,
-  makeInboxEvents,
-  serverAgentTools,
-} from "./tool-server.js";
+import { makeInboxEvents } from "./tool-server.js";
+import { AgentAddress } from "./values.js";
 
 /**
  * One agent's role, and everything that follows from it. Every conversation
@@ -67,21 +63,18 @@ function roleOf(
         settings.messagePolicy,
         norms?.contracts,
       ),
-      tools: serverAgentTools(norms !== undefined),
+      serverAgent: undefined,
+      serverAgentContracts: undefined,
     };
   }
   return {
     withheldReply: undefined,
     firewall: Firewall.layer(agentKey),
-    tools: clientTools(
-      AgentAddress.make(`agent:${serverAgent.name}`),
-      norms === undefined
-        ? undefined
-        : contractsOf({
-            issuer: settings.authentication.issuer,
-            subject: serverAgent.subject,
-          }),
-    ),
+    serverAgent: AgentAddress.make(`agent:${serverAgent.name}`),
+    serverAgentContracts: contractsOf({
+      issuer: settings.authentication.issuer,
+      subject: serverAgent.subject,
+    }),
   };
 }
 
@@ -189,7 +182,7 @@ function runningAgents(settings: DaemonSettings) {
       owner: Owner,
     ): Effect.Effect<readonly CompiledContract[]> {
       return agentOfOwner(owner).pipe(
-        Effect.flatMap((agent) => agent.readContracts()),
+        Effect.flatMap((agent) => agent.firewall.readContracts()),
         Effect.orDie,
       );
     }
@@ -198,8 +191,8 @@ function runningAgents(settings: DaemonSettings) {
 }
 
 /**
- * Starts one agent: its services, which run until the scope closes, and from
- * them its tools and the read of the contracts it holds.
+ * Starts one agent: its services, which run until the scope closes, and what
+ * its role gives its tools.
  * `consumers` holds the latch each agent's consumer waits on, which a send to
  * that agent opens.
  */
@@ -235,10 +228,17 @@ function startAgent(
         ),
       ),
     );
+    const firewall = Context.get(services, Firewall);
     return {
       agentKey,
-      tools: yield* role.tools().pipe(Effect.provide(services)),
-      readContracts: Context.get(services, Firewall).readContracts,
+      card,
+      harness: Context.get(services, SocialHarness),
+      firewall,
+      serverAgent: role.serverAgent,
+      norms:
+        settings.norms === undefined
+          ? undefined
+          : (role.serverAgentContracts ?? firewall.readContracts()),
     };
   }).pipe(Effect.withSpan("startAgent"));
 }

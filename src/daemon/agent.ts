@@ -32,23 +32,29 @@ import {
   type IncomingDecision,
 } from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
+import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 import {
   addressedAgent,
   addressOf,
   type AgentAddress,
+  type Conversations,
   HistoryError,
   type HistoryRecord,
+  type HistoryRecordsPage,
+  type InboxPage,
   SendError,
   type SendRequest,
   type SendResult,
-  type ToolRequest,
-  type ToolResult,
-} from "../mcp/tools.js";
-import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
+} from "./values.js";
 
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: AgentAddress;
+}
+/** One inbox read: the cursor to read after and, in seconds, how long to wait for an entry when none follows it. */
+interface ReceiveRequest {
+  readonly cursor?: string;
+  readonly wait?: number;
 }
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
@@ -67,21 +73,16 @@ interface SocialHarnessService {
    * cursor the read starts from now. With `wait` and no entry to return, it
    * reads once more when an entry becomes readable or `wait` seconds pass.
    */
-  readonly receive: (
-    request: ToolRequest<"receive_messages">["arguments"],
-  ) => Effect.Effect<ToolResult<"receive_messages">>;
+  readonly receive: (request: ReceiveRequest) => Effect.Effect<InboxPage>;
   /** The address of every conversation of the agent, in order. */
-  readonly listConversations: () => Effect.Effect<
-    ToolResult<"list_conversations">,
-    HistoryError
-  >;
+  readonly listConversations: () => Effect.Effect<Conversations, HistoryError>;
   /**
    * A page of a conversation's records, oldest first, after the cursor an
    * earlier page returned. Rule edits leave stored inbox entries as they are.
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
+  ) => Effect.Effect<HistoryRecordsPage, HistoryError>;
 }
 
 /**
@@ -203,10 +204,7 @@ function makeHarness(settings: HarnessSettings) {
  * One read of the inbox. A waiting read subscribes before it reads, so an
  * entry that becomes readable after the read is not missed.
  */
-function receive(
-  agent: Agent,
-  { cursor, wait }: ToolRequest<"receive_messages">["arguments"],
-) {
+function receive(agent: Agent, { cursor, wait }: ReceiveRequest) {
   const read = (from: typeof cursor) =>
     agent.inbox.listInbox(PAGE_SIZE, from).pipe(
       Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),

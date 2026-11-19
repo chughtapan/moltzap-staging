@@ -16,7 +16,7 @@ import {
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import { AgentAddress, InboxEntry } from "../mcp/tools.js";
+import { AgentAddress, InboxEntry } from "./values.js";
 
 const uncheckedRow = exactStruct({
   address: AgentAddress,

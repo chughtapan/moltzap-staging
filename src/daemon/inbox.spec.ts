@@ -5,9 +5,9 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
-import { AgentAddress } from "../mcp/tools.js";
 import { openTestDatabase } from "../test.js";
 import { type Inbox, makeInbox } from "./inbox.js";
+import { AgentAddress } from "./values.js";
 
 const allowed = { kind: "allowed", save: Effect.void } as const;
 const withheld = {

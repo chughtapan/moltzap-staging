@@ -27,7 +27,6 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
-import { AgentAddress } from "../mcp/tools.js";
 import {
   composedPolicy,
   decisionResponse,
@@ -35,6 +34,7 @@ import {
   makeHarnessFixture,
   waitForInbox,
 } from "./__tests__/service-fixtures.js";
+import { AgentAddress } from "./values.js";
 
 const bobAddress = AgentAddress.make("agent:bob");
 const carolAddress = AgentAddress.make("agent:carol");

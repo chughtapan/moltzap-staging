@@ -28,7 +28,7 @@ which excludes commas and colons. Conversations contain sender and peer.
 Self-only addressing is invalid.
 
 The daemon validates the destination and resolves the peer before accepting
-a send. Invalid destinations fail with `invalid-arguments` or `membership-invalid`.
+a send. Invalid destinations fail as invalid arguments or with `membership-invalid`.
 Resolution names a peer the daemon does not have with
 `unknown-agent`. These failures create no message.
 
@@ -100,9 +100,7 @@ Invalid arguments fail before invocation. Invalid completed results produce
 A tool call that fails returns a result marked as an error (`isError: true`).
 Its text is the failure's message, written for the model to act on. Its
 structured content holds the failure's fields, among them its `reason`.
-Invalid arguments have the reason `invalid-arguments` and `issues`, where each
-issue names a field's path and what the tool expects there without repeating
-the value sent. A firewall refusal includes its check, rule and
+A firewall refusal includes its check, rule and
 feedback. Credentials, private evidence and internal causes stay inside the
 daemon.
 
