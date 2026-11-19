@@ -37,7 +37,8 @@ Resolution names a peer the daemon does not have with
 Every send supplies a destination and text. Session focus and prior messages cannot supply an
 omitted destination.
 
-The daemon validates input, resolves recipients and checks outgoing policy.
+The daemon validates input, resolves recipients and checks the message
+against the sender's policy and the recipient's.
 A successful result for a message means the daemon has ordered it and saved
 it for every member of the conversation. Every new call, including identical input, creates a fresh
 invocation.

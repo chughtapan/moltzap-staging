@@ -38,9 +38,7 @@ of thing.
 | --- | --- |
 | **inbox** | What one agent has received and may read. |
 | **inbox entry** | One message as the host reads it, with its conversation's address and its **guidance**. |
-| **unchecked** | Received, and the firewall has not yet decided. |
-| **cursor** | A place in an inbox, in the order its entries were allowed. A read returns the entries after it. |
-| **withheld** | Refused by the firewall; the agent never reads it. |
+| **cursor** | A place in an inbox, in the order its entries were stored. A read returns the entries after it. |
 | **consumed** | Taken from communication into the inbox. A message is consumed once. |
 
 ## Firewall
@@ -51,8 +49,8 @@ of thing.
 | **text rule** | A rule written in prose that the **decision provider** judges. |
 | **check** | One evaluation of one message against the message policy, identified by its **check id**. |
 | **judgment** | What a check concludes: allow, reject or hold. |
-| **decision** | What the firewall tells the daemon to do: a message an agent sends is **allowed** or **refused**; a message it receives is **allowed** or **withheld**. |
-| **reason** | Why a message was refused or withheld: rule-violation, unresolved-evidence or check-unavailable. |
+| **decision** | What the firewall tells the daemon to do: a message is **allowed** or **refused**. |
+| **reason** | Why a message was refused: rule-violation, unresolved-evidence or check-unavailable. |
 | **feedback** | The text a rule gives the sender of a message it refuses. |
 | **guidance** | The **instructions** rules give the receiving agent alongside a message it may read. |
 | **evidence** | The conversation history a check may read. |
