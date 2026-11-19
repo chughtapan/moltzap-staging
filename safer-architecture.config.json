@@ -80,7 +80,8 @@
         "src/mcp"
       ],
       "entrypoints": [
-        "src/mcp/index.ts",
+        "src/mcp/connection.ts",
+        "src/mcp/groups.ts",
         "src/mcp/tools.ts"
       ],
       "reason": "What crosses MCP between a host and the daemon: the tool contracts and a host's connection"
