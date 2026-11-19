@@ -28,7 +28,11 @@ import {
 import { Communication, type HistoryPage } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
-import { Firewall, type IncomingDecision } from "../firewall/service.js";
+import {
+  defaultConcurrentChecks,
+  Firewall,
+  type IncomingDecision,
+} from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
   addressOf,
@@ -158,7 +162,8 @@ function makeHarness(settings: HarnessSettings) {
     const wake = yield* Queue.sliding<undefined>(1);
     const changes = yield* PubSub.sliding<undefined>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
-    const capacity = settings.maximumConcurrentChecks ?? 4;
+    const capacity =
+      settings.maximumConcurrentChecks ?? defaultConcurrentChecks;
     const agent: Agent = {
       card: identity.me,
       identity,

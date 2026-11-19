@@ -158,7 +158,6 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | `decisionProvider` | Required with `text` and for held norms with English rules: `{model}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
 | `facts` | Owner facts for every check; default `[]`. |
-| `maximumHistoryRecords` | Default 256; [window bounds](#available-history). |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
 
 Unknown properties and unsupported values fail. Trusted process composition may

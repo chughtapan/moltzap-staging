@@ -82,6 +82,9 @@ const settingsFile = exactStruct({
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),
+  maximumHistoryRecords: Schema.optional(
+    Schema.Int.pipe(Schema.between(1, 1024)),
+  ),
 });
 
 /**

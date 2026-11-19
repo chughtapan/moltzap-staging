@@ -114,7 +114,6 @@ describe("policy documents", () => {
         decisionProviderKeyFile: Redacted.make(file("key-value")),
       });
       expect(policy.maximumConcurrentChecks).toBe(2);
-      expect(policy.maximumHistoryRecords).toBeUndefined();
       expect(policy.textSettings.timeoutMilliseconds).toBeGreaterThan(0);
     }));
 

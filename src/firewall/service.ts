@@ -298,8 +298,8 @@ interface Installation {
 
 const storedPolicyFormat = "org.social-harness/editable-policy/v1";
 
-/** How many checks run at once under a policy that sets no `maximumConcurrentChecks`. */
-const defaultConcurrentChecks = 4;
+/** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
+export const defaultConcurrentChecks = 4;
 
 const storedPolicySchema = exactStruct({
   format: Schema.Literal(storedPolicyFormat),

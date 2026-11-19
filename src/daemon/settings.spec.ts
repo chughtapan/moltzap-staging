@@ -2,7 +2,13 @@
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { ConfigProvider, Effect, FastCheck as fc, Redacted } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  Either,
+  FastCheck as fc,
+  Redacted,
+} from "effect";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { loadDaemonSettings } from "./settings.js";
@@ -206,6 +212,25 @@ it("refuses a norms directory whose document does not compile", () =>
     expect(failure.message).toContain("norms directory");
   }).pipe(Effect.provide(NodeContext.layer)));
 
+it.prop(
+  "takes a history limit of 1 to 1024 records and refuses any other",
+  [fc.integer({ min: -8, max: 1040 })],
+  ([maximumHistoryRecords]) =>
+    Effect.gen(function* () {
+      const test = yield* fixture;
+      yield* test.write({ ...settings, maximumHistoryRecords });
+
+      const loaded = yield* test.load.pipe(Effect.either);
+
+      expect(Either.getOrUndefined(loaded)?.maximumHistoryRecords).toBe(
+        maximumHistoryRecords >= 1 && maximumHistoryRecords <= 1024
+          ? maximumHistoryRecords
+          : undefined,
+      );
+    }).pipe(Effect.provide(NodeContext.layer)),
+  { fastCheck: { numRuns: 40 } },
+);
+
 const knownSettings = new Set([
   ...Object.keys(settings),
   "serverAgent",
@@ -213,6 +238,7 @@ const knownSettings = new Set([
   "messagePolicyFile",
   "decisionProviderKeyFile",
   "normsDirectory",
+  "maximumHistoryRecords",
 ]);
 
 /** One setting no daemon serves: a port outside 1 to 65535, a setting the document does not have, or a server agent name that is not an agent name. */
