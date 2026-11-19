@@ -25,12 +25,11 @@ import {
  * What the contracts say of one message. `unconfigured` means none governs
  * its conversation. `ready` means its structure and its place in the protocol
  * hold, and gives the record its check saves. `refused` gives the problem.
- * Each carries the conversation's protocol view and the contracts consulted;
+ * Each carries the conversation's protocol view;
  * `selected` is the contract the message was read under, once one was found.
  */
 export type ContractCheck = {
   readonly view: ProtocolView;
-  readonly contracts: readonly CompiledContract[];
   readonly selected?: CompiledContract;
 } & (
   | { readonly kind: "unconfigured" }
@@ -99,7 +98,7 @@ export const prepareContract = Effect.fn("prepareContract")(function* (
     selected = contract;
     const form = yield* checkStructure(contract, act);
     const record = yield* checkProtocol(view, contract, form, {
-      ...("replyToMsgId" in message && message.replyToMsgId !== undefined
+      ...(message.replyToMsgId !== undefined
         ? { replyToMsgId: message.replyToMsgId }
         : {}),
       act,
@@ -115,7 +114,6 @@ export const prepareContract = Effect.fn("prepareContract")(function* (
   return {
     ...checked,
     view,
-    contracts,
     ...(selected === undefined ? {} : { selected }),
   } satisfies ContractCheck;
 });

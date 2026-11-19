@@ -67,17 +67,13 @@ export function issuesText(
 /**
  * Check `reason` before retrying. A send with `outcome-unknown` may already
  * have happened, so a new send can duplicate it. The host may show `message`
- * to its agent. Validation issues omit rejected values.
+ * to its agent.
  */
 export class SendError extends Data.TaggedError("SendError")<{
   readonly reason: SendFailure;
   readonly detail?: string;
-  readonly issues?: readonly ValidationIssue[];
 }> {
   override get message(): string {
-    const cause = this.detail ?? sendFailureText[this.reason];
-    return this.issues === undefined || this.issues.length === 0
-      ? `send failed: ${cause}`
-      : `send failed: ${cause}: ${issuesText(this.issues)}`;
+    return `send failed: ${this.detail ?? sendFailureText[this.reason]}`;
   }
 }

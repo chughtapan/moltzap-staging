@@ -41,53 +41,54 @@ export const MessageAddress = Schema.Union(AgentAddress, GroupAddress);
 /** @useDeclaredType */
 export type MessageAddress = typeof MessageAddress.Type;
 
-/** A destination in canonical form, before its names are resolved. */
-type CanonicalMessageAddress =
-  | {
-      readonly kind: "direct";
-      readonly address: AgentAddress;
-      readonly remoteName: AgentName;
-    }
-  | {
-      readonly kind: "group";
-      readonly address: GroupAddress;
-      readonly memberNames: readonly AgentName[];
-    };
+/** A destination's canonical address and the agents it names other than the local one. */
+interface Destination {
+  readonly address: MessageAddress;
+  readonly others: readonly AgentName[];
+}
 
 /**
- * Canonicalizes a destination before its names are resolved. Groups include the local
- * agent, reject duplicate names, and sort names in unsigned ASCII order.
- * One peer becomes a direct address. Larger groups contain 3 to `maximumMembers`
- * agents. Invalid names and membership return `invalid-address` or
- * `membership-invalid`. With `hideGroups`, a group destination is refused.
+ * Canonicalizes a destination. A group includes the local agent and names no
+ * agent twice, and a group of one other agent is that agent's address. An
+ * address that names only the local agent, and with `hideGroups` any group,
+ * is refused.
  */
 export function canonicalMessageAddress(
   to: MessageAddressInput,
   localAgentName: AgentName,
   hideGroups = false,
-): Effect.Effect<CanonicalMessageAddress, SendError> {
+): Effect.Effect<Destination, SendError> {
+  const direct = (other: AgentName): Effect.Effect<Destination, SendError> =>
+    other === localAgentName
+      ? Effect.fail(
+          new SendError({
+            reason: "membership-invalid",
+            detail: "the address names only you",
+          }),
+        )
+      : Effect.succeed({
+          address: AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${other}`),
+          others: [other],
+        });
   if (to.startsWith(AGENT_ADDRESS_PREFIX)) {
-    return canonicalDirect(to, localAgentName);
+    return direct(AgentName.make(to.slice(AGENT_ADDRESS_PREFIX.length)));
   }
-  return hideGroups
-    ? Effect.fail(
-        new SendError({
-          reason: "invalid-address",
-          detail:
-            "this daemon does not offer groups; address one agent as agent:<name>",
-        }),
-      )
-    : canonicalGroup(to, localAgentName);
-}
-
-/** The members of a canonical destination other than the local agent. */
-export function otherMemberNames(
-  destination: CanonicalMessageAddress,
-  localAgentName: AgentName,
-): readonly AgentName[] {
-  return destination.kind === "direct"
-    ? [destination.remoteName]
-    : destination.memberNames.filter((name) => name !== localAgentName);
+  if (hideGroups) {
+    return Effect.fail(
+      new SendError({
+        reason: "invalid-address",
+        detail:
+          "this daemon does not offer groups; address one agent as agent:<name>",
+      }),
+    );
+  }
+  return Effect.flatMap(groupMembers(to, localAgentName), (members) => {
+    const others = members.filter((name) => name !== localAgentName);
+    const [other, ...rest] = others;
+    return other !== undefined && rest.length === 0
+      ? direct(other)
+      : Effect.succeed({ address: groupAddressOf(members), others });
+  });
 }
 
 /** The canonical address, as the local agent states it, of the conversation among `members`. */
@@ -176,20 +177,6 @@ export type SendResult = typeof SendResultSchema.Type;
 /** The most inbox entries, history records or conversation addresses one page holds. */
 export const PAGE_SIZE = 50;
 
-/**
- * One record of a conversation's history: a message this agent sent, or the
- * stored inbox entry of a message it received.
- */
-export type HistoryRecord =
-  | { readonly kind: "sent"; readonly message: Message }
-  | ({
-      readonly kind: "received";
-      readonly message: {
-        readonly authorAgentId: Message["author"]["agentId"];
-        readonly msgId: Message["msgId"];
-      };
-    } & StoredInboxEntry);
-
 const historyFailureText = {
   "invalid-address": "the address is not a valid agent: or group: address",
   "unknown-agent": "an agent the address names is not a known agent",
@@ -252,6 +239,12 @@ const historyRecordSchema = Schema.Union(
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
 );
+
+/**
+ * One record of a conversation's history: a message this agent sent, or the
+ * stored inbox entry of a message it received.
+ */
+export type HistoryRecord = typeof historyRecordSchema.Type;
 
 /** This agent's identifier and name, readable while communication is still starting. */
 const statusOutput = Schema.Struct({
@@ -489,60 +482,6 @@ export type ToolRequest<Name extends ToolName = ToolName> = {
 export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
   (typeof toolDefinitions)[Name]["output"]
 >;
-
-function invalidAddress(): SendError {
-  return new SendError({ reason: "invalid-address" });
-}
-
-function invalidMembership(detail: string): SendError {
-  return new SendError({ reason: "membership-invalid", detail });
-}
-
-function decodeAgentName(name: string): Effect.Effect<AgentName, SendError> {
-  return Schema.decodeUnknown(AgentName)(name).pipe(
-    Effect.mapError(invalidAddress),
-  );
-}
-
-function canonicalDirect(
-  to: MessageAddressInput,
-  localAgentName: AgentName,
-): Effect.Effect<CanonicalMessageAddress, SendError> {
-  return Effect.gen(function* () {
-    const remoteName = yield* decodeAgentName(
-      to.slice(AGENT_ADDRESS_PREFIX.length),
-    );
-    if (remoteName === localAgentName) {
-      return yield* invalidMembership("the address names only you");
-    }
-    const address = yield* Schema.decodeUnknown(AgentAddress)(to).pipe(
-      Effect.mapError(invalidAddress),
-    );
-    return { kind: "direct", address, remoteName };
-  });
-}
-
-function canonicalGroup(
-  to: MessageAddressInput,
-  localAgentName: AgentName,
-): Effect.Effect<CanonicalMessageAddress, SendError> {
-  return Effect.gen(function* () {
-    const memberNames = yield* groupMembers(to, localAgentName);
-    const [other, ...rest] = memberNames.filter(
-      (name) => name !== localAgentName,
-    );
-    return other !== undefined && rest.length === 0
-      ? yield* canonicalDirect(
-          MessageAddressInput.make(`${AGENT_ADDRESS_PREFIX}${other}`),
-          localAgentName,
-        )
-      : {
-          kind: "group" as const,
-          address: groupAddressOf(memberNames),
-          memberNames: [...memberNames].sort(compareAscii),
-        };
-  });
-}
 
 function addressesAreOrdered(addresses: readonly string[]): boolean {
   return isStrictlyAscending(addresses, compareAscii);

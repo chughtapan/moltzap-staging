@@ -256,13 +256,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
           }
         }),
       ),
-    saveCheckRecords: (records: readonly CheckRecord[]) =>
-      run(
-        Effect.forEach(records, saveCheckRecord, {
-          discard: true,
-          concurrency: 1,
-        }),
-      ),
+    saveCheckRecord: (record: CheckRecord) => run(saveCheckRecord(record)),
     readDecisions: (request: { readonly since?: number }) =>
       run(
         Effect.gen(function* () {

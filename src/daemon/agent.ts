@@ -43,7 +43,6 @@ import {
   type InboxError,
   type InboxPage,
   MessageAddress,
-  otherMemberNames,
   PAGE_SIZE,
   type SendRequest,
   type SendResult,
@@ -64,7 +63,6 @@ const historyCursor = Schema.Struct({
 const conversationsCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
   address: MessageAddress,
-  communicationCursor: Schema.optional(Schema.String),
 });
 
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
@@ -253,11 +251,7 @@ function send(agent: Agent, input: SendRequest) {
         agent.card.agentName,
         agent.settings.hideGroups,
       );
-      const outgoing = yield* outgoingFor(
-        agent,
-        request,
-        otherMemberNames(destination, agent.card.agentName),
-      );
+      const outgoing = yield* outgoingFor(agent, request, destination.others);
       const evidence = yield* evidenceFor(agent, [
         outgoing.author,
         ...outgoing.recipients,
@@ -373,51 +367,23 @@ function waitForInbox(
 
 function listConversations(agent: Agent, request: PaginatedRequest) {
   return Effect.gen(function* () {
-    const position =
+    const after =
       request.cursor === undefined
-        ? undefined
-        : yield* decodeCursor(conversationsCursor, request.cursor);
-    const afterAddress = position?.address ?? "";
-    const addresses = new Set<MessageAddress>();
-    let nextPageCursor = position?.communicationCursor;
-    let lastPageCursor = nextPageCursor;
-    let morePages = true;
-    while (morePages) {
-      lastPageCursor = nextPageCursor;
-      const page = yield* agent.communication.listConversations(
-        lastPageCursor === undefined ? {} : { cursor: lastPageCursor },
-      );
-      const observed = page.conversations.map((members) =>
-        addressOf(members, agent.card.agentId),
-      );
-      for (const address of observed.filter((each) => each > afterAddress)) {
-        addresses.add(address);
-      }
-      nextPageCursor = page.nextCursor;
-      morePages = nextPageCursor !== undefined;
-      const firstAddressPastPage = [...addresses].sort(compareAscii)[PAGE_SIZE];
-      const lastObserved = observed[observed.length - 1];
-      if (
-        firstAddressPastPage !== undefined &&
-        ((lastObserved !== undefined && lastObserved >= firstAddressPastPage) ||
-          !morePages)
-      ) {
-        break;
-      }
-    }
-    const ordered = [...addresses].sort(compareAscii);
-    const selected = ordered.slice(0, PAGE_SIZE);
-    const last = selected[selected.length - 1];
+        ? ""
+        : (yield* decodeCursor(conversationsCursor, request.cursor)).address;
+    const addresses = (yield* agent.communication.listConversations)
+      .map((members) => addressOf(members, agent.card.agentId))
+      .filter((address) => address > after)
+      .sort(compareAscii);
+    const selected = addresses.slice(0, PAGE_SIZE);
+    const last = selected.at(-1);
     return {
       addresses: selected,
-      ...(last !== undefined && (ordered.length > PAGE_SIZE || morePages)
+      ...(last !== undefined && addresses.length > PAGE_SIZE
         ? {
             nextCursor: yield* encodeCursor(conversationsCursor, {
               operation: "conversations",
               address: last,
-              ...(lastPageCursor === undefined
-                ? {}
-                : { communicationCursor: lastPageCursor }),
             }),
           }
         : {}),
@@ -426,7 +392,7 @@ function listConversations(agent: Agent, request: PaginatedRequest) {
 }
 
 function readHistory(agent: Agent, request: ReadHistoryRequest) {
-  const { card, communication } = agent;
+  const { card } = agent;
   return Effect.gen(function* () {
     const destination = yield* canonicalMessageAddress(
       request.address,
@@ -442,21 +408,16 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (position !== undefined && position.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-cursor" });
     }
-    const names = otherMemberNames(destination, card.agentName);
-    const members = yield* communication.getConversation([
-      card.agentName,
-      ...names,
-    ]);
-    if (members === undefined) {
-      if (position !== undefined) {
-        return yield* new HistoryError({ reason: "invalid-cursor" });
-      }
-      yield* agent.identity.resolve(names);
+    const [first, ...rest] = [
+      card,
+      ...(yield* agent.identity.resolve(destination.others)),
+    ].sort((a, b) => compareAscii(a.agentName, b.agentName));
+    if (first === undefined || rest[0] === undefined) {
       return yield* new HistoryError({ reason: "invalid-address" });
     }
     const page = yield* messageRecords(
       agent,
-      members,
+      [first, rest[0], ...rest.slice(1)],
       position?.communicationCursor,
     );
     return {

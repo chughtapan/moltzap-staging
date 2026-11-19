@@ -56,7 +56,6 @@ const inboxCursor = Schema.Struct({
  * delivery token its inbox entry takes.
  */
 export interface Unchecked {
-  readonly sequence: number;
   readonly token: DeliveryToken;
   readonly address: MessageAddress;
   readonly message: Message;
@@ -163,7 +162,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         Effect.map((rows) =>
           rows.map(
             (row): Unchecked => ({
-              sequence: row.sequence,
               token: row.delivery_token,
               address: row.address,
               message: row.unchecked,
