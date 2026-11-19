@@ -519,6 +519,9 @@ export const Page = exactStruct({
  */
 export type Page = typeof Page.Type;
 
+/** The most inbox entries, history records or conversation addresses one page holds. */
+export const PAGE_SIZE = 50;
+
 /** Recipients exclude the author and appear once each in agent-name order. */
 const AuthorAndRecipients = exactStruct({
   author: AgentCard,

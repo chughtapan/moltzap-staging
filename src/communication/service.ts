@@ -25,6 +25,7 @@ import {
   messageMembers,
   type MessageReference,
   type Page,
+  PAGE_SIZE,
   type PaginatedRequest,
 } from "./messages.js";
 import {
@@ -240,7 +241,7 @@ function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
       after: -1,
       through,
       newestFirst: false,
-      limit: 50,
+      limit: PAGE_SIZE,
     };
     return query.cursor === undefined
       ? window

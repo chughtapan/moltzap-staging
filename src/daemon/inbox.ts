@@ -7,6 +7,7 @@ import type { IncomingDecision } from "../firewall/service.js";
 import {
   Message,
   type MessageReference,
+  PAGE_SIZE,
   type PaginatedRequest,
 } from "../communication/index.js";
 import {
@@ -28,7 +29,6 @@ import {
   InboxError,
   type InboxPage,
   MessageAddress,
-  PAGE_SIZE,
   StoredInboxEntry,
 } from "../mcp/tools.js";
 

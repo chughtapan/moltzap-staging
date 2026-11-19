@@ -6,6 +6,7 @@ import {
   Message,
   MsgId,
   Page,
+  PAGE_SIZE,
   PaginatedRequest,
   wellFormedString,
 } from "../communication/index.js";
@@ -242,9 +243,6 @@ const SendResultSchema = Schema.Struct({
 /** Accepted work continues independently of the caller's lifetime. */
 export type SendResult = typeof SendResultSchema.Type;
 
-/** The most inbox entries, history records or conversation addresses one page holds. */
-export const PAGE_SIZE = 50;
-
 const historyFailureText = {
   ...addressFailureText,
   "invalid-cursor":
@@ -326,7 +324,7 @@ const listConversationsInput = exactStruct({
 
 /** At most fifty canonical addresses and an opaque position for the next page. */
 const listConversationsOutput = Schema.Struct({
-  addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(50)),
+  addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(PAGE_SIZE)),
   ...Page.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
@@ -336,7 +334,7 @@ const readConversationInput = exactStruct({
 });
 
 const readConversationOutput = Schema.Struct({
-  records: Schema.Array(historyRecordSchema).pipe(Schema.maxItems(50)),
+  records: Schema.Array(historyRecordSchema).pipe(Schema.maxItems(PAGE_SIZE)),
   ...Page.fields,
 });
 

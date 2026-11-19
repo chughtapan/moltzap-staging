@@ -9,6 +9,7 @@ export {
   messageWithId,
   MsgId,
   Page,
+  PAGE_SIZE,
   PaginatedRequest,
   RequestedSchema,
   validateResponseContent,

@@ -23,6 +23,7 @@ import {
   messageWithId,
   MsgId,
   type Page,
+  PAGE_SIZE,
   type PaginatedRequest,
 } from "../communication/index.js";
 import {
@@ -43,7 +44,6 @@ import {
   type InboxPage,
   MessageAddress,
   type MessageAddressInput,
-  PAGE_SIZE,
   SendError,
   type SendRequest,
   type SendResult,
