@@ -14,22 +14,38 @@
  * - `configure(changes)`: changes the settings the next start reads.
  * - `bearer(owner)`: what the host of a named owner presents. The owner
  *   `SERVER_AGENT_OWNER` is the server agent's, and any other is a client's.
- * - `signIn(bearer)` and `signInAs(owner)`: an MCP connection, and the agent
+ * - `signInAs(owner)`: an MCP connection as the owner's agent, and the agent
  *   `status` reports for it.
  *
  * The options are settings that replace the fixture's. `managedProcess`,
  * `awaitReady` and `daemonListening` start and await a daemon that runs some
  * other way, such as in a container.
+ *
+ * A suite drives the signed-in agents as their hosts do, through the official
+ * MCP client: `callTool` calls one tool, `send` sends a message,
+ * `inboxStream` reads an inbox, and `joinParticipants` signs owners in and
+ * queues what each agent receives for `nextItem` and `receivedOrder`.
+ * `processTrace` makes a trace a vitest test whose children stop with it.
  */
 
+import type { Client } from "@modelcontextprotocol/client";
+import type { TestContext } from "vitest";
 import { FileSystem } from "@effect/platform";
-import { NodeFileSystem } from "@effect/platform-node";
+import { NodeContext, NodeFileSystem } from "@effect/platform-node";
 import {
   acquireMcpConnection,
   AgentAddress,
   type AgentId,
   type AgentName,
+  type InboxEntry,
   type McpConnection,
+  MessageAddressInput,
+  type PermittedItem,
+  SendRequest,
+  toolDefinitions,
+  type ToolName,
+  type ToolRequest,
+  type ToolResult,
 } from "@social-harness/social-harness";
 import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
@@ -45,15 +61,18 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
+  Queue,
   Redacted,
   Ref,
+  Schema,
   type Scope,
+  Stream,
 } from "effect";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { callTool } from "../tool-call.js";
 
 /** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
@@ -111,9 +130,6 @@ export interface Daemon {
   readonly bearer: (
     owner: string,
   ) => Effect.Effect<Redacted.Redacted, ProcessTestError>;
-  readonly signIn: (
-    bearer: Redacted.Redacted,
-  ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
   readonly signInAs: (
     owner: string,
   ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
@@ -131,7 +147,7 @@ const POLL_INTERVAL = Duration.millis(25);
 
 const WORKSPACE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../..",
+  "../..",
 );
 
 /** Children use the current Node installation and system executables. */
@@ -436,7 +452,6 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
       startupFailure(spawned(changes), endpoint),
     configure,
     bearer,
-    signIn: (presented) => signIn(endpoint, directory, presented),
     signInAs: (owner) =>
       Effect.flatMap(bearer(owner), (presented) =>
         signIn(endpoint, directory, presented),
@@ -444,3 +459,156 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   };
   return daemon;
 }, Effect.provide(NodeFileSystem.layer));
+
+/** The agent's inbox entries as they arrive. Each read records delivery before its entries reach the test. */
+export function inboxStream(connection: McpConnection) {
+  return Stream.repeatEffect(
+    callTool(connection.mcp, { name: "receive_messages", arguments: {} }),
+  ).pipe(
+    Stream.flatMap((page) =>
+      page.entries.length === 0
+        ? Stream.fromEffect(Effect.sleep("50 millis")).pipe(Stream.drain)
+        : Stream.fromIterable(page.entries),
+    ),
+  );
+}
+
+const fields = Schema.decodeUnknownSync(
+  Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+);
+
+/**
+ * A tool's arguments as the server agent or a client passes them: a client
+ * names no recipient and no conversation.
+ */
+type Arguments<Name extends ToolName> =
+  ToolRequest<Name>["arguments"] extends infer Named
+    ? Omit<Named, "to" | "address"> & Partial<Named>
+    : never;
+
+export function callTool<Name extends ToolName>(
+  mcp: Pick<Client, "callTool">,
+  request: { readonly name: Name; readonly arguments: Arguments<Name> },
+): Effect.Effect<ToolResult<Name>, Readonly<Record<string, unknown>>>;
+/**
+ * Calls the named tool once. A result is decoded with the tool's published
+ * output schema, so a result that drifts from the contract fails the test. A
+ * call the daemon answers as failed fails with the result's structured fields
+ * and, as `message`, the text a model reads.
+ */
+export function callTool(
+  mcp: Pick<Client, "callTool">,
+  request: { readonly name: ToolName; readonly arguments: object },
+): Effect.Effect<unknown, Readonly<Record<string, unknown>>> {
+  const output: Schema.Schema.AnyNoContext =
+    toolDefinitions[request.name].output;
+  return Effect.tryPromise((signal) =>
+    mcp.callTool(
+      { name: request.name, arguments: { ...request.arguments } },
+      { signal },
+    ),
+  ).pipe(
+    Effect.orDie,
+    Effect.flatMap((result) =>
+      result.isError === true
+        ? Effect.fail({
+            ...fields(result.structuredContent ?? {}),
+            message: result.content
+              .flatMap((part) => (part.type === "text" ? [part.text] : []))
+              .join("\n"),
+          })
+        : Schema.decodeUnknown(output)(result.structuredContent).pipe(
+            Effect.map((decoded): unknown => decoded),
+            Effect.orDie,
+          ),
+    ),
+  );
+}
+
+/** A host's send input. The server agent names its recipient in `to`, and a client names none. */
+const SendInput = Schema.Struct({
+  ...SendRequest.fields,
+  to: Schema.optional(MessageAddressInput),
+});
+
+/** Sends `input`, decoded as a host's send input, from `sender`. */
+export const send = (sender: Pick<SignedIn, "connection">, input: unknown) =>
+  callTool(sender.connection.mcp, {
+    name: "send_message",
+    arguments: Schema.decodeUnknownSync(SendInput)(input),
+  });
+
+/** A signed-in owner and the items its agent has received, in order. */
+export interface Participant extends SignedIn {
+  readonly inbox: Queue.Queue<InboxEntry>;
+}
+
+/**
+ * Signs in one owner per name on a running `daemon` and queues every delivery
+ * each agent receives.
+ * @param daemon The daemon the owners sign in to.
+ * @param owners The owner of each participant: `SERVER_AGENT_OWNER` for the
+ *   server agent, any other name for a client.
+ * @returns The participants, in `owners` order.
+ */
+export const joinParticipants = Effect.fn("joinParticipants")(
+  (daemon: Daemon, owners: readonly string[]) =>
+    Effect.forEach(
+      owners,
+      (owner) =>
+        Effect.gen(function* () {
+          const signedIn = yield* daemon.signInAs(owner);
+          const inbox = yield* Queue.unbounded<InboxEntry>();
+          yield* inboxStream(signedIn.connection).pipe(
+            Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
+            Effect.forkScoped,
+          );
+          return { ...signedIn, inbox };
+        }),
+      { concurrency: 1 },
+    ),
+);
+
+/** Takes the participant's next received item. */
+export const nextItem = (participant: Participant) =>
+  Queue.take(participant.inbox).pipe(
+    Effect.map((delivery): PermittedItem => delivery.item),
+  );
+
+/** The identifiers of the next `count` messages the participant receives, in order. */
+export const receivedOrder = (participant: Participant, count: number) =>
+  Effect.forEach(
+    Array.from({ length: count }),
+    () => nextItem(participant).pipe(Effect.map((item) => item.message.msgId)),
+    { concurrency: 1 },
+  );
+
+/** The content of a message that is one text part. */
+export const textContent = (text: string) => [{ type: "text", text }];
+
+/** Teardown waits for every scoped child after a test is interrupted. */
+const TEARDOWN_TIMEOUT_MS = 60_000;
+
+/**
+ * The vitest test function of a real-process trace. A test that times out is
+ * failed without waiting for its body, and the worker can exit before an
+ * interrupted trace's scope has stopped its children, which then outlive the
+ * run. The trace therefore runs as a fiber that an `onTestFinished` hook
+ * interrupts, waiting until its scope has stopped every child.
+ * @param trace A trace whose scope owns every process it starts.
+ * @returns The test function, whose promise settles with the trace.
+ */
+export function processTrace<E>(
+  trace: Effect.Effect<void, E, FileSystem.FileSystem | Scope.Scope>,
+) {
+  return (context: TestContext) => {
+    const fiber = Effect.runFork(
+      Effect.scoped(trace).pipe(Effect.provide(NodeContext.layer)),
+    );
+    context.onTestFinished(
+      () => Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.asVoid)),
+      TEARDOWN_TIMEOUT_MS,
+    );
+    return Effect.runPromise(Fiber.join(fiber));
+  };
+}

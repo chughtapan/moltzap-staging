@@ -1,6 +1,6 @@
 /** @file What only the suites of a P2P daemon use: its settings and the address of a group. */
 
-import type { SignedIn } from "./daemon/daemon-fixture.js";
+import type { SignedIn } from "./daemon-fixture.js";
 
 /** The fixed-member group address of `members`. */
 export const groupAddress = (
