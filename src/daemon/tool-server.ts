@@ -21,7 +21,7 @@ import {
   Runtime,
   Schema,
 } from "effect";
-import { issuesText, type ValidationIssue } from "../communication/index.js";
+import { issuesText } from "../encoding.js";
 
 /** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
 export interface AgentCalls {
@@ -268,6 +268,12 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
 }
 
 const MAXIMUM_VALIDATION_ISSUES = 20;
+
+/** A field path and schema expectation, without the rejected value. */
+interface ValidationIssue {
+  readonly path: ReadonlyArray<string | number>;
+  readonly message: string;
+}
 
 /**
  * A refusal of arguments that names at most 20 wrong fields, each by its path

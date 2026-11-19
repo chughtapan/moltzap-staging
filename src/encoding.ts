@@ -1,4 +1,4 @@
-/** @file JSON text, exact structs, identifier checks and parenthesized data shared by every layer that reads or writes external data. */
+/** @file JSON text, exact structs, identifier checks, validation issue text and parenthesized data shared by every layer that reads or writes external data. */
 
 import type { ParseOptions } from "effect/SchemaAST";
 import { Array, Data, Effect, Either, Encoding, Option, Schema } from "effect";
@@ -188,6 +188,20 @@ export const plainUrl = (
     ? url
     : undefined;
 };
+
+/** Formats issues in reported order as `field.path: expectation`, joined with semicolons. */
+export function issuesText(
+  issues: ReadonlyArray<{
+    readonly path: readonly PropertyKey[];
+    readonly message: string;
+  }>,
+): string {
+  return issues
+    .map(({ path, message }) =>
+      path.length === 0 ? message : `${path.map(String).join(".")}: ${message}`,
+    )
+    .join("; ");
+}
 
 /**
  * One value of parenthesized data, as norm documents and acts are written: a

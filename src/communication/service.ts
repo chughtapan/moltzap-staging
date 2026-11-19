@@ -18,8 +18,8 @@ import {
 } from "../database/index.js";
 import { compareAgentIds } from "../encoding.js";
 import { AgentCard } from "../identity.js";
-import { CommunicationError } from "./errors.js";
 import {
+  CommunicationError,
   deriveConversationId,
   type Message,
   messageMembers,

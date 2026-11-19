@@ -5,6 +5,7 @@ import { Ajv } from "ajv";
 import { fullFormats } from "ajv-formats/dist/formats.js";
 import {
   Array as Arr,
+  Data,
   Effect,
   Either,
   JSONSchema,
@@ -22,11 +23,21 @@ import {
   exactStruct,
   isCanonicalIdentifier,
   isStrictlyAscending,
+  issuesText,
   type JsonRepresentationError,
   representationFailure,
 } from "../encoding.js";
 import { AgentCard, AgentId } from "../identity.js";
-import { CommunicationError, issuesText } from "./errors.js";
+
+/** A refused send or read names one of these reasons. */
+export class CommunicationError extends Data.TaggedError("CommunicationError")<{
+  readonly reason:
+    | "membership-invalid"
+    | "content-invalid"
+    | "persistence-failed"
+    | "message-conflict"
+    | "invalid-cursor";
+}> {}
 
 /** The largest membership of one conversation. */
 export const maximumMembers = 32;
