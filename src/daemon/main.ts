@@ -15,10 +15,9 @@ import { Config, Console, Effect, Layer, Option } from "effect";
 import { makeFirewall } from "../firewall.js";
 import { structureCheck } from "../norms/index.js";
 import { getOrCreateOwnedAgent, openDaemon } from "./agent.js";
-import { makeMcpHttpApp, serveMcp } from "./server.js";
+import { makeMcpHttpApp, packageVersion, serveMcp } from "./server.js";
 import { loadDaemonSettings, refused } from "./settings.js";
 import { databaseConnection, databaseUrl, prepareDatabase } from "./store.js";
-import { packageVersion } from "./tools.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
 const HELP_MESSAGE = [

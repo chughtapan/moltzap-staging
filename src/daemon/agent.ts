@@ -54,8 +54,8 @@ export interface Daemon {
   readonly firewall: Firewall;
   /** The norms the server agent holds, which every agent then reads with `read_norms`. */
   readonly norms?: InstalledNorms;
-  /** The turn of each conversation a message was sent in, by its client's agent id. */
-  readonly turns: Map<string, Effect.Semaphore>;
+  /** The lock of each conversation a message was sent in, by its client's agent id. */
+  readonly conversationLocks: Map<string, Effect.Semaphore>;
   /** Published with an agent's id each time a message becomes readable for it. */
   readonly readable: PubSub.PubSub<string>;
 }
@@ -66,7 +66,11 @@ export const openDaemon = (
 ) =>
   Effect.map(
     PubSub.unbounded<string>(),
-    (readable): Daemon => ({ ...served, turns: new Map(), readable }),
+    (readable): Daemon => ({
+      ...served,
+      conversationLocks: new Map(),
+      readable,
+    }),
   );
 
 /**
@@ -305,15 +309,16 @@ export const receive = Effect.fn("receive")(function* (
  * of one conversation are checked and stored one at a time. Other
  * conversations do not wait.
  */
-function takeTurn(daemon: Daemon, client: AgentCard) {
+function lockConversation(daemon: Daemon, client: AgentCard) {
   return Effect.sync(() => {
-    const turn =
-      daemon.turns.get(client.agentId) ?? Effect.unsafeMakeSemaphore(1);
-    daemon.turns.set(client.agentId, turn);
-    return turn;
+    const lock =
+      daemon.conversationLocks.get(client.agentId) ??
+      Effect.unsafeMakeSemaphore(1);
+    daemon.conversationLocks.set(client.agentId, lock);
+    return lock;
   }).pipe(
-    Effect.flatMap((turn) =>
-      Effect.acquireReleaseInterruptible(turn.take(1), () => turn.release(1)),
+    Effect.flatMap((lock) =>
+      Effect.acquireReleaseInterruptible(lock.take(1), () => lock.release(1)),
     ),
     Effect.asVoid,
   );
@@ -336,7 +341,7 @@ export const addressedAgent = Effect.fn("addressedAgent")(function* (
 
 /**
  * Sends one message between the server agent and a client, whichever of the
- * two is `author`, in their conversation's turn. The server agent's firewall
+ * two is `author`, under their conversation's lock. The server agent's firewall
  * checks it as a message its agent sends or is sent. A message the server
  * agent may not send, or one whose check could not run, fails the send and is
  * not stored. Otherwise one transaction stores the message with the decision
@@ -369,7 +374,7 @@ export const send = Effect.fn("send")(
         ({ reason }: CommunicationError) => new SendError({ reason }),
       ),
     );
-    yield* takeTurn(daemon, outgoing ? recipient : author);
+    yield* lockConversation(daemon, outgoing ? recipient : author);
     const earlier = yield* earlierMessages(author, recipient);
     const result = outgoing
       ? yield* daemon.firewall.checkOutgoing(message, earlier)

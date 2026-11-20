@@ -1,7 +1,7 @@
 /** @file What agents observe of one daemon through their tools: sends and their checks, the inbox, history and conversations; and each owner's one agent. */
 
 import { scopedLive as it } from "@effect/vitest";
-import { Deferred, Effect, FastCheck as fc, Fiber } from "effect";
+import { Deferred, Effect, Either, FastCheck as fc, Fiber } from "effect";
 import { expect } from "vitest";
 import type { DecisionProvider } from "../firewall.js";
 import {
@@ -13,7 +13,7 @@ import {
 } from "../__tests__/daemon.js";
 import { answersTo, type TestPolicy } from "../__tests__/firewall-fixtures.js";
 import { openTestDatabase } from "../__tests__/test.js";
-import { form, noFields, normOf } from "../norms/__tests__/norms-fixtures.js";
+import { compileNorm } from "../norms/compiler.js";
 import { getOrCreateOwnedAgent } from "./agent.js";
 
 /** The one rule of every policy here. */
@@ -219,24 +219,12 @@ it.each([
 );
 
 /** `open` starts an instance and `close`, from the other agent, ends it. */
-const exchange = normOf("exchange", [
-  {
-    ...form,
-    act: "open",
-    by: ["Sender"],
-    fields: noFields,
-    starts: true,
-    initiates: ["opened"],
-  },
-  {
-    ...form,
-    act: "close",
-    by: ["Receiver"],
-    fields: noFields,
-    when: ["opened"],
-    ends: true,
-  },
-]);
+const exchange = Either.getOrThrow(
+  compileNorm(`(norm exchange :initiator Sender :participant Receiver)
+(content open :by Sender :starts true :initiates opened)
+(content close :by Receiver :when opened :ends true)
+`),
+);
 
 it("answers what an agent that holds norms withholds, plain text and an act out of turn alike, and the conversation goes on", () =>
   Effect.gen(function* () {
