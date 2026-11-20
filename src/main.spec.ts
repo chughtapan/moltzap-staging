@@ -3,7 +3,12 @@
  * test issuer: which settings it starts with and which it refuses, with what
  * message; whom it admits; and when it ends a stream.
  */
-import { FileSystem } from "@effect/platform";
+import {
+  FetchHttpClient,
+  FileSystem,
+  HttpClient,
+  HttpClientRequest,
+} from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -15,6 +20,7 @@ import {
   Effect,
   FastCheck as fc,
   Fiber,
+  Layer,
   Redacted,
   Schedule,
 } from "effect";
@@ -55,6 +61,7 @@ const freePort = Effect.async<number>((resume) => {
  */
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
+  const client = yield* HttpClient.HttpClient;
   const directory = yield* filesystem.makeTempDirectoryScoped({
     prefix: "sharness-settings-",
   });
@@ -87,45 +94,39 @@ const fixture = Effect.gen(function* () {
   const start = Effect.gen(function* () {
     const running = yield* Effect.forkScoped(run);
     yield* Effect.raceFirst(
-      Effect.tryPromise(() => fetch(endpoint)).pipe(
-        Effect.retry(Schedule.spaced("25 millis")),
-      ),
+      client.get(endpoint).pipe(Effect.retry(Schedule.spaced("25 millis"))),
       Fiber.join(running),
     );
     return running;
   });
   /** One raw MCP request with the given bearer token, or with none. */
   const request = (method: string, bearer?: string) =>
-    Effect.tryPromise(() =>
-      fetch(endpoint, {
-        method: "POST",
-        headers: {
-          ...(bearer === undefined
-            ? {}
-            : { authorization: `Bearer ${bearer}` }),
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": protocolVersion,
-          "mcp-method": method,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method,
-          params: {
-            notifications: { toolsListChanged: true },
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": protocolVersion,
-              "io.modelcontextprotocol/clientCapabilities": {},
-              "io.modelcontextprotocol/clientInfo": {
-                name: "daemon-test",
-                version: "1",
-              },
+    HttpClientRequest.post(endpoint).pipe(
+      HttpClientRequest.setHeaders({
+        ...(bearer === undefined ? {} : { authorization: `Bearer ${bearer}` }),
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": protocolVersion,
+        "mcp-method": method,
+      }),
+      HttpClientRequest.bodyUnsafeJson({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params: {
+          notifications: { toolsListChanged: true },
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": protocolVersion,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {
+              name: "daemon-test",
+              version: "1",
             },
           },
-        }),
+        },
       }),
-    ).pipe(Effect.orDie);
+      client.execute,
+      Effect.orDie,
+    );
   return {
     filesystem,
     directory,
@@ -134,6 +135,8 @@ const fixture = Effect.gen(function* () {
     start,
     request,
     endpoint,
+    /** Fails while nothing listens on the daemon's port. */
+    reach: client.get(endpoint),
     /** The message the daemon refuses to start with. */
     refusal: run.pipe(
       Effect.flip,
@@ -152,6 +155,9 @@ const fixture = Effect.gen(function* () {
     ),
   };
 });
+
+/** The file system and the HTTP client the fixture uses. */
+const platform = Layer.merge(NodeContext.layer, FetchHttpClient.layer);
 
 type Fixture = Effect.Effect.Success<typeof fixture>;
 
@@ -232,7 +238,7 @@ it("refuses a settings file that does not exist", () =>
     const test = yield* fixture;
     yield* test.filesystem.remove(join(test.directory, "settings.json"));
     expect(yield* test.refusal).toContain("settings file");
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }).pipe(Effect.provide(platform)));
 
 it.each(["", "nested/deeper"])(
   "starts with a policy, its provider key and a norms directory named relative to the settings file (beneath it: '%s'), and shows the norm to a signed-in agent",
@@ -254,7 +260,7 @@ it.each(["", "nested/deeper"])(
       expect(shown.structuredContent).toMatchObject({
         norms: [{ name: "ping", document: ruledNorm }],
       });
-    }).pipe(Effect.provide(NodeContext.layer)),
+    }).pipe(Effect.provide(platform)),
 );
 
 it.each([
@@ -270,7 +276,7 @@ it.each([
     });
 
     expect(yield* test.refusal).toContain("configured norms");
-  }).pipe(Effect.provide(NodeContext.layer)),
+  }).pipe(Effect.provide(platform)),
 );
 
 it("refuses a norms directory whose document does not compile", () =>
@@ -282,7 +288,7 @@ it("refuses a norms directory whose document does not compile", () =>
       ...(yield* norms(test, "(norm ping :initiator Asker)")),
     });
     expect(yield* test.refusal).toContain("norms directory");
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }).pipe(Effect.provide(platform)));
 
 it.each([
   { maximumHistoryRecords: 1, taken: true },
@@ -302,7 +308,7 @@ it.each([
       } else {
         expect(yield* test.refusal).toContain("settings file");
       }
-    }).pipe(Effect.provide(NodeContext.layer)),
+    }).pipe(Effect.provide(platform)),
 );
 
 const knownSettings = new Set([
@@ -350,7 +356,7 @@ it("refuses a document with a setting it cannot serve", () =>
         { numRuns: 40 },
       ),
     );
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }).pipe(Effect.provide(platform)));
 
 it("refuses to start on a port another process holds, naming the port", () =>
   Effect.gen(function* () {
@@ -359,7 +365,7 @@ it("refuses to start on a port another process holds, naming the port", () =>
     expect(yield* test.refusal).toContain(
       `could not listen on 127.0.0.1:${test.settings.port}`,
     );
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }).pipe(Effect.provide(platform)));
 
 /** A scope that begins with the configured one and goes on past it. */
 const longerScope = fc
@@ -405,7 +411,7 @@ it("answers a token granted the scope from the agent of its subject, whose tools
       "status",
     );
     expect(status.agentName).toBe("front-desk");
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }).pipe(Effect.provide(platform)));
 
 it("refuses a request with no token, a defective token or another issuer's token, and creates no agent for it", () =>
   Effect.gen(function* () {
@@ -414,7 +420,9 @@ it("refuses a request with no token, a defective token or another issuer's token
     const other = yield* issuerFixture().pipe(Effect.orDie);
     const refused = (bearer?: string) =>
       Effect.gen(function* () {
-        expect((yield* test.request("server/discover", bearer)).ok).toBe(false);
+        expect(
+          (yield* test.request("server/discover", bearer)).status,
+        ).toBeGreaterThanOrEqual(400);
         expect(yield* test.owners).toEqual(["server"]);
       });
     yield* refused();
@@ -447,7 +455,7 @@ it("refuses a request with no token, a defective token or another issuer's token
         { numRuns: 30 },
       ),
     );
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }).pipe(Effect.provide(platform)));
 
 it(
   "ends an admitted stream when its token expires and when the daemon stops, and keeps answering other requests meanwhile",
@@ -462,7 +470,7 @@ it(
 
       const expiring = yield* listen(2);
       expect(expiring.status).toBe(200);
-      expect(yield* Effect.tryPromise(() => expiring.text())).toContain(
+      expect(yield* expiring.text).toContain(
         "notifications/subscriptions/acknowledged",
       );
       expect(
@@ -472,13 +480,8 @@ it(
 
       const open = yield* listen(3600);
       yield* Fiber.interrupt(running);
-      yield* Effect.tryPromise(() => open.text()).pipe(
-        Effect.ignore,
-        Effect.timeout("5 seconds"),
-      );
-      expect(
-        yield* Effect.tryPromise(() => fetch(test.endpoint)).pipe(Effect.flip),
-      ).toBeDefined();
-    }).pipe(Effect.provide(NodeContext.layer)),
+      yield* open.text.pipe(Effect.ignore, Effect.timeout("5 seconds"));
+      expect(yield* Effect.flip(test.reach)).toBeDefined();
+    }).pipe(Effect.provide(platform)),
   20_000,
 );
