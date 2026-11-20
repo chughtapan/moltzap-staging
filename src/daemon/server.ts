@@ -52,8 +52,8 @@ import {
   wellFormedString,
 } from "../messages.js";
 import {
-  type AddressError,
   addressedAgent,
+  type AddressError,
   addressOfAgent,
   AgentAddress,
   conversationsOf,
@@ -385,68 +385,6 @@ function requestServer(
   return mcp;
 }
 
-/** One of the two conversation tools as a role has it: what it says, what it takes and the peer its input names. */
-interface PeerTool<Input, Encoded> {
-  readonly description: string;
-  readonly input: Schema.Schema<Input, Encoded>;
-  readonly peer: (
-    input: Input,
-  ) => Effect.Effect<AgentCard, AddressError, SqlClient.SqlClient>;
-}
-
-/**
- * Registers `send_message` and `read_conversation` for `agent`. The server
- * agent names its peer by address; a client's peer is the server agent.
- */
-function registerConversationTools<
-  Sent extends Omit<SendRequest, "to">,
-  SentEncoded,
-  Read extends { readonly cursor?: string },
-  ReadEncoded,
->(
-  mcp: McpServer,
-  context: { readonly daemon: Daemon; readonly agent: AgentCard },
-  sending: PeerTool<Sent, SentEncoded>,
-  reading: PeerTool<Read, ReadEncoded>,
-) {
-  const { daemon, agent } = context;
-  register(
-    mcp,
-    "send_message",
-    {
-      description: sending.description,
-      input: sending.input,
-      output: SendResult,
-      unexpected: sendOutcomeUnknown,
-    },
-    (input) =>
-      Effect.gen(function* () {
-        const recipient = yield* sending.peer(input);
-        const id = yield* send(daemon, {
-          text: input.text,
-          replyToMsgId: input.replyToMsgId,
-          author: agent,
-          recipient,
-        });
-        return { id, address: addressOfAgent(recipient.agentName) };
-      }),
-  );
-  register(
-    mcp,
-    "read_conversation",
-    {
-      description: reading.description,
-      input: reading.input,
-      output: historyRecordsPage,
-      readOnly: true,
-    },
-    (input) =>
-      Effect.flatMap(reading.peer(input), (other) =>
-        historyRecords(agent, other, input.cursor),
-      ),
-  );
-}
-
 /** The server agent's tools: it addresses any client and reads its firewall's decisions. */
 function registerServerAgentTools(
   mcp: McpServer,
@@ -522,6 +460,68 @@ function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
       input: Schema.Struct({ ...PaginatedRequest.fields }),
       peer,
     },
+  );
+}
+
+/** One of the two conversation tools as a role has it: what it says, what it takes and the peer its input names. */
+interface PeerTool<Input, Encoded> {
+  readonly description: string;
+  readonly input: Schema.Schema<Input, Encoded>;
+  readonly peer: (
+    input: Input,
+  ) => Effect.Effect<AgentCard, AddressError, SqlClient.SqlClient>;
+}
+
+/**
+ * Registers `send_message` and `read_conversation` for `agent`. The server
+ * agent names its peer by address; a client's peer is the server agent.
+ */
+function registerConversationTools<
+  Sent extends Omit<SendRequest, "to">,
+  SentEncoded,
+  Read extends { readonly cursor?: string },
+  ReadEncoded,
+>(
+  mcp: McpServer,
+  context: { readonly daemon: Daemon; readonly agent: AgentCard },
+  sending: PeerTool<Sent, SentEncoded>,
+  reading: PeerTool<Read, ReadEncoded>,
+) {
+  const { daemon, agent } = context;
+  register(
+    mcp,
+    "send_message",
+    {
+      description: sending.description,
+      input: sending.input,
+      output: SendResult,
+      unexpected: sendOutcomeUnknown,
+    },
+    (input) =>
+      Effect.gen(function* () {
+        const recipient = yield* sending.peer(input);
+        const id = yield* send(daemon, {
+          text: input.text,
+          replyToMsgId: input.replyToMsgId,
+          author: agent,
+          recipient,
+        });
+        return { id, address: addressOfAgent(recipient.agentName) };
+      }),
+  );
+  register(
+    mcp,
+    "read_conversation",
+    {
+      description: reading.description,
+      input: reading.input,
+      output: historyRecordsPage,
+      readOnly: true,
+    },
+    (input) =>
+      Effect.flatMap(reading.peer(input), (other) =>
+        historyRecords(agent, other, input.cursor),
+      ),
   );
 }
 
