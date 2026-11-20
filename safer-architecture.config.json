@@ -1,24 +1,12 @@
 {
   "compositionRoots": [
     {
-      "path": "src/index.ts",
-      "reason": "Public value exports"
-    },
-    {
-      "path": "src/test.ts",
-      "reason": "Offline evaluation and database qualification for tests"
-    },
-    {
       "path": "package.json",
-      "reason": "Library entry resolution"
-    },
-    {
-      "path": "src/daemon/startup.ts",
-      "reason": "Process database and agent construction"
+      "reason": "Names the sharnessd command"
     },
     {
       "path": "src/main.ts",
-      "reason": "Where the sharnessd process starts"
+      "reason": "Where the sharnessd process starts and its database, firewall and listener are put together"
     }
   ],
   "domains": [
@@ -77,12 +65,16 @@
     {
       "name": "daemon",
       "roots": [
-        "src/daemon"
+        "src/server.ts",
+        "src/agent.ts",
+        "src/settings.ts"
       ],
       "entrypoints": [
-        "src/daemon/startup.ts"
+        "src/server.ts",
+        "src/agent.ts",
+        "src/settings.ts"
       ],
-      "reason": "The sharnessd process: agents, their inboxes and the MCP tools served to their hosts"
+      "reason": "What sharnessd serves: its settings, its agents with their inboxes, and the MCP tools served to their hosts"
     },
     {
       "name": "version",
@@ -107,13 +99,6 @@
   ],
   "layers": [
     {
-      "name": "daemon",
-      "folders": [
-        "daemon"
-      ],
-      "reason": "Host calls coordinate lower services"
-    },
-    {
       "name": "norms",
       "folders": [
         "norms"
@@ -135,30 +120,8 @@
       "reason": "Delivery names agents by their cards"
     }
   ],
-  "publicTypePackages": [
-    {
-      "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
-    },
-    {
-      "package": "effect",
-      "reason": "Foundational Effect runtime; intentionally part of the public contract"
-    },
-    {
-      "package": "@effect/platform",
-      "reason": "Effect platform abstractions used at boundaries"
-    },
-    {
-      "package": "node",
-      "reason": "URL is the platform-standard endpoint locator required by the public acquisition contract"
-    }
-  ],
-  "allowedTestPublicSubpaths": [
-    {
-      "subpath": "./test",
-      "reason": "Test databases and an OAuth issuer fixture for suites outside the package"
-    }
-  ],
+  "publicTypePackages": [],
+  "allowedTestPublicSubpaths": [],
   "maxFolderChildren": 12,
   "maxPublicExports": 25,
   "disabledRules": [
@@ -169,10 +132,6 @@
     {
       "rule": "shared-kernel-cohesion",
       "reason": "encoding.ts and identity.ts are each one module by choice, and a schema module's exports have different users by nature"
-    },
-    {
-      "rule": "require-curated-public-facade",
-      "reason": "The main entry re-exports the host contract from the five modules that define it"
     },
     {
       "rule": "no-package-mesh",

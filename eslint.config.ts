@@ -242,11 +242,7 @@ export default [
   disableCommentRules,
   ...packageSections(),
   {
-    files: [
-      "src/daemon/inbox.ts",
-      "src/firewall/service.ts",
-      "src/firewall/store.ts",
-    ],
+    files: ["src/firewall/service.ts", "src/firewall/store.ts"],
     rules: {
       "max-lines-per-function": [
         "error",

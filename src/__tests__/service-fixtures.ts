@@ -7,13 +7,9 @@ import type {
   DecisionRequest,
   DecisionResponse,
   LoadedMessagePolicy,
-} from "../../firewall/index.js";
-import { createTestAgent } from "../../__tests__/agents.js";
-import { Message } from "../../communication/index.js";
-import { Firewall } from "../../firewall/service.js";
-import { type AgentCard, Identity } from "../../identity.js";
-import { openTestDatabase } from "../../test.js";
+} from "../firewall/index.js";
 import {
+  AgentAddress,
   conversationsOf,
   type Daemon,
   historyRecords,
@@ -23,7 +19,11 @@ import {
   send,
   type SendRequest,
 } from "../agent.js";
-import { AgentAddress } from "../values.js";
+import { Message } from "../communication/index.js";
+import { Firewall } from "../firewall/service.js";
+import { type AgentCard, Identity } from "../identity.js";
+import { createTestAgent } from "./agents.js";
+import { openTestDatabase } from "./test.js";
 
 type Policy = Context.Tag.Service<typeof Firewall>;
 

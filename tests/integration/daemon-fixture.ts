@@ -37,21 +37,6 @@ import {
 } from "@modelcontextprotocol/client";
 import { EventsClientExtension } from "@modelcontextprotocol/client/ext/events";
 import {
-  AgentAddress,
-  AgentId,
-  AgentName,
-  INBOX_EVENT,
-  InboxEntry,
-  Message,
-  MsgId,
-} from "@social-harness/social-harness";
-import {
-  issuerFixture,
-  openTestDatabase,
-  requiredScope,
-  restrictedLogin,
-} from "@social-harness/social-harness/test";
-import {
   Console,
   Data,
   Duration,
@@ -69,6 +54,18 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  issuerFixture,
+  openTestDatabase,
+  requiredScope,
+  restrictedLogin,
+} from "../../src/__tests__/test.js";
+import { AgentAddress, InboxEntry } from "../../src/agent.js";
+import { Message, MsgId } from "../../src/communication/index.js";
+import { AgentId, AgentName } from "../../src/identity.js";
+
+/** The name of the event whose occurrences are an agent's inbox entries. */
+export const INBOX_EVENT = "org.social-harness/inbox.pending";
 
 /** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
