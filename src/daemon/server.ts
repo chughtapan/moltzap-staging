@@ -395,24 +395,7 @@ function registerServerAgentTools(
       output: SendResult,
       unexpected: sendOutcomeUnknown,
     },
-    ({ to, ...message }) =>
-      addressedAgent(agent, to).pipe(
-        Effect.mapError(
-          (reason) =>
-            new SendError(
-              reason === "self"
-                ? { reason: "membership-invalid" }
-                : {
-                    reason: "unknown-agent",
-                    detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
-                  },
-            ),
-        ),
-        Effect.flatMap((recipient) =>
-          send(daemon, { ...message, author: agent, recipient }),
-        ),
-        Effect.map((id) => ({ id, address: to })),
-      ),
+    (request) => sendToAddress(daemon, agent, request),
   );
   register(
     mcp,
@@ -445,16 +428,7 @@ function registerServerAgentTools(
       output: historyRecordsPage,
       readOnly: true,
     },
-    ({ address, cursor }) =>
-      addressedAgent(agent, address).pipe(
-        Effect.mapError(
-          (reason) =>
-            new HistoryError({
-              reason: reason === "self" ? "invalid-address" : "unknown-agent",
-            }),
-        ),
-        Effect.flatMap((other) => historyRecords(agent, other, cursor)),
-      ),
+    (request) => readConversation(agent, request),
   );
   register(
     mcp,
@@ -467,6 +441,53 @@ function registerServerAgentTools(
       readOnly: true,
     },
     (request) => readDecisions(agent.agentKey, request),
+  );
+}
+
+/**
+ * Sends the server agent's message to the client its address names. An
+ * address that names the server agent or no agent refuses the send.
+ */
+export function sendToAddress(
+  daemon: Daemon,
+  agent: HostedAgent,
+  { to, ...message }: SendRequest,
+) {
+  return addressedAgent(agent, to).pipe(
+    Effect.mapError(
+      (reason) =>
+        new SendError(
+          reason === "self"
+            ? { reason: "membership-invalid" }
+            : {
+                reason: "unknown-agent",
+                detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
+              },
+        ),
+    ),
+    Effect.flatMap((recipient) =>
+      send(daemon, { ...message, author: agent, recipient }),
+    ),
+    Effect.map((id) => ({ id, address: to })),
+  );
+}
+
+/** A page of the server agent's conversation with the client an address names. */
+export function readConversation(
+  agent: HostedAgent,
+  {
+    address,
+    cursor,
+  }: { readonly address: AgentAddress; readonly cursor?: string },
+) {
+  return addressedAgent(agent, address).pipe(
+    Effect.mapError(
+      (reason) =>
+        new HistoryError({
+          reason: reason === "self" ? "invalid-address" : "unknown-agent",
+        }),
+    ),
+    Effect.flatMap((other) => historyRecords(agent, other, cursor)),
   );
 }
 
@@ -492,11 +513,7 @@ function registerClientTools(
       output: SendResult,
       unexpected: sendOutcomeUnknown,
     },
-    (message) =>
-      Effect.map(
-        send(daemon, { ...message, author: agent, recipient: serverAgent }),
-        (id) => ({ id, address: addressOfAgent(serverAgent) }),
-      ),
+    (message) => sendToServerAgent(daemon, agent, message),
   );
   register(
     mcp,
@@ -509,6 +526,19 @@ function registerClientTools(
       readOnly: true,
     },
     ({ cursor }) => historyRecords(agent, serverAgent, cursor),
+  );
+}
+
+/** Sends a client's message to the server agent. */
+export function sendToServerAgent(
+  daemon: Daemon,
+  agent: HostedAgent,
+  message: Omit<SendRequest, "to">,
+) {
+  const recipient = daemon.serverAgent;
+  return Effect.map(
+    send(daemon, { ...message, author: agent, recipient }),
+    (id) => ({ id, address: addressOfAgent(recipient) }),
   );
 }
 

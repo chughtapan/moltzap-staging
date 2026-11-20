@@ -4,11 +4,11 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { Context, Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { getOrCreateOwnedAgent } from "../daemon/agent.js";
 import { makeMcpHttpApp } from "../daemon/server.js";
-import { Firewall } from "../firewall/service.js";
-import { AgentName, Identity } from "../identity.js";
+import { type Firewall, makeFirewall } from "../firewall/service.js";
+import { AgentName } from "../identity.js";
 import { testDaemon } from "./service-fixtures.js";
 import { issuerFixture, openTestDatabase, requiredScope } from "./test.js";
 
@@ -29,7 +29,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     /** The daemon's resource, whose host requests name. */
     readonly resource?: URL;
     /** Operations that replace those of the server agent's firewall. */
-    readonly firewall?: Partial<Context.Tag.Service<typeof Firewall>>;
+    readonly firewall?: Partial<Firewall>;
   } = {},
 ) {
   const database = yield* openTestDatabase();
@@ -44,11 +44,10 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const alice = yield* agent("owner", "alice");
   const bob = yield* agent("peer", "bob");
   const serverAgent = options.client ? bob : alice;
-  const firewall = yield* Layer.build(
-    Firewall.layer(serverAgent.agentKey).pipe(
-      Layer.provide(Layer.succeed(Identity, { me: serverAgent.card })),
-    ),
-  ).pipe(Effect.map(Context.get(Firewall)), database.run, Effect.orDie);
+  const firewall = makeFirewall(undefined, {
+    me: serverAgent.card,
+    historyLimit: 256,
+  });
   const app = yield* makeMcpHttpApp(
     { resource, issuer: issuer.issuer, scope: requiredScope },
     yield* testDaemon(serverAgent, { ...firewall, ...options.firewall }),
