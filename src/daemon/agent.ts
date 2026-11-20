@@ -1,38 +1,38 @@
-/** @file Coordinates identity, message policy, communication and the agent's inbox. */
+/**
+ * @file The agents of one daemon. Each owner has one agent, saved as one row
+ * with its card. An agent sends, reads its inbox and reads its history
+ * through plain functions over the stored messages; the server agent's
+ * firewall checks every message of its conversations.
+ */
 
-import {
-  Cause,
-  Context,
-  Duration,
-  Effect,
-  Layer,
-  Predicate,
-  PubSub,
-  Queue,
-  Schedule,
-  Schema,
-  Scope,
-} from "effect";
-import { createHash } from "node:crypto";
-import type { FirewallRefusal } from "../firewall/index.js";
+import { SqlClient } from "@effect/sql";
+import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   type CommunicationError,
   Message,
-  messageWithId,
-  MsgId,
   PAGE_SIZE,
   type PaginatedRequest,
 } from "../communication/index.js";
-import { Communication, type HistoryPage } from "../communication/service.js";
-import { afterCommit, transaction } from "../database.js";
-import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
-  defaultConcurrentChecks,
-  Firewall,
-  type IncomingDecision,
-} from "../firewall/service.js";
-import { type AgentCard, Identity, type IdentityError } from "../identity.js";
-import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
+  type HeldMessage,
+  listConversations,
+  readHistory,
+  readInbox,
+  readLatest,
+  type Received,
+  sendMessage,
+} from "../communication/service.js";
+import { transaction } from "../database.js";
+import {
+  compareAscii,
+  decodeJson,
+  encodeJson,
+  MAXIMUM_RUNTIME_ITEM_BYTES,
+} from "../encoding.js";
+import { type FirewallRefusal, LocalGuidance } from "../firewall/index.js";
+import { Firewall, type IncomingDecision } from "../firewall/service.js";
+import { AgentCard, type AgentName } from "../identity.js";
 import {
   addressedAgent,
   addressOf,
@@ -41,11 +41,84 @@ import {
   HistoryError,
   type HistoryRecord,
   type HistoryRecordsPage,
+  type InboxEntry,
   type InboxPage,
   SendError,
   type SendRequest,
   type SendResult,
 } from "./values.js";
+
+/** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
+export interface Owner {
+  readonly issuer: string;
+  readonly subject: string;
+}
+
+/**
+ * The owner's agent has another name than the one asked for, or the name
+ * belongs to another owner's agent. Carries no account claims.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
+export class OwnershipError extends Data.TaggedError("OwnershipError") {}
+
+/** One agent of the daemon: the key its rows are stored under and its card. */
+export interface HostedAgent {
+  readonly agentKey: string;
+  readonly card: AgentCard;
+}
+
+const hostedAgentRows = Schema.Array(
+  Schema.Struct({ agentKey: Schema.String, ...AgentCard.fields }),
+);
+
+/** The agents whose row holds `value` in `column`. */
+const agentsWith = Effect.fn("agentsWith")(function* (
+  where: Readonly<Record<string, string>>,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql`SELECT agent_key AS "agentKey", agent_id AS "agentId",
+      agent_name AS "agentName", principal_id AS "principalId"
+    FROM agent_cards WHERE ${sql.and(
+      Object.entries(where).map(
+        ([column, value]) => sql`${sql(column)} = ${value}`,
+      ),
+    )}`;
+  return (yield* Schema.decodeUnknown(hostedAgentRows)(rows)).map(
+    ({ agentKey, ...card }): HostedAgent => ({ agentKey, card }),
+  );
+});
+
+const minted = (prefix: string) =>
+  `${prefix}${randomBytes(16).toString("base64url")}`;
+
+/**
+ * The owner's agent, created on first use with a new identifier and
+ * principal. Concurrent first calls for one owner return the same agent. With
+ * `agentName`, the agent is created under that name and an existing agent
+ * must already have it.
+ */
+export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
+  function* (owner: Owner, agentName?: AgentName) {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO agent_cards ${sql.insert({
+      agent_key: randomUUID(),
+      issuer: owner.issuer,
+      subject: owner.subject,
+      agent_id: minted("agt_"),
+      agent_name: agentName ?? `agent-${randomBytes(12).toString("hex")}`,
+      principal_id: minted("prn_"),
+    })} ON CONFLICT DO NOTHING`;
+    const [saved] = yield* agentsWith({ ...owner });
+    if (
+      saved === undefined ||
+      (agentName !== undefined && saved.card.agentName !== agentName)
+    ) {
+      return yield* new OwnershipError();
+    }
+    return saved;
+  },
+);
 
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
@@ -57,12 +130,13 @@ interface ReceiveRequest {
   readonly wait?: number;
 }
 /** Sending, inbox and history operations for one agent. */
-interface SocialHarnessService {
+export interface SocialHarness {
   /**
-   * Checks policy and saves the permitted message for delivery. The result
-   * carries its message id and canonical conversation, without confirming
-   * peer receipt. Each call creates a new message. Retrying an uncertain send
-   * can duplicate it.
+   * Has the server agent's firewall check the message and stores it. The
+   * result carries its message id and canonical conversation; a message the
+   * firewall withholds from the server agent is stored and returns the same.
+   * Each call creates a new message. Retrying an uncertain send can duplicate
+   * it.
    */
   readonly send: (
     request: SendRequest,
@@ -85,25 +159,11 @@ interface SocialHarnessService {
   ) => Effect.Effect<HistoryRecordsPage, HistoryError>;
 }
 
-/**
- * Hosts use this service for identity, messaging and local policy. A stored
- * inbox entry survives policy edits and restart.
- */
-export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
-  SocialHarness,
-  SocialHarnessService
->() {
-  /** One agent's harness over its identity, firewall and communication. */
-  static layer(settings: HarnessSettings) {
-    return Layer.scoped(SocialHarness, makeHarness(settings));
-  }
-}
-
-/** Supplies inbox processing limits for one agent. */
+/** What the daemon's agents are served from. */
 export interface HarnessSettings {
-  readonly agentKey: string;
+  /** The agent whose firewall checks every message. Every other agent is its client. */
+  readonly serverAgent: HostedAgent;
   readonly maximumHistoryRecords?: number;
-  readonly maximumConcurrentChecks?: number;
   /**
    * What to tell the sender of a message the firewall withheld for breaking a
    * rule, when no rule supplied a reply of its own. Without it such a sender
@@ -112,101 +172,82 @@ export interface HarnessSettings {
   readonly withheldReply?: string;
 }
 
-/** What one agent's operations share: its card, the services it acts through and its settings. */
-interface Agent {
-  readonly card: AgentCard;
-  readonly identity: Context.Tag.Service<typeof Identity>;
-  readonly firewall: Context.Tag.Service<typeof Firewall>;
-  readonly communication: Context.Tag.Service<typeof Communication>;
-  readonly inbox: Inbox;
+/** What every agent's operations share on one daemon. */
+interface Daemon {
+  readonly sql: SqlClient.SqlClient;
   readonly settings: HarnessSettings;
+  /** The server agent's firewall. */
+  readonly firewall: typeof Firewall.Service;
   readonly historyLimit: number;
-  /** Published to each time an entry of this agent becomes readable, for the reads that wait. */
-  readonly entryReadable: PubSub.PubSub<undefined>;
+  /** The turn of each conversation a message was sent in, by its client's agent id. */
+  readonly turns: Map<string, Effect.Semaphore>;
+  /** Published with an agent's key each time a message becomes readable for it. */
+  readonly readable: PubSub.PubSub<string>;
 }
 
-function makeHarness(settings: HarnessSettings) {
-  return Effect.gen(function* () {
-    const identity = yield* Identity;
-    const firewall = yield* Firewall;
-    const communication = yield* Communication;
-    const scope = yield* Scope.Scope;
-    const inbox = yield* makeInbox(settings.agentKey);
-    /** Offered once an unchecked entry is committed, so the check that it starts can read the entry. */
-    const wake = yield* Queue.sliding<undefined>(1);
-    const capacity =
-      settings.maximumConcurrentChecks ?? defaultConcurrentChecks;
-    const agent: Agent = {
-      entryReadable: yield* PubSub.sliding<undefined>(1),
-      card: identity.me,
-      identity,
-      firewall,
-      communication,
-      inbox,
-      settings,
-      historyLimit: settings.maximumHistoryRecords ?? 256,
-    };
-    const fork = <E, R>(work: Effect.Effect<unknown, E, R>) =>
-      Effect.forkIn(Effect.interruptible(work), scope);
-    yield* fork(
-      communication
-        .consume((message) =>
-          inbox
-            .storeUnchecked(
-              addressOf(
-                [message.author, ...message.recipients],
-                agent.card.agentId,
-              ),
-              message,
-            )
-            .pipe(Effect.zipRight(afterCommit(Queue.offer(wake, undefined)))),
-        )
-        .pipe(restarting(settings.agentKey, "consumer")),
-    );
-    const addressesBeingChecked = new Set<string>();
-    const startChecks = Effect.gen(function* () {
-      for (const unchecked of yield* inbox.unchecked(capacity)) {
-        if (addressesBeingChecked.size >= capacity) {
-          break;
-        }
-        if (!addressesBeingChecked.has(unchecked.address)) {
-          addressesBeingChecked.add(unchecked.address);
-          yield* fork(
-            checkIncoming(agent, unchecked).pipe(
-              Effect.catchAllCause((cause) => retryLater(agent, cause)),
-              Effect.ensuring(
-                Effect.sync(() =>
-                  addressesBeingChecked.delete(unchecked.address),
-                ).pipe(Effect.zipRight(Queue.offer(wake, undefined))),
-              ),
-            ),
-          );
-        }
-      }
-    });
-    yield* fork(
-      startChecks.pipe(
-        Effect.zipRight(Queue.take(wake)),
-        Effect.forever,
-        restarting(settings.agentKey, "check loop"),
-      ),
-    );
-    return SocialHarness.of({
-      send: (request) => send(agent, request),
-      receive: (request) => receive(agent, request),
-      listConversations: () => listConversations(agent),
-      readHistory: (request) => readHistory(agent, request),
-    });
-  }).pipe(Effect.withSpan("SocialHarness.layer"));
+/**
+ * Gives each agent of the daemon its operations, over the server agent's
+ * firewall and the database of the caller.
+ */
+export const makeHarness = Effect.fn("makeHarness")(function* (
+  settings: HarnessSettings,
+) {
+  const daemon: Daemon = {
+    sql: yield* SqlClient.SqlClient,
+    settings,
+    firewall: yield* Firewall,
+    historyLimit: settings.maximumHistoryRecords ?? 256,
+    turns: new Map(),
+    readable: yield* PubSub.unbounded<string>(),
+  };
+  const stored = <A, E>(work: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+    Effect.provideService(work, SqlClient.SqlClient, daemon.sql);
+  return (self: HostedAgent): SocialHarness => ({
+    send: (request) => stored(send(daemon, self, request)),
+    receive: (request) => stored(receive(daemon, self, request)),
+    listConversations: () => stored(conversationsOf(self)),
+    readHistory: (request) => stored(historyRecords(self, request)),
+  });
+});
+
+/**
+ * At most `limit` of the inbox entries of the agent stored under `agentKey`
+ * after `cursor`, in read order, with the cursor to read on from and whether
+ * more entries follow. Without a cursor the read starts from the newest entry
+ * and returns none.
+ */
+export const readInboxEntries = Effect.fn("readInboxEntries")(function* (
+  agentKey: string,
+  read: Parameters<typeof readInbox>[1],
+) {
+  const { messages, nextCursor, hasMore } = yield* readInbox(agentKey, read);
+  const entries = yield* Effect.forEach(messages, entryOf, { concurrency: 1 });
+  return { entries, nextCursor, hasMore };
+});
+
+/** The inbox entry of a message its recipient may read, with the guidance stored for it. */
+function entryOf(held: HeldMessage) {
+  const { message } = held;
+  const address = addressOf([message.author], message.recipients[0].agentId);
+  return held.guidance === undefined
+    ? Effect.succeed<InboxEntry>({ address, message })
+    : Effect.map(
+        decodeJson(LocalGuidance, held.guidance),
+        (guidance): InboxEntry => ({ address, message, guidance }),
+      );
 }
 
 /**
  * One read of the inbox. A waiting read subscribes before it reads, so an
  * entry that becomes readable after the read is not missed.
  */
-function receive(agent: Agent, { cursor, wait }: ReceiveRequest) {
+function receive(
+  daemon: Daemon,
+  { agentKey }: HostedAgent,
+  { cursor, wait }: ReceiveRequest,
+) {
   const read = (from: typeof cursor) =>
-    agent.inbox.listInbox(PAGE_SIZE, from).pipe(
+    readInboxEntries(agentKey, { limit: PAGE_SIZE, cursor: from }).pipe(
       Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
       Effect.orDie,
     );
@@ -214,48 +255,82 @@ function receive(agent: Agent, { cursor, wait }: ReceiveRequest) {
     return read(cursor);
   }
   return Effect.gen(function* () {
-    const readable = yield* PubSub.subscribe(agent.entryReadable);
+    const readable = yield* PubSub.subscribe(daemon.readable);
     const page = yield* read(cursor);
     if (page.entries.length > 0) {
       return page;
     }
     yield* Queue.take(readable).pipe(
+      Effect.repeat({ until: (key) => key === agentKey }),
       Effect.timeoutOption(Duration.seconds(wait)),
     );
     return yield* read(page.nextCursor);
   }).pipe(Effect.scoped);
 }
 
-function send(agent: Agent, input: SendRequest) {
+/**
+ * Holds the conversation of the server agent with `client` until the scope
+ * closes. A check reads the conversation's earlier messages, so the messages
+ * of one conversation are checked and stored one at a time. Other
+ * conversations do not wait.
+ */
+function takeTurn(daemon: Daemon, client: HostedAgent) {
+  return Effect.sync(() => {
+    const turn =
+      daemon.turns.get(client.card.agentId) ?? Effect.unsafeMakeSemaphore(1);
+    daemon.turns.set(client.card.agentId, turn);
+    return turn;
+  }).pipe(
+    Effect.flatMap((turn) =>
+      Effect.acquireReleaseInterruptible(turn.take(1), () => turn.release(1)),
+    ),
+    Effect.asVoid,
+  );
+}
+
+/**
+ * Sends one message in its conversation's turn: the server agent's firewall
+ * checks it as a message its agent sends or is sent, and one transaction
+ * stores it with what was decided. No transaction is open while a check runs.
+ * A waiting read wakes once a message it may read is stored.
+ */
+function send(daemon: Daemon, self: HostedAgent, input: SendRequest) {
   return Effect.suspend(() => {
     const request = structuredClone(input);
     return Effect.gen(function* () {
-      const outgoing = yield* outgoingFor(
-        agent,
-        request,
-        yield* addressedAgent(request.to, agent.card.agentName),
-      );
-      const decision = yield* agent.firewall.checkOutgoing(
-        outgoing,
-        (protocolHistory) =>
-          evidenceFor(
-            agent,
-            [outgoing.author, ...outgoing.recipients],
-            protocolHistory,
-          ),
-      );
-      yield* decision.save;
-      if (decision.kind === "refused") {
-        return yield* decision.refusal;
+      const name = yield* addressedAgent(request.to, self.card.agentName);
+      const [recipient] = yield* agentsWith({ agent_name: name });
+      if (recipient === undefined) {
+        return yield* new SendError({
+          reason: "unknown-agent",
+          detail: `This daemon has no agent named agent:${name}. Check the name with its owner.`,
+        });
       }
-      yield* agent.communication.send(outgoing);
+      const outgoing = yield* Message.create({
+        author: self.card,
+        recipients: [recipient.card],
+        content: [{ type: "text", text: request.text }],
+        replyToMsgId: request.replyToMsgId,
+      });
+      const route = {
+        authorKey: self.agentKey,
+        recipientKey: recipient.agentKey,
+      };
+      if (self.agentKey === daemon.settings.serverAgent.agentKey) {
+        yield* takeTurn(daemon, recipient);
+        yield* sendAsServerAgent(daemon, route, outgoing);
+      } else {
+        yield* takeTurn(daemon, self);
+        yield* sendAsClient(daemon, route, outgoing);
+      }
       return { id: outgoing.msgId, address: request.to };
     }).pipe(
+      Effect.scoped,
       Effect.catchAll(sendFailure),
       Effect.tapError((error) =>
         Effect.logWarning("Send failed").pipe(
           Effect.annotateLogs({
-            agentKey: agent.settings.agentKey,
+            agentKey: self.agentKey,
             error: error._tag,
             reason: error.message,
           }),
@@ -265,160 +340,92 @@ function send(agent: Agent, input: SendRequest) {
   });
 }
 
-/** The message a send request amounts to, addressed to the agent `name`. */
-function outgoingFor(
-  agent: Agent,
-  request: SendRequest,
-  name: AgentCard["agentName"],
-) {
+type Route = Parameters<typeof sendMessage>[0];
+
+/** Stores a message the server agent's firewall allows it to send, readable for its client. */
+function sendAsServerAgent(daemon: Daemon, route: Route, outgoing: Message) {
   return Effect.gen(function* () {
-    const [recipient] = yield* agent.identity.resolve([name]).pipe(
-      Effect.catchTag("IdentityError", (error) =>
-        error.reason === "unknown-agent"
-          ? Effect.fail(
-              new SendError({
-                reason: "unknown-agent",
-                ...(error.agentName === undefined
-                  ? {}
-                  : {
-                      detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
-                    }),
-              }),
-            )
-          : Effect.die(error),
-      ),
+    const decision = yield* daemon.firewall.checkOutgoing(
+      outgoing,
+      (protocolHistory) => evidenceFor(daemon, outgoing, protocolHistory),
     );
-    if (recipient === undefined) {
-      return yield* new SendError({ reason: "unknown-agent" });
+    yield* decision.save;
+    if (decision.kind === "refused") {
+      return yield* decision.refusal;
     }
-    return yield* Message.create({
-      author: agent.card,
-      recipients: [recipient],
-      content: [{ type: "text", text: request.text }],
-      replyToMsgId: request.replyToMsgId,
-    });
-  });
-}
-
-function listConversations(agent: Agent) {
-  return agent.communication.listConversations.pipe(
-    Effect.map((conversations) => ({
-      addresses: conversations
-        .map((members) => addressOf(members, agent.card.agentId))
-        .sort(compareAscii),
-    })),
-    Effect.catchAll(historyFailure),
-  );
-}
-
-function readHistory(agent: Agent, request: ReadHistoryRequest) {
-  const { card } = agent;
-  return Effect.gen(function* () {
-    const other = yield* addressedAgent(request.address, card.agentName);
-    return yield* messageRecords(
-      agent,
-      [card, ...(yield* agent.identity.resolve([other]))],
-      request.cursor,
-    );
-  }).pipe(Effect.catchAll(historyFailure));
-}
-
-/**
- * One page of a conversation's messages as history records: each one this
- * agent sent, and each one it received that its inbox stored an entry for.
- * The cursor is the one communication returned for this conversation.
- */
-function messageRecords(
-  agent: Agent,
-  members: readonly AgentCard[],
-  cursor?: string,
-) {
-  return Effect.gen(function* () {
-    const page = yield* agent.communication.readHistory({
-      members,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    const records: HistoryRecord[] = [];
-    for (const { message } of page.entries) {
-      if (message.author.agentId === agent.card.agentId) {
-        records.push({ kind: "sent", message });
-      } else {
-        const entry = yield* agent.inbox.storedEntry({
-          authorAgentId: message.author.agentId,
-          msgId: message.msgId,
-        });
-        if (entry !== undefined) {
-          records.push({ kind: "received", ...entry });
-        }
-      }
-    }
-    return {
-      records,
-      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
-    };
+    yield* sendMessage(route, outgoing, { readable: true });
+    yield* PubSub.publish(daemon.readable, route.recipientKey);
   });
 }
 
 /**
- * Checks one unchecked message and records the decision, with the reply to a
- * withheld message, in one transaction. The evidence is read at most once and
- * serves both the check and the check of the reply.
+ * Stores a message a client sends with what the server agent's firewall
+ * decides of it, and sends the reply to a withheld one, in one transaction.
+ * The evidence is read at most once and serves both the check and the check
+ * of the reply. A check that could not run fails the send.
  */
-function checkIncoming(agent: Agent, unchecked: Unchecked) {
-  const { communication, inbox } = agent;
+function sendAsClient(daemon: Daemon, route: Route, incoming: Message) {
   return Effect.gen(function* () {
-    const { message } = unchecked;
     const evidence = yield* Effect.cachedFunction((protocolHistory: boolean) =>
-      evidenceFor(
-        agent,
-        [message.author, ...message.recipients],
-        protocolHistory,
-        message,
-      ),
+      evidenceFor(daemon, incoming, protocolHistory),
     );
-    const decision = yield* agent.firewall.checkIncoming(message, evidence);
-    const reply = yield* checkedReply(agent, message, decision, evidence);
+    const decision = yield* daemon.firewall.checkIncoming(incoming, evidence);
+    if (
+      decision.kind === "withheld" &&
+      decision.reason === "check-unavailable"
+    ) {
+      return yield* new SendError({
+        reason: "network-unavailable",
+        detail:
+          "the recipient's message check could not run; send the message again later",
+      });
+    }
+    const reply = yield* checkedReply(daemon, incoming, decision, evidence);
+    const received: Received = {
+      readable: decision.kind === "allowed",
+      ...(decision.kind === "allowed" && decision.guidance !== undefined
+        ? { guidance: yield* encodeJson(LocalGuidance, decision.guidance) }
+        : {}),
+    };
     yield* transaction(
-      decision.save.pipe(
-        Effect.zipRight(reply.save),
-        Effect.zipRight(inbox.recordDecision(unchecked, decision)),
-        Effect.tap((readable) =>
-          readable
-            ? afterCommit(PubSub.publish(agent.entryReadable, undefined))
-            : Effect.void,
-        ),
-        Effect.tap(() =>
-          reply.message === undefined
-            ? Effect.void
-            : communication.send(reply.message).pipe(
-                Effect.catchIf(
-                  (error) => error.reason === "message-conflict",
-                  () => Effect.void,
-                ),
-              ),
-        ),
-      ),
+      Effect.gen(function* () {
+        yield* sendMessage(route, incoming, received);
+        yield* decision.save;
+        yield* reply.save;
+        if (reply.message !== undefined) {
+          yield* sendMessage(
+            { authorKey: route.recipientKey, recipientKey: route.authorKey },
+            reply.message,
+            { readable: true },
+          );
+        }
+      }),
     );
+    if (received.readable) {
+      yield* PubSub.publish(daemon.readable, route.recipientKey);
+    } else if (reply.message !== undefined) {
+      yield* PubSub.publish(daemon.readable, route.authorKey);
+    }
   });
 }
 
 /**
- * The reply to a withheld message once this agent's own firewall has checked
- * it as a message it sends, with the withheld message as one the reply may
+ * The reply to a withheld message once the firewall has checked it as a
+ * message its agent sends, with the withheld message as one the reply may
  * name: the reply when it is allowed, and the saving of that check either way.
  */
 function checkedReply(
-  agent: Agent,
+  daemon: Daemon,
   withheld: Message,
   decision: IncomingDecision,
   evidence: (protocolHistory: boolean) => ReturnType<typeof evidenceFor>,
 ) {
   return Effect.gen(function* () {
-    const proposed = yield* replyTo(agent, withheld, decision);
+    const proposed = yield* replyTo(daemon, withheld, decision);
     if (proposed === undefined) {
       return { save: Effect.void };
     }
-    const checked = yield* agent.firewall.checkOutgoing(
+    const checked = yield* daemon.firewall.checkOutgoing(
       proposed,
       (protocolHistory) =>
         Effect.map(evidence(protocolHistory), (read) => ({
@@ -435,71 +442,61 @@ function checkedReply(
 
 /**
  * The reply proposed for a message the firewall withheld: an ordinary message
- * from this agent to the same conversation that names the withheld message as
- * the one it answers. A rule's own reply is used when it gave one; otherwise
- * `withheldReply` answers a message that broke a rule. Its id derives from
- * the withheld message, so checking that message again sends at most one
- * reply. The reply is checked as any message this agent sends, and is sent
- * only if allowed. A reply that is not a valid message is not sent, and the
- * message stays withheld.
+ * from the server agent to the withheld message's author that names it as the
+ * one it answers. A rule's own reply is used when it gave one; otherwise
+ * `withheldReply` answers a message that broke a rule. The reply is checked
+ * as any message the server agent sends, and is sent only if allowed. A reply
+ * that is not a valid message is not sent.
  */
-function replyTo(agent: Agent, withheld: Message, decision: IncomingDecision) {
+function replyTo(
+  daemon: Daemon,
+  withheld: Message,
+  decision: IncomingDecision,
+) {
   if (decision.kind !== "withheld") {
     return Effect.succeed(undefined);
   }
   const text =
     decision.reply ??
     (decision.reason === "rule-violation"
-      ? agent.settings.withheldReply
+      ? daemon.settings.withheldReply
       : undefined);
   if (text === undefined) {
     return Effect.succeed(undefined);
   }
-  return Schema.decodeUnknown(MsgId)(
-    `msg_${createHash("sha256")
-      .update(`reply\n${withheld.author.agentId}\n${withheld.msgId}`)
-      .digest("base64url")}`,
-  ).pipe(
-    Effect.flatMap((msgId) =>
-      messageWithId(
-        agent.card,
-        [withheld.author, ...withheld.recipients].filter(
-          (member) => member.agentId !== agent.card.agentId,
-        ),
-        { msgId, replyToMsgId: withheld.msgId },
-        [{ type: "text", text }],
-      ),
-    ),
-    Effect.orElseSucceed(() => undefined),
-  );
+  return Message.create({
+    author: daemon.settings.serverAgent.card,
+    recipients: [withheld.author],
+    content: [{ type: "text", text }],
+    replyToMsgId: withheld.msgId,
+  }).pipe(Effect.orElseSucceed(() => undefined));
 }
 
 /**
- * The evidence a check of a message among `members` reads: the bounded window
- * of history before `before`, or the latest when it is not given, and with
- * `withProtocolHistory` every message before it.
+ * The evidence the check of `next`, the next message of its conversation,
+ * reads from the server agent's history: the bounded window of the latest
+ * messages, and with `withProtocolHistory` every message of the conversation.
  */
 function evidenceFor(
-  agent: Agent,
-  members: readonly AgentCard[],
+  daemon: Daemon,
+  next: Message,
   withProtocolHistory: boolean,
-  before?: Message,
 ) {
   return Effect.gen(function* () {
-    const protocolHistory = withProtocolHistory
-      ? yield* readProtocolHistory(agent, members, before)
+    const { agentKey } = daemon.settings.serverAgent;
+    const members = [next.author, ...next.recipients];
+    const all = withProtocolHistory
+      ? (yield* readLatest(agentKey, { members })).entries
       : undefined;
     const page =
-      protocolHistory === undefined
-        ? yield* readHistoryBefore(agent, members, before)
+      all === undefined
+        ? yield* readLatest(agentKey, { members, limit: daemon.historyLimit })
         : {
-            entries: protocolHistory.entries.slice(-agent.historyLimit),
-            earlierMessagesOmitted:
-              !protocolHistory.complete ||
-              protocolHistory.entries.length > agent.historyLimit,
+            entries: all.slice(-daemon.historyLimit),
+            earlierMessagesOmitted: all.length > daemon.historyLimit,
           };
     let bytes = 0;
-    const recent: Array<(typeof page.entries)[number]> = [];
+    const recent: HeldMessage[] = [];
     for (const earlier of [...page.entries].reverse()) {
       if (bytes + earlier.messageBytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
@@ -508,82 +505,69 @@ function evidenceFor(
       bytes += earlier.messageBytes;
     }
     recent.reverse();
-    const history = yield* agent.inbox.visibleMessages(
-      recent.map((earlier) => earlier.message),
-    );
     return {
-      history,
+      history: recent.map((earlier) => ({
+        message: earlier.message,
+        visibleToAgent: earlier.readable,
+      })),
       earlierHistoryOmitted:
         page.earlierMessagesOmitted || recent.length < page.entries.length,
       gaps:
         recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
           : [],
-      ...(protocolHistory === undefined
+      ...(all === undefined
         ? {}
         : {
             protocolHistory: {
-              messages: protocolHistory.entries.map(({ message }) => message),
-              complete: protocolHistory.complete,
+              messages: all.map(({ message }) => message),
+              complete: true,
             },
           }),
     };
   });
 }
 
-/**
- * Every message of a conversation before `before`, in order, read a page at
- * a time from the newest. `complete` is false when a page that reports
- * earlier messages gives none to continue from.
- */
-function readProtocolHistory(
-  agent: Agent,
-  members: readonly AgentCard[],
-  before?: Message,
-) {
-  return Effect.gen(function* () {
-    const pages: Array<HistoryPage["entries"]> = [];
-    let boundary = before;
-    while (true) {
-      const page = yield* readHistoryBefore(agent, members, boundary);
-      pages.push(page.entries);
-      const oldest = page.entries[0]?.message;
-      const advanced =
-        oldest !== undefined &&
-        !(
-          oldest.author.agentId === boundary?.author.agentId &&
-          oldest.msgId === boundary.msgId
-        );
-      if (!page.earlierMessagesOmitted || !advanced) {
-        return {
-          entries: [...pages].reverse().flat(),
-          complete: !page.earlierMessagesOmitted,
-        };
-      }
-      boundary = oldest;
-    }
-  });
+/** The address of every conversation of `self`, in order. */
+function conversationsOf(self: HostedAgent) {
+  return listConversations(self.agentKey).pipe(
+    Effect.map((conversations) => ({
+      addresses: conversations
+        .map((members) => addressOf(members, self.card.agentId))
+        .sort(compareAscii),
+    })),
+    Effect.catchAll(historyFailure),
+  );
 }
 
-/** One page of a conversation's messages, in order: the latest before `before`, or the latest of all. */
-function readHistoryBefore(
-  agent: Agent,
-  members: readonly AgentCard[],
-  before?: Message,
-) {
-  return agent.communication.readHistory({
-    members,
-    order: "newest",
-    limit: agent.historyLimit,
-    ...(before === undefined
-      ? {}
-      : {
-          beforeMessage: {
-            authorAgentId: before.author.agentId,
-            msgId: before.msgId,
-          },
-        }),
-  });
+/**
+ * One page of a conversation's messages as history records: each one `self`
+ * sent, and each one it received and may read.
+ */
+function historyRecords(self: HostedAgent, request: ReadHistoryRequest) {
+  return Effect.gen(function* () {
+    const name = yield* addressedAgent(request.address, self.card.agentName);
+    const [other] = yield* agentsWith({ agent_name: name });
+    if (other === undefined) {
+      return yield* new HistoryError({ reason: "unknown-agent" });
+    }
+    const page = yield* readHistory(self.agentKey, {
+      members: [self.card, other.card],
+      ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+    });
+    const records: HistoryRecord[] = [];
+    for (const held of page.entries) {
+      if (held.message.author.agentId === self.card.agentId) {
+        records.push({ kind: "sent", message: held.message });
+      } else if (held.readable) {
+        records.push({ kind: "received", ...(yield* entryOf(held)) });
+      }
+    }
+    return {
+      records,
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    };
+  }).pipe(Effect.catchAll(historyFailure));
 }
 
 /**
@@ -606,10 +590,9 @@ function sendFailure(
   if (error._tag === "SendError" || error._tag === "FirewallRefusal") {
     return Effect.fail(error);
   }
-  return error._tag !== "CommunicationError" ||
-    error.reason === "persistence-failed"
-    ? Effect.die(error)
-    : Effect.fail(new SendError({ reason: error.reason }));
+  return error._tag === "CommunicationError"
+    ? Effect.fail(new SendError({ reason: error.reason }))
+    : Effect.die(error);
 }
 
 /**
@@ -620,8 +603,6 @@ function historyFailure(
   error:
     | HistoryError
     | SendError
-    | CommunicationError
-    | IdentityError
     | {
         readonly _tag: "SqlError" | "ParseError" | "JsonRepresentationError";
       },
@@ -629,49 +610,7 @@ function historyFailure(
   if (error._tag === "HistoryError") {
     return Effect.fail(error);
   }
-  if (error._tag === "SendError") {
-    return Effect.fail(new HistoryError({ reason: "invalid-address" }));
-  }
-  return error._tag === "IdentityError" && error.reason === "unknown-agent"
-    ? Effect.fail(new HistoryError({ reason: "unknown-agent" }))
+  return error._tag === "SendError"
+    ? Effect.fail(new HistoryError({ reason: "invalid-address" }))
     : Effect.die(error);
-}
-
-/**
- * Keeps a background loop of one agent running. A failure is logged and the
- * loop starts again after a pause that doubles from one second up to thirty.
- */
-function restarting(agentKey: string, loop: string) {
-  return <E, R>(work: Effect.Effect<never, E, R>) =>
-    work.pipe(
-      Effect.tapError((error) =>
-        Effect.logError(`The ${loop} failed and will start again`).pipe(
-          Effect.annotateLogs({
-            agentKey,
-            failure: Predicate.hasProperty(error, "_tag")
-              ? String(error._tag)
-              : "unknown",
-          }),
-        ),
-      ),
-      Effect.retry(
-        Schedule.union(
-          Schedule.exponential("1 second"),
-          Schedule.spaced("30 seconds"),
-        ),
-      ),
-    );
-}
-
-/**
- * Logs a check that failed and holds its conversation for a second. The
- * message stays unchecked, so the checks started next take it again.
- */
-function retryLater(agent: Agent, cause: Cause.Cause<unknown>) {
-  return Cause.isInterruptedOnly(cause)
-    ? Effect.void
-    : Effect.logError("A check failed and will be tried again").pipe(
-        Effect.annotateLogs({ agentKey: agent.settings.agentKey, cause }),
-        Effect.zipRight(Effect.sleep("1 second")),
-      );
 }

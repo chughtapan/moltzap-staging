@@ -1,192 +1,167 @@
-/** @file Messages between a server agent and its clients on one daemon. */
+/** @file Messages between a server agent and its clients on one daemon, as each holds them. */
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, FastCheck as fc, Queue, Record, Schema } from "effect";
+import { Array as Arr, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
-import { testAgentCard } from "../__tests__/agents.js";
-import { conversationFixture } from "./__tests__/conversation-fixtures.js";
+import type { AgentCard } from "../identity.js";
+import { createTestAgent } from "../__tests__/agents.js";
+import { openTestDatabase } from "../test.js";
 import { Message } from "./messages.js";
+import {
+  listConversations,
+  readHistory,
+  readInbox,
+  sendMessage,
+} from "./service.js";
 
-/** Alice as a server agent and Bob as its client. */
+type Name = "alice" | "bob" | "carol";
+
+/** Alice, the server agent, and her clients Bob and Carol in one database, with what a test does as them. */
 const fixture = Effect.gen(function* () {
-  const f = yield* conversationFixture;
-  const members = [f.cards.alice, f.cards.bob];
-  const message = (text: string) =>
-    Message.create({
-      author: f.cards.bob,
-      recipients: [f.cards.alice],
-      content: [{ type: "text", text }],
-    });
-  return { ...f, server: f.alice, client: f.bob, members, message };
+  const { sql, run } = yield* openTestDatabase();
+  const agents = {
+    alice: yield* run(createTestAgent("alice")),
+    bob: yield* run(createTestAgent("bob")),
+    carol: yield* run(createTestAgent("carol")),
+  };
+  return {
+    sql,
+    run,
+    agents,
+    /** Sends a new message from one agent to another, held by its recipient as `received` says. */
+    send: (from: Name, to: Name, received: { readonly readable: boolean }) =>
+      Effect.gen(function* () {
+        const message = yield* Message.create({
+          author: agents[from].card,
+          recipients: [agents[to].card],
+          content: [{ type: "text", text: "hello" }],
+        });
+        yield* sendMessage(
+          {
+            authorKey: agents[from].agentKey,
+            recipientKey: agents[to].agentKey,
+          },
+          message,
+          received,
+        );
+        return message;
+      }).pipe(run),
+    /** The ids of the messages an agent may read after `cursor`, in read order, with the cursor to read on from. */
+    inbox: (name: Name, cursor?: string) =>
+      readInbox(agents[name].agentKey, { limit: 100, cursor }).pipe(
+        Effect.map(({ messages, nextCursor }) => ({
+          ids: messages.map(({ message }) => message.msgId),
+          nextCursor,
+        })),
+        run,
+      ),
+    /** The first page of a conversation as one agent holds it. */
+    history: (name: Name, members: readonly AgentCard[]) =>
+      readHistory(agents[name].agentKey, { members }).pipe(
+        Effect.map((page) => page.entries.map((entry) => entry.message)),
+        run,
+      ),
+  };
 });
 
-it("retains a client/server exchange and hands each message only to its recipient", () =>
+const readable = { readable: true };
+
+it("retains a client/server exchange for its two members only and puts each message in its recipient's inbox", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const request = yield* f.message("hello");
-    yield* f.client.send(request);
-    const inbox = yield* f.received(f.server);
-    expect(yield* Queue.take(inbox)).toEqual(request);
-    const reply = yield* Message.create({
-      author: request.recipients[0],
-      recipients: [request.author],
-      content: [{ type: "text", text: "reply" }],
-    });
-    yield* f.server.send(reply);
-    expect(yield* f.client.listConversations).toEqual([f.members]);
-    const reopened = yield* f.open(f.agents.bob);
-    expect(yield* f.history(reopened, f.members)).toEqual([request, reply]);
+    const members = [f.agents.alice.card, f.agents.bob.card];
+    const request = yield* f.send("bob", "alice", readable);
+    expect((yield* f.inbox("alice", "0")).ids).toEqual([request.msgId]);
+    expect((yield* f.inbox("bob", "0")).ids).toEqual([]);
+    const reply = yield* f.send("alice", "bob", readable);
+    expect(yield* f.run(listConversations(f.agents.bob.agentKey))).toEqual([
+      members,
+    ]);
+    for (const member of ["alice", "bob"] as const) {
+      expect(yield* f.history(member, members)).toEqual([request, reply]);
+    }
+    expect(yield* f.history("carol", members)).toEqual([]);
   }));
 
-it("rolls back both members' views and serializes concurrent sends", () =>
+it("rolls back both members' views and gives concurrent sends one order", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const cancelled = yield* f.message("rolled back");
+    const members = [f.agents.alice.card, f.agents.bob.card];
     yield* f.sql
       .withTransaction(
-        f.client.send(cancelled).pipe(Effect.zipRight(Effect.fail("cancel"))),
+        f
+          .send("bob", "alice", readable)
+          .pipe(Effect.zipRight(Effect.fail("cancel"))),
       )
       .pipe(Effect.either);
-    for (const agent of [f.server, f.client]) {
-      expect(yield* f.history(agent, f.members)).toEqual([]);
+    for (const member of ["alice", "bob"] as const) {
+      expect(yield* f.history(member, members)).toEqual([]);
     }
-    const first = yield* f.message("client");
-    const second = yield* Message.create({
-      author: first.recipients[0],
-      recipients: [first.author],
-      content: [{ type: "text", text: "server" }],
-    });
-    yield* Effect.all([f.client.send(first), f.server.send(second)], {
-      concurrency: 2,
-    });
-    const server = yield* f.history(f.server, f.members);
-    expect(server).toEqual(yield* f.history(f.client, f.members));
+    yield* Effect.all(
+      [f.send("bob", "alice", readable), f.send("alice", "bob", readable)],
+      { concurrency: 2 },
+    );
+    const server = yield* f.history("alice", members);
+    expect(server).toEqual(yield* f.history("bob", members));
     expect(server).toHaveLength(2);
   }));
 
-it("hands a message to the next consumer after one fails", () =>
+const steps = fc.array(
+  fc.oneof(
+    fc.record({
+      step: fc.constant("send" as const),
+      author: fc.constantFrom("bob" as const, "carol" as const),
+      readable: fc.boolean(),
+    }),
+    fc.record({
+      step: fc.constant("read" as const),
+      /** Which earlier read's cursor the read presents, counted back from the latest; none when absent. */
+      cursor: fc.option(fc.nat({ max: 5 }), { nil: undefined }),
+    }),
+  ),
+  { maxLength: 40 },
+);
+
+it("returns, for any cursor a read gave, every message that became readable since that read in the order it did, and none for a read without a cursor", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const message = yield* f.message("durable before delivery");
-    yield* f.client.send(message);
-    const consumerFailure = new Error("handler failed");
-    expect(
-      yield* f.server
-        .consume(() => Effect.fail(consumerFailure))
-        .pipe(Effect.flip),
-    ).toBe(consumerFailure);
-    const reopened = yield* f.open(f.agents.alice);
-    expect(
-      yield* reopened
-        .consume((received) => Effect.fail(received))
-        .pipe(Effect.flip),
-    ).toEqual(message);
-  }));
-
-it("appends a message once to the history of the server agent and the client it names, and of no one else, exactly when its author sends it to an agent on the daemon", () =>
-  Effect.gen(function* () {
-    const f = yield* conversationFixture;
-    const people = { ...f.cards, dave: testAgentCard("dave") };
-    const names = Record.keys(people);
-    /** A send through `caller`'s service of a message it wrote, or one `author` wrote when that names an agent. Alice, the server agent, writes it or receives it. */
-    const sends = fc
-      .record({
-        caller: fc.constantFrom(...Record.keys(f.hosted)),
-        author: fc.oneof(
-          { weight: 3, arbitrary: fc.constant(undefined) },
-          { weight: 1, arbitrary: fc.constantFrom(...names) },
-        ),
-        to: fc.constantFrom(...names),
-      })
-      .filter(
-        ({ caller, author = caller, to }) =>
-          to !== author && (to === "alice" || author === "alice"),
-      );
-    const property = fc.asyncProperty(
-      sends,
-      ({ caller, author = caller, to }) =>
-        Effect.gen(function* () {
-          const message = yield* Message.create({
-            author: people[author],
-            recipients: [people[to]],
-            content: [{ type: "text", text: "hello" }],
-          });
-          const members = [message.author, ...message.recipients];
-          const admitted = author === caller && to in f.hosted;
-          const before = yield* f.histories(members);
-          const refusal = yield* f.hosted[caller].send(message).pipe(
-            Effect.as("none"),
-            Effect.catchTag("CommunicationError", (refused) =>
-              Effect.succeed(refused.reason),
-            ),
-          );
-          expect(refusal).toBe(admitted ? "none" : "membership-invalid");
-          expect(yield* f.histories(members)).toEqual(
-            Record.map(before, (earlier) =>
-              admitted ? [...earlier, message] : earlier,
-            ),
-          );
-          const outsiders = Record.keys(f.hosted).filter(
-            (name) => name !== author && name !== to,
-          );
-          for (const outsider of outsiders) {
-            expect(
-              yield* f.history(f.hosted[outsider], members).pipe(Effect.flip),
-            ).toMatchObject({ reason: "membership-invalid" });
-          }
-        }).pipe(Effect.runPromise),
-    );
-    yield* Effect.tryPromise(() => fc.assert(property));
-  }));
-
-it("keeps one copy of a message its author sends again, and refuses a different message under the same identifier", () =>
-  Effect.gen(function* () {
-    const f = yield* conversationFixture;
-    const names = Record.keys(f.hosted);
-    type Name = (typeof names)[number];
-    const write = (author: Name, recipient: Name, text: string) =>
-      Message.create({
-        author: f.cards[author],
-        recipients: [f.cards[recipient]],
-        content: [{ type: "text", text }],
-      });
-    /** An agent and two choices of whom it writes to: a client for Alice, the server agent, and Alice for a client. */
-    const sends = fc.constantFrom(...names).chain((author) => {
-      const others = fc.constantFrom(
-        ...names.filter((name) => (name === "alice") !== (author === "alice")),
-      );
-      return fc.record({
-        author: fc.constant(author),
-        to: others,
-        elsewhere: others,
-      });
-    });
-    const property = fc.asyncProperty(sends, ({ author, to, elsewhere }) =>
+    /** The ids of the messages alice may read, in the order they were stored. */
+    const expected: string[] = [];
+    /** Each cursor a read returned, with the count of messages readable when it did. */
+    const cursors: Array<{ cursor: string; through: number }> = [];
+    const holds = fc.asyncProperty(steps, (sequence) =>
       Effect.gen(function* () {
-        const message = yield* write(author, to, "original");
-        const different = yield* Schema.decodeUnknown(Message)({
-          ...(yield* write(author, elsewhere, "changed")),
-          msgId: message.msgId,
-        });
-        const members = [message.author, ...message.recipients];
-        const before = yield* f.histories(members);
-        yield* f.hosted[author].send(message);
-        yield* f.hosted[author].send(message);
-        expect(
-          yield* f.hosted[author].send(different).pipe(Effect.flip),
-        ).toMatchObject({ reason: "message-conflict" });
-        expect(yield* f.histories(members)).toEqual(
-          Record.map(before, (earlier) => [...earlier, message]),
-        );
-        const reused = yield* f.histories([
-          different.author,
-          ...different.recipients,
-        ]);
-        for (const history of Record.values(reused)) {
-          expect(history).not.toContainEqual(different);
+        for (const step of sequence) {
+          if (step.step === "send") {
+            const message = yield* f.send(step.author, "alice", step);
+            if (step.readable) {
+              expected.push(message.msgId);
+            }
+          } else {
+            const presented =
+              step.cursor === undefined
+                ? undefined
+                : cursors.at(-1 - step.cursor);
+            const read = yield* f.inbox("alice", presented?.cursor);
+            expect(read.ids).toEqual(
+              expected.slice(presented?.through ?? expected.length),
+            );
+            cursors.push({ cursor: read.nextCursor, through: expected.length });
+          }
         }
       }).pipe(Effect.runPromise),
     );
-    /** Every run lengthens the histories the next one reads. */
-    const numRuns = 30;
-    yield* Effect.tryPromise(() => fc.assert(property, { numRuns }));
+    yield* Effect.tryPromise(() => fc.assert(holds, { numRuns: 30 }));
+  }));
+
+it("gives messages stored at the same time distinct places in their recipient's read order", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const sent = yield* Effect.forEach(
+      Arr.makeBy(12, (index) => (index % 2 === 0 ? "bob" : "carol")),
+      (author) => f.send(author, "alice", readable),
+      { concurrency: 12 },
+    );
+    const read = yield* f.inbox("alice", "0");
+    expect(new Set(read.ids)).toEqual(new Set(sent.map(({ msgId }) => msgId)));
+    expect(read.nextCursor).toBe("12");
   }));

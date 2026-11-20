@@ -22,7 +22,6 @@ import {
   Schema,
 } from "effect";
 import type { Firewall } from "../firewall/service.js";
-import type { SocialHarness } from "./agent.js";
 import {
   Cursor,
   Message,
@@ -40,7 +39,7 @@ import {
   LocalGuidance,
 } from "../firewall/index.js";
 import { type AgentCard, AgentId, AgentName } from "../identity.js";
-import { makeInbox } from "./inbox.js";
+import { readInboxEntries, type SocialHarness } from "./agent.js";
 import {
   AgentAddress,
   INBOX_EVENT,
@@ -51,13 +50,13 @@ import {
 } from "./values.js";
 
 /**
- * What a request is answered from: one running agent, its role and the
+ * What a request is answered from: one agent, its role and the
  * daemon's Events extension, which serves that agent's inbox.
  */
 export interface AgentCalls {
   readonly agentKey: string;
   readonly card: AgentCard;
-  readonly harness: Context.Tag.Service<typeof SocialHarness>;
+  readonly harness: SocialHarness;
   readonly firewall: Context.Tag.Service<typeof Firewall>;
   readonly events: EventsExtension;
   /**
@@ -148,10 +147,14 @@ export const makeInboxEvents = Effect.gen(function* () {
     check: (...[{ principal, maxEvents, signal }, , cursor]) =>
       run(
         Effect.gen(function* () {
-          const inbox = yield* makeInbox(yield* Effect.fromNullable(principal));
-          const page = yield* inbox.listInbox(
-            Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-            cursor === null ? undefined : yield* Schema.decode(Cursor)(cursor),
+          const page = yield* readInboxEntries(
+            yield* Effect.fromNullable(principal),
+            {
+              limit: Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
+              ...(cursor === null
+                ? {}
+                : { cursor: yield* Schema.decode(Cursor)(cursor) }),
+            },
           );
           return {
             events: (yield* Schema.encode(Schema.Array(InboxEntry))(

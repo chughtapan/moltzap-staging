@@ -24,15 +24,10 @@ import { Data, Effect, Match, type Scope, Stream } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { Owner } from "./owners.js";
+import type { Owner } from "./agent.js";
 import type { DaemonSettings } from "./settings.js";
 import { packageVersion } from "../version.js";
 import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
-
-/** What a request gets when its agent cannot serve it. */
-const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
-  status: 503,
-});
 
 /** Request admission uses the validated authentication settings without translating them. */
 type McpAuthentication = DaemonSettings["authentication"];
@@ -40,10 +35,8 @@ type McpAuthentication = DaemonSettings["authentication"];
 /** The issuer's metadata could not be read, names another issuer or names no key set. */
 class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
 
-/** The running agent of an owner: its tools and its Events calls. */
-type AgentOfOwner<E> = (
-  owner: Owner,
-) => Effect.Effect<AgentCalls, E, Scope.Scope>;
+/** The agent of an owner: its tools and its Events calls. */
+type AgentOfOwner = (owner: Owner) => Effect.Effect<AgentCalls>;
 
 /**
  * The app the listener serves. The MCP SDK validates the Host and Origin
@@ -53,12 +46,12 @@ type AgentOfOwner<E> = (
  * signed for the resource with a subject, verified against the key set the
  * issuer's metadata names. The MCP handler answers an admitted request from
  * the agent of the token's subject, on a stream that ends when the token
- * expires. An agent that cannot start answers 503, and the log names what
- * failed.
+ * expires.
  */
-export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
-  E extends { readonly _tag: string },
->(authentication: McpAuthentication, agentOfOwner: AgentOfOwner<E>) {
+export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
+  authentication: McpAuthentication,
+  agentOfOwner: AgentOfOwner,
+) {
   const { issuer, resource, scope } = authentication;
   const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
   const metadata = yield* Effect.tryPromise({
@@ -134,12 +127,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
           ),
         ),
       ),
-      Effect.catchAll((error) =>
-        Effect.logWarning("Agent unavailable").pipe(
-          Effect.annotateLogs({ failure: error._tag }),
-          Effect.as(agentUnavailable),
-        ),
-      ),
+      Effect.orDie,
     );
   });
 });

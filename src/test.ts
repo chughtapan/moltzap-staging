@@ -85,7 +85,5 @@ export const restrictedLogin = Effect.fn("restrictedLogin")(function* ({
   return Redacted.make(restricted.href);
 }, Effect.orDie);
 
-/** Database selection uses the production driver composition. */
-export { databaseConnection, databaseUrl } from "./database.js";
 /** An OAuth issuer on this machine and the tokens that sign its subjects in. */
 export { issuerFixture, requiredScope } from "./daemon/testing.js";

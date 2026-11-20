@@ -71,13 +71,7 @@ export function withFirewall<A, E, R>(
   configure: (agentKey: string) => ReturnType<typeof Firewall.layer>,
 ) {
   const self = peer("alice", 1);
-  const identity = Layer.succeed(
-    Identity,
-    Identity.of({
-      me: self,
-      resolve: () => Effect.dieMessage("Unexpected name resolution"),
-    }),
-  );
+  const identity = Layer.succeed(Identity, Identity.of({ me: self }));
   const services = configure(storage.agentKey ?? "alice").pipe(
     Layer.provideMerge(identity),
     Layer.provideMerge(

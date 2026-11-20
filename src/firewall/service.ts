@@ -243,7 +243,7 @@ interface Installation {
 }
 
 /** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
-export const defaultConcurrentChecks = 4;
+const defaultConcurrentChecks = 4;
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
@@ -251,8 +251,11 @@ type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
  * Decides a message. A message of an agent that holds a contract
  * is first read as an act and checked for structure and protocol; a failure
  * refuses it. The text rules then judge the candidate: the owner's rules and
- * the rules its contract gives its act. An agent without a message policy
- * allows every message without reading its evidence.
+ * the rules its contract gives its act. The firewall's own reply to a
+ * withheld message, which is checked with that message as its reference, is
+ * not an act of a norm unless it reads as one: a reply that fails structure
+ * is judged by the text rules alone. An agent without a message policy allows
+ * every message without reading its evidence.
  */
 function decide<E, R>(
   installed: Installation,
@@ -278,7 +281,13 @@ function decide<E, R>(
           candidate.evidence,
         )
       : undefined;
-    if (contract?.kind === "refused") {
+    if (
+      contract?.kind === "refused" &&
+      !(
+        candidate.evidence.references !== undefined &&
+        contract.problem.stage === "structural"
+      )
+    ) {
       return contractRefusal(policy.revision, candidate, direction, contract);
     }
     return yield* checkMessageText(

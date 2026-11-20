@@ -63,13 +63,6 @@ the daemon treats it like any other.
 An admitted stream closes when its token expires; hosts renew their
 authorization before reconnecting.
 
-### Recovery
-
-Agent workers survive MCP disconnection. Startup restores known agents from
-SQL, and authenticated requests acquire the same retained context.
-
-An agent that cannot start receives HTTP 503; other agents keep serving.
-
 ## Firewalls
 
 The configured message policy and norms apply before host calls are accepted.

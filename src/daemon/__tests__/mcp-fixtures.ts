@@ -5,12 +5,12 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { type Context, Effect, Redacted, Ref } from "effect";
+import { Effect, Redacted, Ref } from "effect";
 import type { AgentName } from "../../identity.js";
+import type { SocialHarness } from "../agent.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { Firewall } from "../../firewall/service.js";
 import { openTestDatabase } from "../../test.js";
-import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
 import { issuerFixture, requiredScope } from "../testing.js";
 import { makeInboxEvents } from "../tool-server.js";
@@ -31,18 +31,18 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readonly serverAgentName?: AgentName;
     /** The daemon's resource, whose host requests name. */
     readonly resource?: URL;
-    readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
+    readonly harness?: Partial<SocialHarness>;
   } = {},
 ) {
   const database = yield* openTestDatabase();
   const card = testAgentCard("alice");
-  const harness = SocialHarness.of({
+  const harness: SocialHarness = {
     send: () => Effect.dieMessage("Unexpected send"),
     receive: () => Effect.succeed({ entries: [], nextCursor: "0" }),
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
     ...options.harness,
-  });
+  };
   const unused = () => Effect.dieMessage("Unexpected firewall assessment");
   const firewall = Firewall.of({
     checkIncoming: unused,

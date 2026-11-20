@@ -192,7 +192,6 @@ it("answers a failed call with the failure's message and its fields", () =>
           reason: fc.constantFrom(
             "unknown-agent" as const,
             "content-invalid" as const,
-            "message-conflict" as const,
           ),
           detail: fc.string(),
         },

@@ -351,11 +351,6 @@ and what remains unverified. Use context the owner already supplied.
 - A source README described `http.ts` as HTTP handling and `store.ts` as
   persistence. Delete the inventory. The reason a failed send changes no
   member's history belongs with that guarantee.
-- A package README summarized a linked guide's setup, health checks, and
-  storage caveat. Keep the task link and let the guide carry the procedure.
-- Daemon setup and first messages serve different needs. Keep installation,
-  registration, recovery, and diagnostics in the how-to. Put the guided
-  send-and-read exercise in a tutorial that links to that setup.
 
 ## Write a README
 
@@ -409,7 +404,7 @@ Verify that published links work as well as local paths.
 ## Site pages
 
 Site pages have `title`, a one-sentence `description`, and `read_when` with
-two to four reader situations. A guide's description names its outcome.
+two to four reader situations.
 Mintlify renders the title as H1, so body headings start at H2.
 
 ```yaml
