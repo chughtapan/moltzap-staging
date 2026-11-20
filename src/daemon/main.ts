@@ -8,20 +8,17 @@
  */
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, PubSub } from "effect";
+import { makeFirewall } from "../firewall/service.js";
+import { structureCheck } from "../norms/index.js";
+import { getOrCreateOwnedAgent } from "./agent.js";
+import { makeMcpHttpApp, serveMcp } from "./server.js";
 import {
-  databaseConnection,
-  databaseUrl,
-  getOrCreateOwnedAgent,
   loadDaemonSettings,
-  makeMcpHttpApp,
   packageVersion,
-  prepareDatabase,
   refused,
-  serveMcp,
   spanExport,
-} from "./daemon/index.js";
-import { makeFirewall } from "./firewall/service.js";
-import { structureCheck } from "./norms/index.js";
+} from "./settings.js";
+import { databaseConnection, databaseUrl, prepareDatabase } from "./store.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
 const HELP_MESSAGE = [

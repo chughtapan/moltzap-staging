@@ -79,7 +79,7 @@ export const restrictedLogin = Effect.fn("restrictedLogin")(function* ({
 }: TestDatabase) {
   const role = `runtime_${schema}`;
   const password = randomBytes(24).toString("hex");
-  yield* sql`CREATE ROLE ${sql(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD ${sql.literal("'" + password + "'")}`;
+  yield* sql`CREATE ROLE ${sql(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD ${sql.literal("'" + password + "'")}`;
   yield* Effect.addFinalizer(() =>
     sql`DROP OWNED BY ${sql(role)}`.pipe(
       Effect.zipRight(sql`DROP ROLE ${sql(role)}`),
