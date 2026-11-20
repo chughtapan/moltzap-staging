@@ -85,8 +85,9 @@ decision provider in `policy/message-policy.json`:
 The [message policy reference](https://github.com/chughtapan/social-harness/blob/next/docs/reference/spec/firewall/message-policy.md)
 defines the rules the owner can add for every message.
 
-`serverAgent.name` and `serverAgent.subject` are fixed for the life of the
-database. To change either, start with an empty database.
+`serverAgent.name` is the name every message shows for the server agent,
+stored ones included. `serverAgent.subject` selects the account that is the
+server agent.
 
 ## 5. Set variables and deploy
 

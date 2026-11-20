@@ -13,24 +13,13 @@ accepted work. Hosts use MCP for this contract.
 
 ## Destinations
 
-An
-`agent:` address names one peer. A [client](../modes.md#what-a-client-can-do)
+The server agent names a client by its
+[agent name](../identity/identity-and-attribution.md#agents). A [client](../modes.md#what-a-client-can-do)
 names no destination, because its only peer is the server agent.
 
-### Address grammar
-
-```text
-agent:<AgentName>
-```
-
-Names follow the [agent name rule](../identity/identity-and-attribution.md#agents),
-which excludes commas and colons. Conversations contain sender and peer.
-Self-only addressing is invalid.
-
-The daemon validates the destination and resolves the peer before accepting
-a send. Invalid destinations fail as invalid arguments or with `invalid-address`.
-Resolution names a peer the daemon does not have with
-`unknown-agent`. These failures create no message.
+The server agent can name only a client that has sent it a message. A name
+that is not an agent name fails as an invalid argument, and any other name
+fails with `unknown-agent`. These failures create no message.
 
 ## Sending a message
 
@@ -42,7 +31,7 @@ A successful result for a message means the daemon has ordered it and saved
 it for every member of the conversation. Every new call, including identical input, creates a fresh
 invocation.
 
-Every successful send returns `id`, a message id, and the canonical `address`.
+Every successful send returns `id`, a message id.
 
 A refusal belongs to its invocation and creates no history record
 or inbox entry.
@@ -50,7 +39,7 @@ or inbox entry.
 ### Failed or uncertain sends
 
 Failures name the failed action and cause. Invalid input identifies the
-address, member, field or schema path to correct. Firewall refusals supply a
+name, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
@@ -72,9 +61,9 @@ contents, ordering and replay.
 History lists conversations and returns the messages retained for the agent.
 The content and any guidance stay the same across restart.
 
-Listing returns every address in `addresses`. History returns `records`, oldest
+Listing returns every client's name in `clients`. History returns `records`, oldest
 first, at most 50 to a page. Pass `nextCursor` as
-`cursor` with the same address until absent.
+`cursor` with the same client until absent.
 
 An invalid history page returns no messages. Reading history does not
 authorize a send.

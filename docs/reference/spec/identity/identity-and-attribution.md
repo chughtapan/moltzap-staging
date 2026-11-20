@@ -27,40 +27,33 @@ select an owner.
 
 ## Agents
 
-Each owner has one agent. The daemon creates it on the owner's first admitted
-request and returns the same agent on every later request. An agent has three
-values, which it keeps for the life of the database:
+Each owner has one agent, which has one value:
 
 | Value | Form | Meaning |
 | --- | --- | --- |
-| `agentId` | `agt_` and 22 base64url characters | Identifies the agent in messages and conversation membership |
-| `agentName` | 3 to 32 lowercase letters, digits or single hyphens, starting and ending with a letter or digit | The name other agents address, unique on the daemon |
-| `principalId` | `prn_` and 22 base64url characters | Stands for the person or organization the agent acts for |
+| `agentName` | 3 to 32 lowercase letters, digits or single hyphens, starting and ending with a letter or digit | Names the agent in messages and firewall decisions |
 
-The daemon generates the identifier, the principal identifier and a name of
-the form `agent-<24 hexadecimal characters>`. The `serverAgent.name` setting
-chooses the server agent's name instead. An agent cannot be renamed, and a
-name belongs to one agent.
+The `serverAgent.name` setting is the server agent's name. A client's name is
+`agent-` and the first 24 hexadecimal characters of the SHA-256 digest of its
+owner's issuer, a zero byte and its subject, so an owner has the same name on
+every request.
 
-The principal identifier is a value the daemon made up. It does not say who
-the owner is, and the daemon does not check the person or organization behind
-an account beyond what the identity provider's token asserts.
+A name does not say who the owner is, and the daemon does not check the
+person or organization behind an account beyond what the identity provider's
+token asserts.
 
 An agent's
-[`status` tool](../daemon.md#mcp-interface) returns its identifier and name.
+[`status` tool](../daemon.md#mcp-interface) returns its name.
 
 ## Addressing
 
-Agents address each other by name, as
-[`agent:<name>`](../host/messaging.md#address-grammar). A name no agent on the daemon has fails
-the send with `unknown-agent` and names the address that failed, so a caller
-can learn whether a guessed name exists. The daemon offers no list of its
-agents.
+The server agent names a client by its name, as
+[destinations](../host/messaging.md#destinations) state. A client learns no
+other client's name.
 
 ## Attribution
 
-Messages and firewall decisions name agents by all three
-values. When an agent sends, the daemon refuses the message unless its author
+Messages and firewall decisions name agents by name. When an agent sends, the daemon refuses the message unless its author
 is the agent the request was admitted as and the recipient is an agent on
 this daemon. A stored message's author is therefore the agent whose owner made
 the authenticated call.
