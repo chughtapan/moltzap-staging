@@ -1,18 +1,17 @@
-/** @file Owns one agent's message policy: its checks, the content they permit and its saved decisions. */
+/** @file One agent's message checks: its structure check, its text rules, and what each check concludes and gives to be saved. */
 
-import { Clock, Context, Effect, Exit, Layer, Schedule, Struct } from "effect";
+import { Clock, Context, Effect, Exit, Layer, Schedule } from "effect";
 import { createHash, randomBytes } from "node:crypto";
 import type { Message } from "../communication/index.js";
+import type { AgentCard } from "../identity.js";
 import type {
+  CheckRecord,
   Direction,
-  firewallDecisionsSchema,
-  firewallDecisionSummarySchema,
-  FirewallPolicyError,
   FirewallRefusalReason,
   LoadedMessagePolicy,
   TextRule,
 } from "./rules.js";
-import { type AgentCard, Identity } from "../identity.js";
+import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
   type AssessmentText,
   checkCapturedMessage,
@@ -20,203 +19,96 @@ import {
   type DecisionProvider,
   type EarlierMessage,
   type FirewallCheck,
-  type FirewallEvidence,
-  FirewallRefusal,
-  type HistoryEntry,
   type LocalGuidance,
   type StructureCheck,
   textQuestionEdition,
 } from "./check.js";
 import { makeJevDecisionProvider } from "./jev.js";
-import {
-  type CheckRecord,
-  type FirewallStore,
-  makeFirewallStore,
-} from "./store.js";
 
 /**
  * The message policy one firewall applies for its whole scope. Every reason
- * but `eligible`, including a provider failure, refuses a send and withholds
- * an incoming message.
+ * but `eligible`, including a provider failure, refuses a message.
  */
 type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
 
-/** A refused or withheld message's reason, the rule that decided, and what its sender is told. */
-interface Refusal {
-  readonly reason: FirewallRefusalReason;
-  readonly ruleId?: string;
-  readonly feedback: readonly string[];
-  readonly detail?: unknown;
-  readonly reply?: string;
-}
-
 /**
- * One message's decision and the check record that saves it. `refused`
- * refuses a message the agent sends and withholds one it receives. Only a
- * message of an agent without a message policy has no record.
+ * What a check concludes. `record` is what the caller saves of the decision;
+ * a message of an agent without a message policy and a check that could not
+ * run have none. A refused incoming message is withheld from the agent, and
+ * `reply` is the text its sender is to receive as an ordinary message from
+ * this agent, with the record of that reply as a message this firewall
+ * allowed.
  */
-type Decision =
+export type CheckResult =
   | {
       readonly kind: "allowed";
-      readonly record?: CheckRecord;
       readonly guidance?: LocalGuidance;
+      readonly record?: CheckRecord;
     }
   | {
       readonly kind: "refused";
-      readonly record: CheckRecord;
-      readonly refusal: Refusal;
+      readonly checkId: string;
+      readonly reason: FirewallRefusalReason;
+      readonly rule?: string;
+      readonly feedback: readonly string[];
+      readonly detail?: unknown;
+      readonly reply?: { readonly text: string; readonly record: CheckRecord };
+      readonly record?: CheckRecord;
     };
 
-/**
- * Run `save` before returning refusal or submitting this exact message.
- * Saving is repeatable and uses the caller's current SQL transaction.
- */
-type OutgoingDecision = {
-  readonly save: Effect.Effect<void, FirewallPolicyError>;
-} & (
-  | { readonly kind: "allowed" }
-  | { readonly kind: "refused"; readonly refusal: FirewallRefusal }
-);
-
-/**
- * Run `save` in the same SQL transaction as the inbox write.
- * Saving is repeatable. A withheld message with `reply` gets that text back, as
- * an ordinary message from this agent in the same conversation.
- */
-export type IncomingDecision = {
-  readonly save: Effect.Effect<void, FirewallPolicyError>;
-} & (
-  | {
-      readonly kind: "allowed";
-      readonly guidance?: LocalGuidance;
-    }
-  | {
-      readonly kind: "withheld";
-      /** Why the message was withheld. */
-      readonly reason: FirewallRefusalReason;
-      readonly reply?: string;
-    }
-);
-/**
- * Reads the evidence of one check. Only a check under a message policy runs
- * it. `protocolHistory` asks for every message before the one under check as
- * well, which a firewall with a structure check needs.
- */
-type ReadEvidence<E, R> = (
-  protocolHistory: boolean,
-) => Effect.Effect<FirewallEvidence, E, R>;
-
-/** Message checks and saved decision summaries. */
+/** Message checks. `earlier` is the conversation's earlier messages in order. */
 interface FirewallService {
-  /** Checks without saving. Refusals expose feedback. */
-  readonly checkOutgoing: <E, R>(
+  /** Checks a message its agent sends. A refusal exposes feedback and never a reply. */
+  readonly checkOutgoing: (
     message: Message,
-    evidence: ReadEvidence<E, R>,
-  ) => Effect.Effect<OutgoingDecision, E, R>;
+    earlier: readonly EarlierMessage[],
+  ) => Effect.Effect<CheckResult>;
   /**
-   * Checks a message a peer wrote with its preceding evidence. An allowed
-   * message the provider was unsure about carries guidance; a withheld one
-   * exposes none.
+   * Checks a message a peer wrote. An allowed message the provider was unsure
+   * about carries guidance.
    */
-  readonly checkIncoming: <E, R>(
+  readonly checkIncoming: (
     message: Message,
-    evidence: ReadEvidence<E, R>,
-  ) => Effect.Effect<IncomingDecision, E, R>;
-  readonly readDecisions: (request: {
-    readonly since?: number;
-  }) => Effect.Effect<typeof firewallDecisionsSchema.Type, FirewallPolicyError>;
+    earlier: readonly EarlierMessage[],
+  ) => Effect.Effect<CheckResult>;
 }
 
-/** One agent's firewall: it checks messages against the message policy and reads its saved decisions. */
+/** One agent's firewall: it checks messages against the message policy. */
 export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   Firewall,
   FirewallService
 >() {
   /**
-   * Policy resources are fixed for this scope. Identity supplies this agent's
-   * card. `structureCheck` judges each message before the text rules of
+   * The firewall of the agent `self` is the card of. Policy resources are
+   * fixed for this scope. The provider reads at most `historyLimit` earlier
+   * messages. `structureCheck` judges each message before the text rules of
    * `source`, and the text rules it gives a message join them. `provider`
    * judges the text rules in place of the provider `source` names.
    */
   static readonly layer = (
-    agentKey: string,
-    source?: LoadedMessagePolicy,
-    structureCheck?: StructureCheck,
-    provider?: DecisionProvider,
+    self: AgentCard,
+    source: LoadedMessagePolicy | undefined,
+    options: {
+      readonly historyLimit: number;
+      readonly structureCheck?: StructureCheck;
+      readonly provider?: DecisionProvider;
+    },
   ) =>
     Layer.effect(
       Firewall,
       Effect.gen(function* () {
-        const identity = yield* Identity;
-        const store = yield* makeFirewallStore(agentKey);
-        const policy =
-          source === undefined
-            ? undefined
-            : yield* buildPolicy(source, provider);
         const installed: Installation = {
-          store,
-          ...(policy === undefined ? {} : { policy }),
-          ...(structureCheck === undefined ? {} : { structureCheck }),
-          localAgent: identity.me,
+          ...options,
+          self,
+          ...(source === undefined
+            ? {}
+            : { policy: yield* buildPolicy(source, options.provider) }),
         };
         return Firewall.of({
-          readDecisions: (request) => store.readDecisions(request),
-          checkOutgoing: (message, evidence) =>
-            Effect.gen(function* () {
-              const decision = yield* decide(
-                installed,
-                message,
-                evidence,
-                "outgoing",
-              );
-              const save = saveRecords(store, decision);
-              if (decision.kind === "allowed") {
-                return { kind: "allowed", save } satisfies OutgoingDecision;
-              }
-              const { refusal } = decision;
-              return {
-                kind: "refused",
-                save,
-                refusal: new FirewallRefusal({
-                  reason: "firewall-refused",
-                  checkId: decision.record.checkId,
-                  refusal: refusal.reason,
-                  ...(refusal.ruleId === undefined
-                    ? {}
-                    : { rule: refusal.ruleId }),
-                  feedback: refusal.feedback,
-                  ...(refusal.detail === undefined
-                    ? {}
-                    : { detail: refusal.detail }),
-                }),
-              } satisfies OutgoingDecision;
-            }),
-          checkIncoming: (message, evidence) =>
-            Effect.gen(function* () {
-              const decision = yield* decide(
-                installed,
-                message,
-                evidence,
-                "incoming",
-              );
-              const save = saveRecords(store, decision);
-              if (decision.kind === "allowed") {
-                return {
-                  kind: "allowed",
-                  save,
-                  ...(decision.guidance === undefined
-                    ? {}
-                    : { guidance: decision.guidance }),
-                } satisfies IncomingDecision;
-              }
-              const { reply } = decision.refusal;
-              return {
-                kind: "withheld",
-                reason: decision.refusal.reason,
-                save,
-                ...(reply === undefined ? {} : { reply }),
-              } satisfies IncomingDecision;
-            }),
+          checkOutgoing: (message, earlier) =>
+            decide(installed, message, earlier, "outgoing"),
+          checkIncoming: (message, earlier) =>
+            decide(installed, message, earlier, "incoming"),
         });
       }),
     );
@@ -230,282 +122,262 @@ type Passed = Extract<
 
 /** The message policy one firewall applies. */
 interface Installation {
-  readonly store: FirewallStore;
   readonly policy?: InstalledPolicy;
   readonly structureCheck?: StructureCheck;
-  readonly localAgent: AgentCard;
+  readonly historyLimit: number;
+  readonly self: AgentCard;
 }
 
 /** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
 const defaultConcurrentChecks = 4;
 
-type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
+/** What the sender of a withheld message is told when nothing else answers it. */
+const withheldNotice = (explanation?: string) =>
+  `Your message was not accepted: ${explanation ?? "it breaks a rule this agent applies to incoming messages."}`;
 
 /**
  * Decides a message. The structure check judges it first, with the earlier
- * messages and this firewall's checks of them; its refusal refuses the
- * message, and a check that cannot read those checks is unavailable. The text
- * rules then judge the message: the owner's rules and those the structure
- * check gives it. The firewall's own reply to a withheld message, which is
- * checked with that message as its reference, is judged by the owner's text
- * rules alone. An agent without a message policy allows every message without
- * reading its evidence.
+ * messages; its refusal refuses the message. The text rules then judge the
+ * message: the owner's rules and those the structure check gives it. An agent
+ * without a message policy allows every message.
  */
-function decide<E, R>(
+function decide(
   installed: Installation,
   message: Message,
-  readEvidence: ReadEvidence<E, R>,
+  earlier: readonly EarlierMessage[],
   direction: Direction,
 ) {
   return Effect.gen(function* () {
     const { policy, structureCheck } = installed;
     if (policy === undefined) {
-      return { kind: "allowed" } satisfies Decision;
+      return { kind: "allowed" } satisfies CheckResult;
     }
-    const evidence = yield* readEvidence(structureCheck !== undefined);
-    const structure =
-      structureCheck === undefined || evidence.references !== undefined
-        ? undefined
-        : yield* earlierMessages(installed.store, evidence).pipe(
-            Effect.flatMap((earlier) => structureCheck(message, earlier)),
-            Effect.map((result) =>
-              result.kind === "passed"
-                ? result
-                : { ...result, feedback: [result.feedback] },
-            ),
-            Effect.catchTag("FirewallPolicyError", () =>
-              Effect.succeed({
-                kind: "refused" as const,
-                reason: "check-unavailable" as const,
-                feedback: [],
-              }),
-            ),
-          );
+    const structure = yield* structureCheck?.(message, earlier) ??
+      Effect.succeed(undefined);
     if (structure?.kind === "refused") {
-      return refusal(
-        policy.revision,
-        message,
-        direction,
-        Struct.omit(structure, "kind"),
-      );
+      const reply =
+        structure.reply ??
+        (structure.reason === "rule-violation"
+          ? withheldNotice(structure.feedback)
+          : undefined);
+      return refused(message, direction, yield* Clock.currentTimeMillis, {
+        reason: structure.reason,
+        rule: structure.ruleId,
+        decidedBy: [{ ruleId: structure.ruleId }],
+        checkedRuleIds: [structure.ruleId],
+        feedback: [structure.feedback],
+        ...(structure.detail === undefined ? {} : { detail: structure.detail }),
+        ...(reply === undefined ? {} : { reply }),
+      });
     }
     return yield* checkMessageText(
-      policy,
-      installed.localAgent,
-      { message, evidence },
+      { policy, ...installed },
+      { message, earlier },
       direction,
       structure,
     );
   });
 }
 
-/**
- * Each message before the one under check with this firewall's saved check of
- * it. A check that allowed it wins over one that did not, since a draft the
- * firewall refused can share its id with the message later sent.
- */
-function earlierMessages(store: FirewallStore, evidence: FirewallEvidence) {
-  const messages =
-    evidence.protocolHistory?.messages ??
-    evidence.history.map((entry) => entry.message);
-  return Effect.map(
-    store.readCheckRecords(messages.map((message) => messageKey(message))),
-    (rows) =>
-      messages.map((message): EarlierMessage => {
-        const checks = rows.filter(
-          (row) => row.messageKey === messageKey(message),
-        );
-        const check =
-          checks.find((row) => row.decision === "allowed") ?? checks[0];
-        return {
-          message,
-          allowed: check?.decision === "allowed",
-          ...(check === undefined ? {} : { checkedAt: check.at }),
-        };
-      }),
-  );
+/** What a refusal is built from: the check's conclusion and the text that answers a withheld message. */
+interface Refused extends Pick<
+  CheckRecord,
+  "decidedBy" | "checkedRuleIds"
+> {
+  readonly reason: FirewallRefusalReason;
+  readonly rule?: string;
+  readonly feedback: readonly string[];
+  readonly detail?: unknown;
+  readonly reply?: string;
 }
 
 /**
- * The decision that refuses a message without a text check. A withheld
- * message is answered with the refusal's reply when it has one.
+ * The refusal of `message` at `time`, with its record. A check that could not
+ * run gives no record. Only a withheld message has a reply: its record is
+ * that of a message this agent sends to the withheld message's author, which
+ * this firewall allows without checking its own words.
  */
-function refusal(
-  revision: string,
+function refused(
   message: Message,
   direction: Direction,
-  { reply, ...refused }: Refusal,
-): Decision {
-  const ruleIds = refused.ruleId === undefined ? [] : [refused.ruleId];
+  time: number,
+  { reply, rule, feedback, detail, ...concluded }: Refused,
+): CheckResult {
+  const checkId = mintCheckId();
   return {
     kind: "refused",
-    record: {
-      checkId: mintCheckId(),
-      messageKey: messageKey(message),
-      direction,
-      messageJson: JSON.stringify(message),
-      inputJson: JSON.stringify({ revision }),
-      resultJson: JSON.stringify({
-        ...(refused.detail === undefined ? {} : { detail: refused.detail }),
-        summaries: (direction === "outgoing"
-          ? message.recipients
-          : [message.author]
-        ).map(
-          (peer): DecisionSummary => ({
+    checkId,
+    reason: concluded.reason,
+    ...(rule === undefined ? {} : { rule }),
+    feedback,
+    ...(detail === undefined ? {} : { detail }),
+    ...(concluded.reason === "check-unavailable"
+      ? {}
+      : {
+          record: {
+            ...concluded,
+            checkId,
             direction,
-            peer,
-            reason: refused.reason,
-            decidedBy: ruleIds.map((ruleId) => ({ ruleId })),
-            checkedRuleIds: ruleIds,
-            activeRevision: revision,
-          }),
-        ),
-      }),
-      allowed: false,
-    },
-    refusal: {
-      ...refused,
-      ...(reply === undefined || direction === "outgoing" ? {} : { reply }),
-    },
+            decision: direction === "outgoing" ? "refused" : "withheld",
+            time,
+            peers: direction === "outgoing" ? message.recipients : [message.author],
+          },
+        }),
+    ...(reply === undefined || direction === "outgoing"
+      ? {}
+      : {
+          reply: {
+            text: reply,
+            record: {
+              checkId: mintCheckId(),
+              direction: "outgoing",
+              decision: "allowed",
+              time,
+              peers: [message.author],
+              reason: "eligible",
+              decidedBy: [],
+              checkedRuleIds: [],
+            },
+          },
+        }),
   };
 }
 
-/** Saves the decision's check record when it has one. */
-function saveRecords(store: FirewallStore, decision: Decision) {
-  return decision.record === undefined
-    ? Effect.void
-    : store.saveCheckRecord(decision.record);
+/**
+ * The provider's window of the earlier messages: the latest `historyLimit`
+ * of them within the byte limit of one runtime item. `gaps` names what the
+ * byte limit cut.
+ */
+function historyWindow(
+  earlier: readonly EarlierMessage[],
+  historyLimit: number,
+) {
+  const latest = earlier.slice(-historyLimit);
+  let bytes = 0;
+  let kept = 0;
+  for (const { message } of [...latest].reverse()) {
+    bytes += Buffer.byteLength(JSON.stringify(message));
+    if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
+      break;
+    }
+    kept += 1;
+  }
+  return {
+    history: latest.slice(latest.length - kept),
+    earlierHistoryOmitted: kept < earlier.length,
+    gaps:
+      kept < latest.length
+        ? ["The preceding history exceeds the evidence byte limit."]
+        : [],
+  };
 }
 
 /**
  * One check of a message against its text rules, with the history before it.
- * Its record carries the exact revision and evidence that delivery commits.
  * A message the structure check passed is also judged by the text rules that
  * check gives it, and the provider reads its protocol context. A refusal of
- * such a message carries the structure check's detail, and a withheld one is
- * answered as that check phrases the reply.
+ * such a message carries the structure check's detail. A withheld message is
+ * answered as that check phrases the reply, else with the feedback of the
+ * `reply` rules it broke, else, when it broke a rule, with the notice.
  */
 function checkMessageText(
-  policy: InstalledPolicy,
-  self: AgentCard,
+  installed: Installation & { readonly policy: InstalledPolicy },
   candidate: {
     readonly message: Message;
-    readonly evidence: FirewallEvidence;
+    readonly earlier: readonly EarlierMessage[];
   },
   direction: Direction,
   structure?: Passed,
 ) {
   return Effect.gen(function* () {
+    const { policy, self } = installed;
     const { message } = candidate;
     const now = yield* Clock.currentTimeMillis;
+    const window = historyWindow(candidate.earlier, installed.historyLimit);
     const cards = new Map<string, AgentCard>();
     for (const card of [
       self,
       message.author,
       ...message.recipients,
-      ...candidate.evidence.history.flatMap((entry) => [
+      ...window.history.flatMap((entry) => [
         entry.message.author,
         ...entry.message.recipients,
       ]),
     ]) {
       cards.set(card.agentId, card);
     }
-    const agents = [...cards.values()];
-    const history: HistoryEntry[] = candidate.evidence.history.map((entry) => ({
-      ...assessmentText(entry.message),
-      visibleToAgent:
-        entry.visibleToAgent || entry.message.author.agentId === self.agentId,
-    }));
     const evidence: CheckEvidence = {
       agentId: self.agentId,
       principal: self.principalId,
-      participants: agents.map((card) => ({
+      participants: [...cards.values()].map((card) => ({
         agentId: card.agentId,
         principal: card.principalId,
       })),
-      history,
-      earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
+      history: window.history.map((entry) => ({
+        ...assessmentText(entry.message),
+        visibleToAgent:
+          entry.allowed || entry.message.author.agentId === self.agentId,
+      })),
+      earlierHistoryOmitted: window.earlierHistoryOmitted,
       now,
-      gaps: candidate.evidence.gaps,
+      gaps: window.gaps,
       ...(structure?.protocol === undefined
         ? {}
         : { protocol: structure.protocol }),
     };
-    const text = assessmentText(message);
     const textRules = [...policy.textRules, ...(structure?.textRules ?? [])];
-    const detail = structure?.detail;
-    return yield* Effect.gen(function* () {
-      const checkId = mintCheckId();
-      const check = yield* checkCapturedMessage(direction, text, evidence, {
+    const check = yield* checkCapturedMessage(
+      direction,
+      assessmentText(message),
+      evidence,
+      {
         textRules,
         revision: policy.revision,
         settings: policy.configured.settings,
         ...(policy.provider === undefined ? {} : { provider: policy.provider }),
-      }).pipe(markCheckActivity(direction));
-      const record: CheckRecord = {
-        checkId,
-        messageKey: messageKey(message),
-        direction,
-        messageJson: JSON.stringify(message),
-        inputJson: JSON.stringify({
-          revision: policy.revision,
-          revisionContents: policy.revisionContents,
-          evidence,
-          agents,
-          message: text,
-        }),
-        allowed: check.reason === "eligible",
-        resultJson: JSON.stringify({
-          check: Struct.omit(check, "decidedBy"),
-          summaries: (direction === "outgoing"
-            ? message.recipients
-            : [message.author]
-          ).map((peer) =>
-            decisionSummary(
-              policy.revision,
-              check,
-              direction,
-              cards.get(peer.agentId) ?? peer,
-            ),
-          ),
-          ...(detail === undefined ? {} : { detail }),
-        }),
-      };
-      if (check.reason === "eligible") {
-        const allowed: Decision = {
-          kind: "allowed",
-          record,
-          ...(check.instructions.length === 0
-            ? {}
-            : { guidance: { checkId, instructions: check.instructions } }),
-        };
-        return allowed;
-      }
-      const reply =
-        direction === "incoming"
-          ? (structure?.replyTo?.(
-              check.feedback.join(" ") ||
-                `The semantic policy check returned ${check.reason}.`,
-            ) ?? textReply(textRules, check))
-          : "";
-      const refused: Decision = {
-        kind: "refused",
-        record,
-        refusal: {
-          reason: check.reason,
-          feedback: check.feedback,
-          ...(detail === undefined ? {} : { detail }),
-          ...(reply === "" ? {} : { reply }),
+      },
+    ).pipe(
+      markCheckActivity(direction),
+      Effect.withSpan("assessMessage"),
+      policy.permits.withPermits(1),
+    );
+    const { reason, decidedBy, checkedRuleIds } = check;
+    if (reason === "eligible") {
+      const checkId = mintCheckId();
+      return {
+        kind: "allowed",
+        ...(check.instructions.length === 0
+          ? {}
+          : { guidance: { checkId, instructions: check.instructions } }),
+        record: {
+          checkId,
+          direction,
+          decision: "allowed",
+          time: now,
+          peers:
+            direction === "outgoing" ? message.recipients : [message.author],
+          reason,
+          decidedBy,
+          checkedRuleIds,
         },
-      };
-      return refused;
-    }).pipe(Effect.withSpan("assessMessage"), policy.permits.withPermits(1));
+      } satisfies CheckResult;
+    }
+    const reply =
+      structure?.replyTo?.(
+        check.feedback.join(" ") ||
+          `The semantic policy check returned ${reason}.`,
+      ) ??
+      (textReply(textRules, check) ||
+        (reason === "rule-violation" ? withheldNotice() : undefined));
+    return refused(message, direction, now, {
+      reason,
+      decidedBy,
+      checkedRuleIds,
+      feedback: check.feedback,
+      ...(structure?.detail === undefined ? {} : { detail: structure.detail }),
+      ...(reply === undefined ? {} : { reply }),
+    });
   });
-}
-
-/** The key a check record is saved under for its message: the author's agent id and the message id. */
-function messageKey(message: Message): string {
-  return `${message.author.agentId}/${message.msgId}`;
 }
 
 /** A check id correlates a check without granting lookup authority. */
@@ -566,26 +438,9 @@ function textReply(
     .join("\n");
 }
 
-/** The summary a host reads of one check for one peer, naming the same captured rules as the decision. */
-function decisionSummary(
-  activeRevision: string,
-  check: FirewallCheck,
-  direction: Direction,
-  peer: AgentCard,
-): DecisionSummary {
-  return {
-    direction,
-    peer,
-    reason: check.reason,
-    decidedBy: check.decidedBy,
-    checkedRuleIds: check.checkedRuleIds,
-    activeRevision,
-  };
-}
-
 /**
- * Installs the message policy `source` gives. Its revision covers the
- * configured rules, so a decision names the rules that applied. Without
+ * Installs the message policy `source` gives. Its revision, which the
+ * provider reads, covers the configured rules and provider. Without
  * `provider`, Jev judges the text rules of a policy that names it.
  */
 function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
@@ -612,12 +467,10 @@ function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
             model: provider.model ?? null,
           }),
     };
-    const revision = digest(revisionContents);
     return {
       configured,
       provider,
-      revisionContents,
-      revision,
+      revision: digest(revisionContents),
       textRules,
       permits: yield* Effect.makeSemaphore(
         configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
