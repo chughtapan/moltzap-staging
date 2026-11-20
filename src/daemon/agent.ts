@@ -375,14 +375,7 @@ export const send = Effect.fn("send")(
       ),
     );
     yield* takeTurn(daemon, outgoing ? recipient : author);
-    const earlier = (yield* readConversation([
-      author.agentId,
-      recipient.agentId,
-    ])).map((stored) => ({
-      message: stored.message,
-      allowed: stored.readNumber !== null,
-      ...(stored.checkedAt === null ? {} : { checkedAt: stored.checkedAt }),
-    }));
+    const earlier = yield* earlierMessages(author, recipient);
     const result = outgoing
       ? yield* daemon.firewall.checkOutgoing(message, earlier)
       : yield* daemon.firewall.checkIncoming(message, earlier);
@@ -450,6 +443,21 @@ export const send = Effect.fn("send")(
       ),
     ),
 );
+
+/**
+ * The messages two agents have exchanged, oldest first, as the firewall
+ * reads them: each allowed if its recipient may read it, with the time of its
+ * check when it had one.
+ */
+function earlierMessages(one: AgentCard, other: AgentCard) {
+  return Effect.map(readConversation([one.agentId, other.agentId]), (stored) =>
+    stored.map(({ message, readNumber, checkedAt }) => ({
+      message,
+      allowed: readNumber !== null,
+      ...(checkedAt === null ? {} : { checkedAt }),
+    })),
+  );
+}
 
 /**
  * The firewall's reply to a message it withheld, as an ordinary message from

@@ -42,8 +42,6 @@ import {
 } from "./agent.js";
 import { readDecisions } from "./store.js";
 
-// safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
-
 /** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
 export const packageVersion: string = packageJson.version;
 
