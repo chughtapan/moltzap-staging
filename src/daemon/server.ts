@@ -68,7 +68,7 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
-import { type DaemonSettings, packageVersion  } from "./settings.js";
+import { type DaemonSettings, packageVersion } from "./settings.js";
 import { readDecisions } from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
