@@ -99,20 +99,14 @@ const AGENT_ADDRESS_PREFIX = "agent:";
 
 const isAgentName = Schema.is(AgentName);
 
-/** The agent name an `agent:` address names, or undefined when the value is not an agent address. */
-const parseAgentAddress = (value: string): AgentName | undefined => {
-  if (!value.startsWith(AGENT_ADDRESS_PREFIX)) {
-    return undefined;
-  }
-  const name = value.slice(AGENT_ADDRESS_PREFIX.length);
-  return isAgentName(name) ? name : undefined;
-};
-
 /** The address of one agent. */
 export const AgentAddress = Schema.String.pipe(
-  Schema.filter((value) => parseAgentAddress(value) !== undefined, {
-    description: `agent:<name>; a name is ${AGENT_NAME_RULE}`,
-  }),
+  Schema.filter(
+    (value) =>
+      value.startsWith(AGENT_ADDRESS_PREFIX) &&
+      isAgentName(value.slice(AGENT_ADDRESS_PREFIX.length)),
+    { description: `agent:<name>; a name is ${AGENT_NAME_RULE}` },
+  ),
   Schema.brand("AgentAddress"),
   Schema.annotations({ identifier: "AgentAddress" }),
 );
@@ -275,9 +269,10 @@ function entryOf({ message, guidance }: StoredMessage) {
 
 /**
  * A page of an agent's inbox entries after `cursor`, in the order they were
- * allowed, with the cursor that reads on from the last of them. Without a cursor the read starts from now. With `wait` and no entry to
- * return, it reads once more when an entry becomes readable or `wait` seconds
- * pass; a waiting read subscribes before it reads, so an entry that becomes
+ * allowed, with the cursor that reads on from the last of them. Without a
+ * cursor the read starts from now. With `wait` seconds and no entry to
+ * return, it reads once more when an entry becomes readable or the wait
+ * ends; a waiting read subscribes before it reads, so an entry that becomes
  * readable after the read is not missed.
  */
 export const receive = Effect.fn("receive")(function* (

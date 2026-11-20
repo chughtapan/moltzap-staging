@@ -8,7 +8,6 @@ import {
   initialNormsHaveRules,
   type InstalledNorms,
   loadNorms,
-  type NormsConfigurationError,
 } from "../norms/index.js";
 
 /**
@@ -125,7 +124,13 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   const norms =
     file.normsDirectory === undefined
       ? undefined
-      : yield* configuredNorms(resolve(settingsDirectory, file.normsDirectory));
+      : yield* loadNorms(resolve(settingsDirectory, file.normsDirectory)).pipe(
+          Effect.mapError((error) =>
+            refused(
+              `The configured norms directory is invalid: ${error.reason}`,
+            ),
+          ),
+        );
   if (norms !== undefined && file.messagePolicyFile === undefined) {
     return yield* refused(
       "The configured norms need a messagePolicyFile: the message policy checks them",
@@ -152,12 +157,3 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   };
   return settings;
 });
-
-/** The settings file's norms directory, read and checked. */
-function configuredNorms(directory: string) {
-  return loadNorms(directory).pipe(
-    Effect.mapError((error: NormsConfigurationError) =>
-      refused(`The configured norms directory is invalid: ${error.reason}`),
-    ),
-  );
-}
