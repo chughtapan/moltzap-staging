@@ -52,7 +52,6 @@ of thing.
 | **feedback** | The text a rule gives the sender of a message it refuses. |
 | **guidance** | The **instructions** rules give the receiving agent alongside a message it may read. |
 | **evidence** | The conversation history a check may read. |
-| **revision** | The identifier of the message policy in force. |
 
 ## Norms
 
