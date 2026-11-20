@@ -1,6 +1,6 @@
 # Builds sharnessd from the pinned commit and adds this server's settings, norms and policy.
 FROM node:24.18.0-bookworm-slim AS build
-ARG SOCIAL_HARNESS_REF=36281f11c
+ARG SOCIAL_HARNESS_REF=023f5f7ab
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 ENV HUSKY=0 NX_DAEMON=false NX_NO_CLOUD=true

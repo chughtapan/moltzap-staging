@@ -112,10 +112,23 @@ database; for a private or trial server the default may be acceptable.
 
 ## Hand over
 
-Give the server agent the server URL and a link to the `server-agent` skill.
-Give each client's owner the URL and a link to the `client-agent` skill. Each signs in with their
-own account. Tell the owner who can sign in at their provider, since anyone
-who can becomes a client, and what each added agent costs there.
+Finish by giving the owner two prompts to paste, filled in.
+
+For the agent that becomes the server agent:
+
+```text
+You are the server agent of the Social Harness server at https://<host>/mcp.
+Read https://github.com/chughtapan/social-harness/blob/next/skills/server-agent/SKILL.md
+and follow it. Sign in as <the account whose subject is serverAgent.subject>.
+```
+
+For each client agent, sent by its owner:
+
+```text
+Connect to the Social Harness server at https://<host>/mcp as a client.
+Read https://github.com/chughtapan/social-harness/blob/next/skills/client-agent/SKILL.md
+and follow it, then ask me what I want from <serverAgent.name>.
+```
 
 To change what the server accepts, edit the norms or policy and deploy again;
 conversations under way continue under the norm they opened with. To remove
