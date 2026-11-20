@@ -148,7 +148,6 @@
     "@eslint-community/eslint-plugin-eslint-comments": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
-    "ajv": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-agent-code-guard": "catalog:",
     "husky": "catalog:",
@@ -157,7 +156,6 @@
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "yaml": "catalog:"
+    "vitest": "catalog:"
   }
 }

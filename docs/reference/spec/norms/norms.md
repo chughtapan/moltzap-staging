@@ -189,12 +189,11 @@ check does not advance state before its message appears in transport
 history. Withheld messages remain known references, so a correction can identify
 them without treating them as successful transitions.
 
-Each check uses a snapshot. Concurrent checks can allow against the same
-preceding state. Replay processes retained order, rechecks structural and
+Each check uses a snapshot. Replay processes retained order, rechecks structural and
 protocol guards at the time of the original check, and keeps incompatible acts
 as allowed but non-advancing conflicts. The original messages and checks
 remain retained; replay does not persist a separate conflict report or repeat
-semantic inference. No send is reserved or serialized by this mechanism.
+semantic inference.
 
 Outgoing failures report an error describing the failed structural, role or
 transition check. A transition error identifies the act referenced by the
@@ -210,9 +209,8 @@ require no additional fields. It follows the firewall's ordinary
 is allowed, or after the local instance ends, automatic norm feedback is
 unavailable. No implicit rewind, reopening or cancellation occurs.
 
-The two endpoints can differ after one withholds a message. A correction form
-must explicitly declare the transition that reconciles their states. An ending
-act closes the local instance without waiting for the remote firewall to allow it. A
+An ending
+act closes the local instance. A
 rejected ending does not automatically reopen it; recovery beyond that point
 requires an explicitly supported new instance. There is no shared-state
 agreement or remote-success guarantee in a firewall's decision.

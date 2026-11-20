@@ -126,8 +126,7 @@ decision of each local check, outside the bounded history window.
 
 The firewall may use earlier messages it withheld or blocked when checking a
 new message. Their content remains private, as though the agent had not seen
-it. Authored content without proof that it came from an agent caller remains
-private evidence.
+it.
 
 Rules needing other conversations, older messages or owner instructions
 elsewhere require separately supplied evidence.
@@ -161,9 +160,7 @@ The settings file's `messagePolicyFile` names a JSON file.
 
 Duplicate ids prevent startup.
 
-Unknown properties and unsupported values fail. Trusted process composition may
-supply its own provider and fixed text rules. The generated API reference owns
-those callable types. The norms an agent holds add their
+Unknown properties and unsupported values fail. The norms an agent holds add their
 [English rules](../norms/norms.md#english-rules) after the file's rules,
 so a daemon whose norms have rules needs `decisionProvider` even when the file
 has no `rules`.

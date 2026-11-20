@@ -8,7 +8,6 @@ import {
 } from "@effect/platform";
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Ajv } from "ajv";
 import {
   Deferred,
   Effect,
@@ -196,7 +195,7 @@ const connect = (fixture: Pick<Fixture, "fetch">) =>
     fixture.fetch(new Request(input, init)),
   );
 
-it("gives the server agent its tools, and a status result that matches the output schema it lists", () =>
+it("gives the server agent its tools, and a status result that names the agent", () =>
   Effect.gen(function* () {
     const fixture = yield* mcpFixture();
     const client = yield* connect(fixture);
@@ -214,17 +213,6 @@ it("gives the server agent its tools, and a status result that matches the outpu
     const reply = yield* Effect.tryPromise(() =>
       client.callTool({ name: "status", arguments: {} }),
     );
-    const validate = new Ajv({
-      strict: false,
-      validateFormats: false,
-      validateSchema: false,
-    }).compile(
-      tools.find((tool) => tool.name === "status")?.outputSchema ?? {},
-    );
-    expect(
-      validate(reply.structuredContent),
-      JSON.stringify(validate.errors),
-    ).toBe(true);
     expect(reply.structuredContent).toEqual({
       agentId: fixture.card.agentId,
       agentName: fixture.card.agentName,

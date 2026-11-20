@@ -9,9 +9,6 @@ catalogs:
     '@chughtapan/safer-architecture-lsp':
       specifier: 0.3.2
       version: 0.3.2
-    '@effect/experimental':
-      specifier: ^0.61.0
-      version: 0.61.0
     '@effect/language-service':
       specifier: ^0.87.1
       version: 0.87.1
@@ -72,9 +69,6 @@ catalogs:
     '@typescript/native':
       specifier: npm:typescript@7.0.2
       version: 7.0.2
-    ajv:
-      specifier: 8.18.0
-      version: 8.18.0
     eslint:
       specifier: ^9
       version: 9.39.4
@@ -105,9 +99,6 @@ catalogs:
     vitest:
       specifier: 3.2.4
       version: 3.2.4
-    yaml:
-      specifier: 2.9.1
-      version: 2.9.1
 
 overrides:
   effect: 3.22.1
@@ -191,9 +182,6 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
-      ajv:
-        specifier: 'catalog:'
-        version: 8.18.0
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)
@@ -221,9 +209,6 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.7.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.1)
-      yaml:
-        specifier: 'catalog:'
-        version: 2.9.1
 
   images/daemon:
     dependencies:
@@ -239,18 +224,12 @@ importers:
 
   tests/integration:
     devDependencies:
-      '@effect/experimental':
-        specifier: 'catalog:'
-        version: 0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
       '@effect/platform':
         specifier: 'catalog:'
         version: 0.97.1(effect@3.22.1)
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 0.108.0(@effect/cluster@0.60.0(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/workflow@0.19.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
-      '@effect/sql':
-        specifier: 'catalog:'
-        version: 0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
         version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)

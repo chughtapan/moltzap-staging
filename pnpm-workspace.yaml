@@ -8,9 +8,7 @@ packages:
   - "images/daemon"
 
 catalog:
-  ajv: 8.18.0
   "@chughtapan/safer-architecture-lsp": 0.3.2
-  "@effect/experimental": ^0.61.0
   "@effect/language-service": ^0.87.1
   "@effect/opentelemetry": 0.64.0
   "@effect/platform": 0.97.1
@@ -42,7 +40,6 @@ catalog:
   oxfmt: ^0.7.0
   typescript: npm:@typescript/typescript6@6.0.2
   vitest: 3.2.4
-  yaml: 2.9.1
 
 overrides:
   effect: 3.22.1

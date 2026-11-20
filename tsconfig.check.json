@@ -19,7 +19,6 @@
     "*.ts",
     "src/**/*.ts",
     "scripts/**/*.ts",
-    "images/*/*.ts",
     "tests/integration/**/*.ts"
   ],
   "exclude": [

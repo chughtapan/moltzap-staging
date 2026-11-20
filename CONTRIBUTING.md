@@ -82,7 +82,7 @@ execution needs permission to bind sockets. Image scenarios require Docker.
 
 | Command | Runs |
 | --- | --- |
-| `pnpm nx run @social-harness/integration-tests:test:integration` | Daemon and adapter acceptance suites |
+| `pnpm nx run @social-harness/integration-tests:test:integration` | Daemon acceptance suites |
 | `pnpm nx run @social-harness/integration-tests:test:live` | Docker image scenarios |
 
 Every daemon keeps its agents on the PostgreSQL server that

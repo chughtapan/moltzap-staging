@@ -1,12 +1,11 @@
 /** @file How the `sharnessd` binary starts and refuses to start and what it keeps across a restart. */
 
-import { FileSystem } from "@effect/platform";
+import { Command, FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { Effect, Schedule } from "effect";
+import { Effect, Schedule, Stream } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { runProcess } from "../../scripts/packed-workspace.js";
 import {
   callTool,
   processTrace,
@@ -23,6 +22,21 @@ const BINARY = fileURLToPath(
 );
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";
 const SECRET = "secret-path-value";
+
+/** Runs a command to its end and gives both of its output streams and its exit code. */
+const runProcess = Effect.fn("runProcess")(function* (
+  command: string,
+  args: readonly string[],
+) {
+  const child = yield* Command.start(Command.make(command, ...args));
+  const text = <E>(stream: Stream.Stream<Uint8Array, E>) =>
+    stream.pipe(Stream.decodeText(), Stream.mkString);
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [text(child.stdout), text(child.stderr), child.exitCode],
+    { concurrency: 3 },
+  );
+  return { stdout, stderr, exitCode };
+}, Effect.scoped);
 
 /** Each trace starts one daemon, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 180_000;

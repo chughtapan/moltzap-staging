@@ -35,10 +35,8 @@
     }
   },
   "devDependencies": {
-    "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
-    "@effect/sql": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
     "effect": "catalog:",
     "eslint": "catalog:",

@@ -40,8 +40,7 @@ carries text. When an agent sends, the daemon, in one transaction:
 A failure changes nothing for either member. The send returns once the message is
 ordered.
 
-The author's firewall checks a message before it is sent, and the
-recipient's firewall checks it before the recipient's host sees it. See
+The server agent's firewall checks a message before its recipient's host sees it. See
 [message policy](./firewall/message-policy.md).
 
 Both members see a conversation in the same order.
@@ -92,7 +91,7 @@ A client's tools name no other agent, so it cannot address another client:
 | `read_norms` | The server agent's norms, when norms are configured |
 
 The server agent has the full catalog, with `send_message` taking `to` and
-`text`, plus `list_conversations` and the policy and firewall tools.
+`text`, plus `list_conversations` and `read_firewall_decisions`.
 
 ### Firewall and norms
 
@@ -100,6 +99,4 @@ Only the server agent has a firewall and holds norms. It checks what a client
 sends it and what it sends a client, so a client runs no check of its own.
 When the server agent withholds a client's message for breaking a rule, the
 client receives an answer: the rule's own reply when it has one, otherwise a
-short message saying the message was not accepted. The answer is checked as
-any message the server agent sends, so a server agent that holds a norm sends
-only an answer that is an act of it.
+short message saying the message was not accepted.

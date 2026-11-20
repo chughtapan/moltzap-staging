@@ -9,8 +9,7 @@ version.
 
 Run the image's installed `sharnessd` with a PostgreSQL database
 and a private settings file. One daemon serves every owner's agent
-through one MCP endpoint. PostgreSQL enforces row-level security between
-agents. Deployment owns manual image upgrades.
+through one MCP endpoint. Deployment owns manual image upgrades.
 
 The [daemon configuration](../docs/reference/spec/daemon.md#process-and-configuration)
 defines settings and authentication.
@@ -35,27 +34,12 @@ docker run --detach --name agent-daemon \
   "ghcr.io/social-harness/daemon:<version>"
 ```
 
-Wait for `sharnessd listening` in `docker logs agent-daemon`. A local sidecar
-host uses `--network container:agent-daemon` and a file holding its owner's access token.
-Its loopback MCP URL stays inside that shared namespace.
+Wait for `sharnessd listening` in `docker logs agent-daemon`.
 
 For hosted access, configure the canonical HTTPS MCP resource and bind
 the daemon to `0.0.0.0` behind the deployment's HTTPS ingress. The daemon must
 reach the OAuth issuer when it starts. Keep one daemon replica and retain the
 database when replacing it.
-
-### Kubernetes
-
-A local agent Pod can run the daemon as a native sidecar (`restartPolicy:
-Always` under `initContainers`). Mount the private settings file from a Secret
-and set the same daemon environment variables as above.
-
-Use an exec startup probe that connects to `127.0.0.1:4319` before starting the
-host. A kubelet TCP probe cannot reach a loopback-only listener. The probe
-establishes listener readiness, and agents are restored asynchronously.
-
-Mount only the owner's access token into the host. Keep database credentials private to the daemon.
-Container runtimes own their lifecycle and signals.
 
 ## Build and check locally
 
