@@ -120,8 +120,8 @@ interface OpenOptions {
   readonly historyLimit?: number;
   readonly notice?: string;
   readonly policy?: TestPolicy;
-  /** The contracts the agent starts with. */
-  readonly contracts?: InstalledNorms["contracts"];
+  /** The norms the agent starts with. */
+  readonly norms?: InstalledNorms;
   readonly decorateFirewall?: (firewall: Firewall) => Firewall;
 }
 
@@ -171,7 +171,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
   });
   const open = Effect.fn(function* ({
     policy,
-    contracts,
+    norms,
     decorateFirewall,
     historyLimit = 256,
     notice,
@@ -181,9 +181,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       me: alice,
       historyLimit,
       ...(notice === undefined ? {} : { notice }),
-      ...(contracts === undefined
-        ? {}
-        : { structureCheck: structureCheck({ contracts }) }),
+      ...(norms === undefined ? {} : { structureCheck: structureCheck(norms) }),
     });
     daemon = yield* testDaemon(alice, decorateFirewall?.(firewall) ?? firewall);
     return {

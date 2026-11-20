@@ -3,14 +3,7 @@
 import { Effect, Either, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import {
-  decodeJson,
-  encodeJson,
-  plainUrl,
-  readSExpressions,
-  type SExpression,
-  writeSExpression,
-} from "./encoding.js";
+import { decodeJson, encodeJson, plainUrl } from "./encoding.js";
 
 describe("JSON text of schema values", () => {
   it("round-trips generated JSON through one stable text", () => {
@@ -78,71 +71,6 @@ describe("a plain URL", () => {
           expect(
             plainUrl(URL.canParse(text) ? new URL(text) : text, allowed)?.href,
           ).toBe(expected);
-        },
-      ),
-    );
-  });
-});
-
-describe("parenthesized data", () => {
-  /** Any expression: a symbol free of delimiters, a string, or a list of expressions. */
-  const { expression } = fc.letrec<{ expression: SExpression }>((tie) => ({
-    expression: fc.oneof(
-      { maxDepth: 3 },
-      fc
-        .stringMatching(/^[^\s();"]+$/u)
-        .map((value): SExpression => ({ kind: "symbol", value })),
-      fc.string().map((value): SExpression => ({ kind: "string", value })),
-      fc
-        .array(tie("expression"), { maxLength: 4 })
-        .map((values): SExpression => ({ kind: "list", values })),
-    ),
-  }));
-  const expressions = fc.array(expression, { maxLength: 4 });
-  const written = (values: readonly SExpression[]) =>
-    values.map((value) => writeSExpression(value)).join(" ");
-  const refused = (text: string, comments: boolean) =>
-    Either.match(readSExpressions(text, comments), {
-      onLeft: () => true,
-      onRight: () => false,
-    });
-
-  it("reads back every expression it writes", () => {
-    fc.assert(
-      fc.property(expressions, (values) => {
-        expect(readSExpressions(written(values))).toEqual(Either.right(values));
-      }),
-    );
-  });
-
-  it("skips a comment in a document and refuses one in a message", () => {
-    fc.assert(
-      fc.property(
-        expressions,
-        fc.stringMatching(/^[^\r\n]*$/u),
-        (values, comment) => {
-          const text = `${written(values)} ;${comment}\n`;
-          expect(readSExpressions(text)).toEqual(Either.right(values));
-          expect(refused(text, false)).toBe(true);
-        },
-      ),
-    );
-  });
-
-  it("refuses text whose parentheses do not balance", () => {
-    fc.assert(
-      fc.property(
-        expressions,
-        fc.constantFrom("(", ")"),
-        fc.boolean(),
-        (values, parenthesis, leading) => {
-          const text = written(values);
-          expect(
-            refused(
-              leading ? `${parenthesis} ${text}` : `${text} ${parenthesis}`,
-              true,
-            ),
-          ).toBe(true);
         },
       ),
     );

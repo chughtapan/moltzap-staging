@@ -23,11 +23,7 @@ import { openTestDatabase } from "../__tests__/test.js";
 import { MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import { AgentName } from "../identity.js";
-import {
-  contractOf,
-  form,
-  noFields,
-} from "../norms/__tests__/norms-fixtures.js";
+import { form, noFields, normOf } from "../norms/__tests__/norms-fixtures.js";
 import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
 
 const bobAddress = AgentAddress.make("agent:bob");
@@ -266,7 +262,7 @@ it("stores nothing of a message whose decision cannot be saved, fails its send a
   }));
 
 /** `open` starts an instance and `close`, from the other agent, ends it. */
-const exchange = contractOf("exchange", [
+const exchange = normOf("exchange", [
   {
     ...form,
     act: "open",
@@ -291,7 +287,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
       notice: withheldReply,
-      contracts: [exchange],
+      norms: [exchange],
       policy: composedPolicy({
         decide: (request) => Effect.succeed(decisionResponse(request)),
       }),
@@ -334,7 +330,7 @@ it("answers an act its text rule withholds with that rule's feedback when it hol
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     yield* subject.open({
-      contracts: [exchange],
+      norms: [exchange],
       policy: composedPolicy(incomingViolation, "reply"),
     });
     const act = yield* subject.sendFrom({ text: "(open :ontology exchange)" });
@@ -354,7 +350,7 @@ it.prop(
       const subject = yield* makeHarnessFixture;
       const runtime = yield* subject.open({
         historyLimit: window,
-        contracts: [exchange],
+        norms: [exchange],
         policy: composedPolicy({
           decide: (request) =>
             Effect.succeed(decisionResponse(request, "compliant")),

@@ -1,25 +1,23 @@
-/** @file A norm document compiles to the contract it declares, and one that declares something its grammar lacks compiles to nothing. */
+/** @file A norm document compiles to the norm it declares, one that declares something its grammar lacks compiles to nothing, and a norms directory loads as the norms of its documents. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { effect as it } from "@effect/vitest";
+import { scopedLive as it } from "@effect/vitest";
 import { Effect, Either, FastCheck as fc } from "effect";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it as vitestIt } from "vitest";
-import { compileNorm } from "./compiler.js";
+import { compareAscii } from "../encoding.js";
+import { compileNorm, loadNorms } from "./compiler.js";
 
 const shipped = fileURLToPath(
   new URL("../../config/norms/examples/", import.meta.url),
 );
 
-const compiled = (document: string) =>
-  Effect.runSync(Effect.either(compileNorm(document)));
-
 /** Whether a document compiles to nothing. */
 const refused = (document: string) =>
-  Either.match(compiled(document), {
+  Either.match(compileNorm(document), {
     onLeft: () => true,
     onRight: () => false,
   });
@@ -82,10 +80,9 @@ it("compiles every shipped norm document to the norm its file is named for", () 
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
       const source = yield* fs.readFileString(join(shipped, file));
-      expect(yield* compileNorm(source)).toMatchObject({
-        name: file.replace(/\.lisp$/u, ""),
-        source,
-      });
+      expect(compileNorm(source)).toMatchObject(
+        Either.right({ name: file.replace(/\.lisp$/u, ""), source }),
+      );
     }
   }).pipe(Effect.provide(NodeContext.layer)));
 
@@ -95,21 +92,20 @@ vitestIt(
     fc.assert(
       fc.property(fields, (declared) => {
         const source = document(declared);
-        const contract = Either.getOrThrow(compiled(source));
-        const open = contract.forms.find((form) => form.act === "open");
-        expect(contract.source).toBe(source);
-        expect(contract.digest).toBe(
+        const norm = Either.getOrThrow(compileNorm(source));
+        const open = norm.forms.find((form) => form.act === "open");
+        expect(norm.source).toBe(source);
+        expect(norm.digest).toBe(
           createHash("sha256").update(source, "utf8").digest("hex"),
         );
-        expect(Object.keys(open?.fields.properties ?? {})).toEqual(
-          declared.map((field) => field.name),
-        );
-        expect(open?.fields.required).toEqual(
-          declared
-            .filter((field) => !field.optional)
-            .map((field) => field.name),
-        );
-        expect(contract.textRules).toMatchObject([
+        expect(
+          open?.fields.map(({ name, type, optional }) => ({
+            name,
+            type,
+            optional,
+          })),
+        ).toEqual(declared);
+        expect(norm.textRules).toMatchObject([
           { id: "sample-rule-1", act: "open" },
         ]);
       }),
@@ -190,3 +186,68 @@ vitestIt(
     );
   },
 );
+
+/** A document of the norm `name`, whose one act opens and ends an instance. */
+const documentOf = (name: string) =>
+  `(norm ${name} :initiator Asker :participant Answerer)
+(content ask :by Asker :starts true :ends true)
+`;
+
+const normName = fc.stringMatching(/^[a-z][a-z0-9]{0,7}$/u);
+
+/** A directory holding `files`, by name. */
+function directoryWith(files: Readonly<Record<string, string>>) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({
+      prefix: "sharness-norms-",
+    });
+    yield* Effect.forEach(
+      Object.entries(files),
+      ([file, text]) => fs.writeFileString(join(directory, file), text),
+      { concurrency: 1 },
+    );
+    return directory;
+  });
+}
+
+it.prop(
+  "loads the norm of every .lisp document directly in a directory, and nothing of its other files",
+  [fc.uniqueArray(normName, { maxLength: 4 }), fc.uniqueArray(normName)],
+  ([norms, others]) =>
+    Effect.gen(function* () {
+      const directory = yield* directoryWith({
+        ...Object.fromEntries(
+          others.map((name) => [`${name}.json`, "not a norm document"]),
+        ),
+        ...Object.fromEntries(
+          norms.map((name) => [`${name}.lisp`, documentOf(name)]),
+        ),
+      });
+
+      const loaded = yield* loadNorms(directory);
+
+      expect(loaded.map((norm) => norm.source).sort(compareAscii)).toEqual(
+        norms.map(documentOf).sort(compareAscii),
+      );
+    }).pipe(Effect.provide(NodeContext.layer)),
+  { fastCheck: { numRuns: 20 } },
+);
+
+it("refuses a directory that holds a document that does not compile or two documents of one norm", () =>
+  Effect.forEach(
+    [
+      { "a.lisp": documentOf("ask"), "b.lisp": documentOf("ask") },
+      { "a.lisp": documentOf("ask").replace(":by Asker", ":by Absent") },
+      { "a.lisp": `${documentOf("ask")}(` },
+    ],
+    (files: Readonly<Record<string, string>>) =>
+      Effect.gen(function* () {
+        const directory = yield* directoryWith(files);
+
+        const failure = yield* Effect.flip(loadNorms(directory));
+
+        expect(failure._tag).toBe("NormsConfigurationError");
+      }),
+    { concurrency: 1, discard: true },
+  ).pipe(Effect.provide(NodeContext.layer)));

@@ -151,9 +151,7 @@ it.prop(
         loaded.messagePolicy?.provider &&
           Redacted.value(loaded.messagePolicy.provider.apiKey),
       ).toBe(providerKey);
-      expect(
-        loaded.norms?.contracts.map((contract) => contract.source),
-      ).toEqual([unruledNorm]);
+      expect(loaded.norms?.map((norm) => norm.source)).toEqual([unruledNorm]);
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 12 } },
 );
@@ -169,7 +167,7 @@ it("loads the decision provider that judges initial norms' English rules, though
 
     const loaded = yield* test.load;
 
-    expect(loaded.norms?.contracts).toHaveLength(1);
+    expect(loaded.norms).toHaveLength(1);
     expect(loaded.messagePolicy?.policy.rules).toEqual([]);
     expect(loaded.messagePolicy?.provider?.model).toBe("configured-model");
   }).pipe(Effect.provide(NodeContext.layer)));
