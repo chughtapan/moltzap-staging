@@ -31,6 +31,16 @@
       "reason": "Policy, assessment and permitted content"
     },
     {
+      "name": "conversations",
+      "roots": [
+        "src/conversations.ts"
+      ],
+      "entrypoints": [
+        "src/conversations.ts"
+      ],
+      "reason": "Agents, their messages, inboxes and history, and the rows they live in"
+    },
+    {
       "name": "norms",
       "roots": [
         "src/norms"

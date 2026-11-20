@@ -12,12 +12,11 @@ import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Console, Effect, Layer, Option } from "effect";
+import { databaseUrl, openConversations } from "../conversations.js";
 import { makeFirewall } from "../firewall.js";
 import { structureCheck } from "../norms/index.js";
-import { getOrCreateOwnedAgent, openDaemon } from "./agent.js";
 import { makeMcpHttpApp, packageVersion, serveMcp } from "./server.js";
 import { loadDaemonSettings, refused } from "./settings.js";
-import { databaseConnection, databaseUrl, prepareDatabase } from "./store.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
 const HELP_MESSAGE = [
@@ -88,54 +87,52 @@ const spanExport = Layer.unwrapEffect(
 const runDaemon = Effect.gen(function* () {
   const url = yield* databaseUrl;
   const settings = yield* loadDaemonSettings();
-  return yield* Effect.gen(function* () {
-    yield* prepareDatabase;
-    const { authentication, norms } = settings;
-    const serverAgent = yield* getOrCreateOwnedAgent(
-      { issuer: authentication.issuer, subject: settings.serverAgent.subject },
-      settings.serverAgent.name,
-    ).pipe(
-      Effect.catchTag("OwnershipError", () =>
-        refused(
-          "This database's server agent has another name than serverAgent.name in the settings, or another agent has that name. Set serverAgent.name to the name the database was first started with, or prepare a new database.",
-        ),
-      ),
-    );
-    const daemon = yield* openDaemon({
-      serverAgent,
-      firewall: makeFirewall({
+  const { authentication, norms } = settings;
+  const conversations = yield* openConversations(url, {
+    owner: {
+      issuer: authentication.issuer,
+      subject: settings.serverAgent.subject,
+    },
+    name: settings.serverAgent.name,
+    firewall: (me) =>
+      makeFirewall({
         ...(settings.messagePolicy === undefined
           ? {}
           : { source: settings.messagePolicy }),
-        me: serverAgent,
+        me,
         historyLimit: settings.maximumHistoryRecords ?? 256,
         notice: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
         ...(norms === undefined
           ? {}
           : { structureCheck: structureCheck(norms) }),
       }),
-      ...(norms === undefined ? {} : { norms }),
-    });
-    const app = yield* makeMcpHttpApp(authentication, daemon).pipe(
-      Effect.catchTag("AuthenticationRefused", () =>
-        refused(
-          `The OAuth issuer ${authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
-        ),
+  }).pipe(
+    Effect.catchTag("OwnershipError", () =>
+      refused(
+        "This database's server agent has another name than serverAgent.name in the settings, or another agent has that name. Set serverAgent.name to the name the database was first started with, or prepare a new database.",
       ),
-    );
-    yield* serveMcp(settings.port, app, settings.host).pipe(
-      Effect.catchTag("ServeError", () =>
-        refused(
-          `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
-        ),
+    ),
+  );
+  const app = yield* makeMcpHttpApp(authentication, conversations, norms).pipe(
+    Effect.catchTag("AuthenticationRefused", () =>
+      refused(
+        `The OAuth issuer ${authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
       ),
-    );
-    yield* Console.log(
-      `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
-    );
-    return yield* Effect.never;
-  }).pipe(Effect.scoped, Effect.provide(databaseConnection(url)));
+    ),
+  );
+  yield* serveMcp(settings.port, app, settings.host).pipe(
+    Effect.catchTag("ServeError", () =>
+      refused(
+        `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
+      ),
+    ),
+  );
+  yield* Console.log(
+    `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
+  );
+  return yield* Effect.never;
 }).pipe(
+  Effect.scoped,
   Effect.withSpan("runDaemon"),
   Effect.provide(Layer.merge(NodeFileSystem.layer, spanExport)),
 );

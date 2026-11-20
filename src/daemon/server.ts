@@ -11,7 +11,6 @@ import {
   HttpServerResponse,
 } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
 import { discoverAuthorizationServerMetadata } from "@modelcontextprotocol/client";
 import {
   type AuthInfo,
@@ -33,6 +32,7 @@ import {
   Effect,
   JSONSchema,
   Match,
+  Order,
   Runtime,
   Schema,
   type Scope,
@@ -44,37 +44,108 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
 import packageJson from "../../package.json" with { type: "json" };
-import { checkRecordSchema } from "../firewall.js";
+import { checkRecordSchema, LocalGuidance } from "../firewall.js";
 import {
+  AGENT_NAME_RULE,
   type AgentCard,
   AgentId,
   AgentName,
+  Message,
   MsgId,
   wellFormedString,
 } from "../messages.js";
+import type { InstalledNorms } from "../norms/index.js";
 import {
-  addressedAgent,
-  type AddressError,
-  addressOfAgent,
-  AgentAddress,
-  conversationsOf,
-  type Daemon,
-  getOrCreateOwnedAgent,
-  HistoryRecord,
-  historyRecords,
-  InboxEntry,
+  agentNamed,
+  agentOf,
+  type Conversations,
+  history,
+  type InboxEntry as InboxEntryOf,
   PAGE_SIZE,
-  readInboxEntries,
+  peersOf,
+  readDecisions,
+  readInbox,
   receive,
   send,
-  SendError,
-} from "./agent.js";
-import { readDecisions } from "./store.js";
+} from "../conversations.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 
 /** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
 export const packageVersion: string = packageJson.version;
+
+/** The scheme of an address naming one agent. */
+const AGENT_ADDRESS_PREFIX = "agent:";
+
+const isAgentName = Schema.is(AgentName);
+
+/** The address of one agent. */
+const AgentAddress = Schema.String.pipe(
+  Schema.filter(
+    (value) =>
+      value.startsWith(AGENT_ADDRESS_PREFIX) &&
+      isAgentName(value.slice(AGENT_ADDRESS_PREFIX.length)),
+    { description: `agent:<name>; a name is ${AGENT_NAME_RULE}` },
+  ),
+  Schema.brand("AgentAddress"),
+  Schema.annotations({ identifier: "AgentAddress" }),
+);
+type AgentAddress = typeof AgentAddress.Type;
+
+/** How the agents of the daemon address the agent named `agentName`. */
+const addressOf = (agentName: AgentName): AgentAddress =>
+  AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${agentName}`);
+
+/** One message as the host reads it: its conversation's address, the message and any guidance. */
+const InboxEntry = Schema.Struct({
+  address: AgentAddress,
+  message: Message,
+  guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+});
+
+/**
+ * One record of a conversation's history: a message the agent sent, or the
+ * inbox entry of a message it received.
+ */
+const HistoryRecord = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("sent"),
+    message: Schema.typeSchema(Message),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("received"),
+    address: AgentAddress,
+    message: Schema.typeSchema(Message),
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+  }),
+);
+
+/**
+ * An address a send or a history read cannot use: it names no agent of this
+ * daemon (`unknown-agent`) or the calling agent itself (`invalid-address`).
+ */
+class AddressError extends Data.TaggedError("AddressError")<{
+  readonly reason: "unknown-agent" | "invalid-address";
+  readonly address: string;
+}> {
+  override get message(): string {
+    return this.reason === "unknown-agent"
+      ? `This daemon has no agent named ${this.address}. Check the name with its owner.`
+      : `The address ${this.address} names you, not another agent.`;
+  }
+}
+
+/**
+ * A send that ended unexpectedly: it may already have happened, so a new send
+ * can duplicate it.
+ */
+class SendOutcomeUnknown extends Data.TaggedError("SendError")<{
+  readonly reason: "outcome-unknown";
+}> {
+  override get message(): string {
+    return "send failed: the send did not complete; the message may or may not have been sent";
+  }
+}
 
 /** A place in an ordered read, as decimal text. A read returns what follows it. */
 const Cursor = Schema.String.pipe(Schema.pattern(/^\d{1,15}$/u)).annotations({
@@ -135,8 +206,9 @@ const historyRecordsPage = Schema.Struct({
  */
 const MAXIMUM_WAIT_SECONDS = 50;
 
-/** A send that ends unexpectedly may have been sent. */
-const sendOutcomeUnknown = new SendError({ reason: "outcome-unknown" });
+const sendOutcomeUnknown = new SendOutcomeUnknown({
+  reason: "outcome-unknown",
+});
 
 /** How a message states one act of a norm, as every reader of the norms needs it. */
 const ACT_SYNTAX =
@@ -147,9 +219,7 @@ const ACT_SYNTAX =
  * answering. The SDK builds the request's server and calls its tools from
  * promises, which this storage follows.
  */
-const requestRuntime = new AsyncLocalStorage<
-  Runtime.Runtime<SqlClient.SqlClient>
->();
+const requestRuntime = new AsyncLocalStorage<Runtime.Runtime<never>>();
 
 /** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
 const INBOX_CHECK_MILLISECONDS = 1000;
@@ -186,12 +256,17 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
  * number of the last entry it was sent. The SDK delivers by poll, push and
  * webhook, and keeps every subscription in memory.
  */
-const makeInboxEvents = Effect.fn("makeInboxEvents")(function* () {
-  const run = Runtime.runPromise(yield* Effect.runtime<SqlClient.SqlClient>());
+const makeInboxEvents = Effect.fn("makeInboxEvents")(function* (
+  conversations: Conversations,
+) {
+  const run = Runtime.runPromise(yield* Effect.runtime());
   const events = new EventsExtension({
     getPrincipal: ({ http }) =>
       inRequest(
-        Effect.map(admittedAgent(http?.authInfo), ({ agentId }) => agentId),
+        Effect.map(
+          admittedAgent(conversations, http?.authInfo),
+          ({ agentId }) => agentId,
+        ),
       ),
     checkIntervalMs: INBOX_CHECK_MILLISECONDS,
     webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
@@ -202,7 +277,9 @@ const makeInboxEvents = Effect.fn("makeInboxEvents")(function* () {
       "An inbox entry: its conversation address, its message and any guidance.",
     payloadSchema: standard(InboxEntry),
     check: (...[{ principal, maxEvents, signal }, , cursor]) =>
-      run(inboxOccurrences(principal, cursor, maxEvents), { signal }),
+      run(inboxOccurrences(conversations, principal, { cursor, maxEvents }), {
+        signal,
+      }),
   });
   return events;
 });
@@ -221,14 +298,14 @@ const makeInboxEvents = Effect.fn("makeInboxEvents")(function* () {
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   { issuer, resource, scope }: DaemonSettings["authentication"],
-  daemon: Daemon,
+  conversations: Conversations,
+  norms?: InstalledNorms,
 ) {
-  const sql = yield* SqlClient.SqlClient;
-  const events = yield* makeInboxEvents();
+  const events = yield* makeInboxEvents(conversations);
   const mcp = createMcpHandler(({ authInfo }) =>
     inRequest(
-      Effect.map(admittedAgent(authInfo), (agent) =>
-        requestServer(daemon, agent, events),
+      Effect.map(admittedAgent(conversations, authInfo), (agent) =>
+        requestServer(agent, { conversations, events, norms }),
       ),
     ),
   );
@@ -292,7 +369,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
     if (authInfo instanceof Response) {
       return HttpServerResponse.fromWeb(authInfo);
     }
-    const runtime = yield* Effect.runtime<SqlClient.SqlClient>();
+    const runtime = yield* Effect.runtime();
     const response = yield* HttpApp.fromWebHandler((mcpRequest) =>
       requestRuntime.run(runtime, () => mcp.fetch(mcpRequest, { authInfo })),
     ).pipe(Effect.interruptible, Effect.orDie);
@@ -302,7 +379,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
         Math.max(0, (authInfo.expiresAt ?? 0) * 1000 - Date.now()),
       ),
     );
-  }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+  });
 });
 
 /** Ends a streamed response body when `limit` says so. Other bodies are returned as they are. */
@@ -322,8 +399,8 @@ function limitResponseStream(
 }
 
 /** The agent of the owner an admitted request's token names. */
-function admittedAgent(authInfo?: AuthInfo) {
-  return getOrCreateOwnedAgent({
+function admittedAgent(conversations: Conversations, authInfo?: AuthInfo) {
+  return agentOf(conversations, {
     issuer: String(authInfo?.extra?.issuer),
     subject: String(authInfo?.extra?.subject),
   }).pipe(Effect.orDie);
@@ -331,15 +408,19 @@ function admittedAgent(authInfo?: AuthInfo) {
 
 /** The MCP server for one request, with the inbox event and the tools of `agent`'s role. */
 function requestServer(
-  daemon: Daemon,
   agent: AgentCard,
-  events: EventsExtension,
+  served: {
+    readonly conversations: Conversations;
+    readonly events: EventsExtension;
+    readonly norms: InstalledNorms | undefined;
+  },
 ) {
+  const { conversations, norms } = served;
   const mcp = new McpServer(
     { name: "sharnessd", version: packageVersion },
-    { extensions: [events] },
+    { extensions: [served.events] },
   );
-  const isServerAgent = agent.agentId === daemon.serverAgent.agentId;
+  const isServerAgent = agent.agentId === conversations.serverAgent.agentId;
   register(
     mcp,
     "status",
@@ -376,14 +457,17 @@ function requestServer(
       }),
       readOnly: true,
     },
-    (request) => receive(daemon, agent, request),
+    (request) =>
+      Effect.map(receive(conversations, agent, request), (page) => ({
+        entries: page.entries.map(inboxEntry),
+        nextCursor: page.nextCursor,
+      })),
   );
   if (isServerAgent) {
-    registerServerAgentTools(mcp, daemon, agent);
+    registerServerAgentTools(mcp, conversations, agent);
   } else {
-    registerClientTools(mcp, daemon, agent);
+    registerClientTools(mcp, conversations, agent);
   }
-  const { norms } = daemon;
   if (norms !== undefined) {
     register(
       mcp,
@@ -423,10 +507,7 @@ function requestServer(
  * Runs `work` for the MCP SDK in the runtime of the HTTP request's fiber, so
  * its spans keep their parent, and interrupts it when `signal` aborts.
  */
-function inRequest<A>(
-  work: Effect.Effect<A, never, SqlClient.SqlClient>,
-  signal?: AbortSignal,
-) {
+function inRequest<A>(work: Effect.Effect<A>, signal?: AbortSignal) {
   return Effect.runPromise(
     Effect.fromNullable(requestRuntime.getStore()).pipe(
       Effect.flatMap((runtime) => Effect.provide(work, runtime)),
@@ -439,17 +520,17 @@ function inRequest<A>(
 /** The server agent's tools: it addresses any client and reads its firewall's decisions. */
 function registerServerAgentTools(
   mcp: McpServer,
-  daemon: Daemon,
+  conversations: Conversations,
   agent: AgentCard,
 ) {
   registerConversationTools(
     mcp,
-    { daemon, agent },
+    { conversations, agent },
     {
       description:
         "Send a message. Returns id, the message id, and address, the canonical conversation address. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
       input: SendRequest,
-      peer: ({ to }) => addressedAgent(agent, to),
+      peer: ({ to }) => addressedAgent(conversations, agent, to),
     },
     {
       description:
@@ -458,7 +539,7 @@ function registerServerAgentTools(
         address: AgentAddress,
         ...PaginatedRequest.fields,
       }),
-      peer: ({ address }) => addressedAgent(agent, address),
+      peer: ({ address }) => addressedAgent(conversations, agent, address),
     },
   );
   register(
@@ -471,7 +552,10 @@ function registerServerAgentTools(
       output: Schema.Struct({ addresses: Schema.Array(AgentAddress) }),
       readOnly: true,
     },
-    () => conversationsOf(agent),
+    () =>
+      Effect.map(peersOf(conversations, agent), (peers) => ({
+        addresses: peers.map(addressOf).sort(Order.string),
+      })),
   );
   register(
     mcp,
@@ -484,16 +568,22 @@ function registerServerAgentTools(
       readOnly: true,
     },
     ({ since }) =>
-      Effect.map(readDecisions(since ?? 0), (decisions) => ({ decisions })),
+      Effect.map(readDecisions(conversations, since ?? 0), (decisions) => ({
+        decisions,
+      })),
   );
 }
 
 /** The tools of a client, which name no recipient and no conversation: both are the server agent. */
-function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
-  const peer = () => Effect.succeed(daemon.serverAgent);
+function registerClientTools(
+  mcp: McpServer,
+  conversations: Conversations,
+  agent: AgentCard,
+) {
+  const peer = () => Effect.succeed(conversations.serverAgent);
   registerConversationTools(
     mcp,
-    { daemon, agent },
+    { conversations, agent },
     {
       description:
         "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
@@ -518,9 +608,7 @@ function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
 interface PeerTool<Input, Encoded> {
   readonly description: string;
   readonly input: Schema.Schema<Input, Encoded>;
-  readonly peer: (
-    input: Input,
-  ) => Effect.Effect<AgentCard, AddressError, SqlClient.SqlClient>;
+  readonly peer: (input: Input) => Effect.Effect<AgentCard, AddressError>;
 }
 
 /**
@@ -534,11 +622,14 @@ function registerConversationTools<
   ReadEncoded,
 >(
   mcp: McpServer,
-  context: { readonly daemon: Daemon; readonly agent: AgentCard },
+  context: {
+    readonly conversations: Conversations;
+    readonly agent: AgentCard;
+  },
   sending: PeerTool<Sent, SentEncoded>,
   reading: PeerTool<Read, ReadEncoded>,
 ) {
-  const { daemon, agent } = context;
+  const { conversations, agent } = context;
   register(
     mcp,
     "send_message",
@@ -551,13 +642,13 @@ function registerConversationTools<
     (input) =>
       Effect.gen(function* () {
         const recipient = yield* sending.peer(input);
-        const id = yield* send(daemon, {
+        const id = yield* send(conversations, {
           text: input.text,
           replyToMsgId: input.replyToMsgId,
           author: agent,
           recipient,
         });
-        return { id, address: addressOfAgent(recipient.agentName) };
+        return { id, address: addressOf(recipient.agentName) };
       }),
   );
   register(
@@ -570,9 +661,18 @@ function registerConversationTools<
       readOnly: true,
     },
     (input) =>
-      Effect.flatMap(reading.peer(input), (other) =>
-        historyRecords(agent, other, input.cursor),
-      ),
+      Effect.gen(function* () {
+        const other = yield* reading.peer(input);
+        const page = yield* history(conversations, agent, other, input.cursor);
+        return {
+          ...page,
+          records: page.records.map((record) =>
+            record.kind === "sent"
+              ? record
+              : { kind: record.kind, ...inboxEntry(record) },
+          ),
+        };
+      }),
   );
 }
 
@@ -591,9 +691,9 @@ function register<A, I, B extends object, J extends object, E extends Failure>(
     readonly input: Schema.Schema<A, I>;
     readonly output: Schema.Schema<B, J>;
     readonly readOnly?: true;
-    readonly unexpected?: E;
+    readonly unexpected?: Failure;
   },
-  execute: (input: A) => Effect.Effect<B, E, SqlClient.SqlClient>,
+  execute: (input: A) => Effect.Effect<B, E>,
 ) {
   const outputSchema: StandardSchemaWithJSON<object, object> = standard(
     tool.output,
@@ -691,20 +791,24 @@ function standard<A, I>(
  * `cursor` in the inbox of the agent `agentId` names, as occurrences.
  */
 function inboxOccurrences(
+  conversations: Conversations,
   agentId: string | null,
-  cursor: string | null,
-  maxEvents?: number,
+  after: { readonly cursor: string | null; readonly maxEvents?: number },
 ) {
   return Effect.gen(function* () {
-    const page = yield* readInboxEntries(yield* Effect.fromNullable(agentId), {
-      limit: Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-      ...(cursor === null
-        ? {}
-        : { cursor: yield* Schema.decode(Cursor)(cursor) }),
-    });
+    const page = yield* readInbox(
+      conversations,
+      yield* Effect.fromNullable(agentId),
+      {
+        limit: Math.min(after.maxEvents ?? PAGE_SIZE, PAGE_SIZE),
+        ...(after.cursor === null
+          ? {}
+          : { cursor: yield* Schema.decode(Cursor)(after.cursor) }),
+      },
+    );
     return {
       events: (yield* Schema.encode(Schema.Array(InboxEntry))(
-        page.entries,
+        page.entries.map(inboxEntry),
       )).map((data) => ({
         eventId: `${data.message.author.agentId}/${data.message.msgId}`,
         data,
@@ -712,5 +816,35 @@ function inboxOccurrences(
       cursor: page.nextCursor,
       hasMore: page.hasMore,
     };
+  });
+}
+
+/** An inbox entry as a host reads it: under the address of its message's author. */
+function inboxEntry(entry: InboxEntryOf): typeof InboxEntry.Type {
+  return {
+    address: addressOf(entry.message.author.agentName),
+    message: entry.message,
+    ...(entry.guidance === undefined ? {} : { guidance: entry.guidance }),
+  };
+}
+
+/** The other agent `address` names for `self`. */
+function addressedAgent(
+  conversations: Conversations,
+  self: AgentCard,
+  address: AgentAddress,
+) {
+  return Effect.gen(function* () {
+    const agent = yield* agentNamed(
+      conversations,
+      address.slice(AGENT_ADDRESS_PREFIX.length),
+    );
+    if (agent === undefined) {
+      return yield* new AddressError({ reason: "unknown-agent", address });
+    }
+    if (agent.agentId === self.agentId) {
+      return yield* new AddressError({ reason: "invalid-address", address });
+    }
+    return agent;
   });
 }
