@@ -37,6 +37,7 @@ import {
   Schema,
   type Scope,
   Stream,
+  Struct,
 } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -53,19 +54,18 @@ import {
   wellFormedString,
 } from "../communication/index.js";
 import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
-import {
-  firewallDecisionsRequestSchema,
-  firewallDecisionsSchema,
-  LocalGuidance,
-} from "../firewall/index.js";
+import { LocalGuidance } from "../firewall/index.js";
 import { AgentId, AgentName } from "../identity.js";
 import { packageVersion } from "../version.js";
 import {
+  addressedAgent,
+  addressOfAgent,
   AgentAddress,
   conversationsOf,
   type Daemon,
   getOrCreateOwnedAgent,
   historyRecords,
+  HistoryError,
   type HostedAgent,
   InboxEntry,
   readInboxEntries,
@@ -75,6 +75,11 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
+import {
+  firewallDecisionsRequestSchema,
+  firewallDecisionsSchema,
+  readDecisions,
+} from "./decisions.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 
@@ -390,7 +395,24 @@ function registerServerAgentTools(
       output: SendResult,
       unexpected: sendOutcomeUnknown,
     },
-    (request) => send(daemon, agent, request),
+    ({ to, ...message }) =>
+      addressedAgent(agent, to).pipe(
+        Effect.mapError(
+          (reason) =>
+            new SendError(
+              reason === "self"
+                ? { reason: "membership-invalid" }
+                : {
+                    reason: "unknown-agent",
+                    detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
+                  },
+            ),
+        ),
+        Effect.flatMap((recipient) =>
+          send(daemon, { ...message, author: agent, recipient }),
+        ),
+        Effect.map((id) => ({ id, address: to })),
+      ),
   );
   register(
     mcp,
@@ -423,7 +445,16 @@ function registerServerAgentTools(
       output: historyRecordsPage,
       readOnly: true,
     },
-    (request) => historyRecords(agent, request),
+    ({ address, cursor }) =>
+      addressedAgent(agent, address).pipe(
+        Effect.mapError(
+          (reason) =>
+            new HistoryError({
+              reason: reason === "self" ? "invalid-address" : "unknown-agent",
+            }),
+        ),
+        Effect.flatMap((other) => historyRecords(agent, other, cursor)),
+      ),
   );
   register(
     mcp,
@@ -435,7 +466,7 @@ function registerServerAgentTools(
       output: firewallDecisionsSchema,
       readOnly: true,
     },
-    daemon.firewall.readDecisions,
+    (request) => readDecisions(agent.agentKey, request),
   );
 }
 
@@ -445,9 +476,7 @@ function registerClientTools(
   daemon: Daemon,
   agent: HostedAgent,
 ) {
-  const serverAgent = AgentAddress.make(
-    `agent:${daemon.serverAgent.card.agentName}`,
-  );
+  const { serverAgent } = daemon;
   register(
     mcp,
     "send_message",
@@ -463,7 +492,11 @@ function registerClientTools(
       output: SendResult,
       unexpected: sendOutcomeUnknown,
     },
-    (message) => send(daemon, agent, { ...message, to: serverAgent }),
+    (message) =>
+      Effect.map(
+        send(daemon, { ...message, author: agent, recipient: serverAgent }),
+        (id) => ({ id, address: addressOfAgent(serverAgent) }),
+      ),
   );
   register(
     mcp,
@@ -475,7 +508,7 @@ function registerClientTools(
       output: historyRecordsPage,
       readOnly: true,
     },
-    (page) => historyRecords(agent, { ...page, address: serverAgent }),
+    ({ cursor }) => historyRecords(agent, serverAgent, cursor),
   );
 }
 
@@ -539,15 +572,11 @@ function register<A, I, B extends object, J extends object, E extends Failure>(
   );
 }
 
-/** A typed failure of a tool: what a model reads of it and the fields a host reads. */
+/** A typed failure of a tool: what a model reads of it, and its own fields, which a host reads. */
 interface Failure {
+  readonly _tag: string;
   readonly message: string;
   readonly reason: string;
-  readonly detail?: unknown;
-  readonly checkId?: string;
-  readonly refusal?: string;
-  readonly rule?: string;
-  readonly feedback?: readonly string[];
 }
 
 /** The result of a call that failed: `message` as its text, and the failure's fields. */
@@ -555,14 +584,7 @@ function failed(text: string, failure?: Failure) {
   return {
     isError: true as const,
     content: [{ type: "text" as const, text }],
-    structuredContent: failure && {
-      reason: failure.reason,
-      checkId: failure.checkId,
-      refusal: failure.refusal,
-      rule: failure.rule,
-      feedback: failure.feedback,
-      detail: failure.detail,
-    },
+    structuredContent: failure && Struct.omit({ ...failure }, "_tag"),
   };
 }
 

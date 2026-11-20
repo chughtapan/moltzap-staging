@@ -1,6 +1,6 @@
 /** @file One agent's message checks: its structure check, its text rules, and what each check concludes and gives to be saved. */
 
-import { Clock, Context, Effect, Exit, Layer, Schedule } from "effect";
+import { Clock, Effect, Exit, Schedule } from "effect";
 import { createHash, randomBytes } from "node:crypto";
 import type { Message } from "../communication/index.js";
 import type { AgentCard } from "../identity.js";
@@ -29,7 +29,7 @@ import { makeJevDecisionProvider } from "./jev.js";
  * The message policy one firewall applies for its whole scope. Every reason
  * but `eligible`, including a provider failure, refuses a message.
  */
-type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
+type InstalledPolicy = ReturnType<typeof buildPolicy>;
 
 /**
  * What a check concludes. `record` is what the caller saves of the decision;
@@ -56,8 +56,8 @@ export type CheckResult =
       readonly record?: CheckRecord;
     };
 
-/** Message checks. `earlier` is the conversation's earlier messages in order. */
-interface FirewallService {
+/** One agent's message checks. `earlier` is the conversation's earlier messages in order. */
+export interface Firewall {
   /** Checks a message its agent sends. A refusal exposes feedback and never a reply. */
   readonly checkOutgoing: (
     message: Message,
@@ -73,46 +73,48 @@ interface FirewallService {
   ) => Effect.Effect<CheckResult>;
 }
 
-/** One agent's firewall: it checks messages against the message policy. */
-export class Firewall extends Context.Tag("SocialHarness/Firewall")<
-  Firewall,
-  FirewallService
->() {
+/** What a firewall is made with, besides its message policy. */
+interface Installation {
+  /** The card of the agent whose messages the firewall checks. */
+  readonly me: AgentCard;
+  /** The most earlier messages the provider reads. */
+  readonly historyLimit: number;
   /**
-   * The firewall of the agent `self` is the card of. Policy resources are
-   * fixed for this scope. The provider reads at most `historyLimit` earlier
-   * messages. `structureCheck` judges each message before the text rules of
-   * `source`, and the text rules it gives a message join them. `provider`
-   * judges the text rules in place of the provider `source` names.
+   * What the sender of a message withheld for breaking a rule is told when no
+   * rule and no structure check answers it; a structure check's explanation
+   * follows it. Without it such a sender is told nothing.
    */
-  static readonly layer = (
-    self: AgentCard,
-    source: LoadedMessagePolicy | undefined,
-    options: {
-      readonly historyLimit: number;
-      readonly structureCheck?: StructureCheck;
-      readonly provider?: DecisionProvider;
-    },
-  ) =>
-    Layer.effect(
-      Firewall,
-      Effect.gen(function* () {
-        const installed: Installation = {
-          ...options,
-          self,
-          ...(source === undefined
-            ? {}
-            : { policy: yield* buildPolicy(source, options.provider) }),
-        };
-        return Firewall.of({
-          checkOutgoing: (message, earlier) =>
-            decide(installed, message, earlier, "outgoing"),
-          checkIncoming: (message, earlier) =>
-            decide(installed, message, earlier, "incoming"),
-        });
-      }),
-    );
+  readonly notice?: string;
+  /** Judges each message before the text rules, and gives the text rules that join them. */
+  readonly structureCheck?: StructureCheck;
+  /** Judges the text rules in place of the provider the policy names. */
+  readonly provider?: DecisionProvider;
 }
+
+/**
+ * The firewall that applies the message policy `source` for its whole
+ * lifetime. Without a policy it allows every message.
+ */
+export function makeFirewall(
+  source: LoadedMessagePolicy | undefined,
+  installation: Installation,
+): Firewall {
+  const installed = {
+    ...installation,
+    ...(source === undefined
+      ? {}
+      : { policy: buildPolicy(source, installation.provider) }),
+  };
+  return {
+    checkOutgoing: (message, earlier) =>
+      decide(installed, message, earlier, "outgoing"),
+    checkIncoming: (message, earlier) =>
+      decide(installed, message, earlier, "incoming"),
+  };
+}
+
+/** A firewall's installation with the policy it applies. */
+type Installed = Installation & { readonly policy?: InstalledPolicy };
 
 /** What a structure check gives of a message it passes. */
 type Passed = Extract<
@@ -120,20 +122,8 @@ type Passed = Extract<
   { readonly kind: "passed" }
 >;
 
-/** The message policy one firewall applies. */
-interface Installation {
-  readonly policy?: InstalledPolicy;
-  readonly structureCheck?: StructureCheck;
-  readonly historyLimit: number;
-  readonly self: AgentCard;
-}
-
 /** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
 const defaultConcurrentChecks = 4;
-
-/** What the sender of a withheld message is told when nothing else answers it. */
-const withheldNotice = (explanation?: string) =>
-  `Your message was not accepted: ${explanation ?? "it breaks a rule this agent applies to incoming messages."}`;
 
 /**
  * Decides a message. The structure check judges it first, with the earlier
@@ -142,7 +132,7 @@ const withheldNotice = (explanation?: string) =>
  * without a message policy allows every message.
  */
 function decide(
-  installed: Installation,
+  installed: Installed,
   message: Message,
   earlier: readonly EarlierMessage[],
   direction: Direction,
@@ -152,13 +142,14 @@ function decide(
     if (policy === undefined) {
       return { kind: "allowed" } satisfies CheckResult;
     }
-    const structure = yield* structureCheck?.(message, earlier) ??
-      Effect.succeed(undefined);
+    const structure = yield* (
+      structureCheck?.(message, earlier) ?? Effect.succeed(undefined)
+    );
     if (structure?.kind === "refused") {
       const reply =
         structure.reply ??
-        (structure.reason === "rule-violation"
-          ? withheldNotice(structure.feedback)
+        (structure.reason === "rule-violation" && installed.notice !== undefined
+          ? `${installed.notice} ${structure.feedback}`
           : undefined);
       return refused(message, direction, yield* Clock.currentTimeMillis, {
         reason: structure.reason,
@@ -180,10 +171,7 @@ function decide(
 }
 
 /** What a refusal is built from: the check's conclusion and the text that answers a withheld message. */
-interface Refused extends Pick<
-  CheckRecord,
-  "decidedBy" | "checkedRuleIds"
-> {
+interface Refused extends Pick<CheckRecord, "decidedBy" | "checkedRuleIds"> {
   readonly reason: FirewallRefusalReason;
   readonly rule?: string;
   readonly feedback: readonly string[];
@@ -220,7 +208,8 @@ function refused(
             direction,
             decision: direction === "outgoing" ? "refused" : "withheld",
             time,
-            peers: direction === "outgoing" ? message.recipients : [message.author],
+            peers:
+              direction === "outgoing" ? message.recipients : [message.author],
           },
         }),
     ...(reply === undefined || direction === "outgoing"
@@ -281,7 +270,7 @@ function historyWindow(
  * `reply` rules it broke, else, when it broke a rule, with the notice.
  */
 function checkMessageText(
-  installed: Installation & { readonly policy: InstalledPolicy },
+  installed: Installed & { readonly policy: InstalledPolicy },
   candidate: {
     readonly message: Message;
     readonly earlier: readonly EarlierMessage[];
@@ -290,7 +279,7 @@ function checkMessageText(
   structure?: Passed,
 ) {
   return Effect.gen(function* () {
-    const { policy, self } = installed;
+    const { policy, me: self } = installed;
     const { message } = candidate;
     const now = yield* Clock.currentTimeMillis;
     const window = historyWindow(candidate.earlier, installed.historyLimit);
@@ -368,7 +357,7 @@ function checkMessageText(
           `The semantic policy check returned ${reason}.`,
       ) ??
       (textReply(textRules, check) ||
-        (reason === "rule-violation" ? withheldNotice() : undefined));
+        (reason === "rule-violation" ? installed.notice : undefined));
     return refused(message, direction, now, {
       reason,
       decidedBy,
@@ -444,19 +433,20 @@ function textReply(
  * `provider`, Jev judges the text rules of a policy that names it.
  */
 function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
-  return Effect.gen(function* () {
-    const configured = source.policy;
-    const provider =
-      injected ??
-      (source.provider === undefined
-        ? undefined
-        : retryingTransientFailures(makeJevDecisionProvider(source.provider)));
-    const textRules = configured.rules;
-    const revisionContents = {
-      configuration: {
-        maximumConcurrentChecks:
-          configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
-      },
+  const configured = source.policy;
+  const provider =
+    injected ??
+    (source.provider === undefined
+      ? undefined
+      : retryingTransientFailures(makeJevDecisionProvider(source.provider)));
+  const textRules = configured.rules;
+  const maximumConcurrentChecks =
+    configured.maximumConcurrentChecks ?? defaultConcurrentChecks;
+  return {
+    configured,
+    provider,
+    revision: digest({
+      configuration: { maximumConcurrentChecks },
       questionEdition: textQuestionEdition,
       textRules,
       ...(provider === undefined
@@ -466,17 +456,10 @@ function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
             provider: provider.provider ?? null,
             model: provider.model ?? null,
           }),
-    };
-    return {
-      configured,
-      provider,
-      revision: digest(revisionContents),
-      textRules,
-      permits: yield* Effect.makeSemaphore(
-        configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
-      ),
-    };
-  });
+    }),
+    textRules,
+    permits: Effect.unsafeMakeSemaphore(maximumConcurrentChecks),
+  };
 }
 
 /**

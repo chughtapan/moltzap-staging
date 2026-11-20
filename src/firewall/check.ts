@@ -389,38 +389,3 @@ function askProvider(
     return answers;
   }).pipe(Effect.withSpan("TextPolicy.check"));
 }
-
-const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
-  "rule-violation": "It breaks a rule of the agent's message policy.",
-  "unresolved-evidence":
-    "The policy check could not settle whether the message is allowed.",
-  "check-unavailable": "The policy check could not complete.",
-};
-
-/**
- * The sender can act on registered feedback without seeing the check's evidence.
- * `rule` and `detail` are those of a structure check that refused or passed
- * the message. The message states each deciding rule's
- * registered feedback as an error, or the reason when there is none, then the
- * check.
- */
-export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
-  readonly reason: "firewall-refused";
-  readonly checkId: string;
-  readonly refusal: FirewallRefusalReason;
-  readonly rule?: string;
-  readonly feedback: readonly string[];
-  readonly detail?: unknown;
-}> {
-  override get message(): string {
-    const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
-    return [
-      ...(this.feedback.length === 0
-        ? [`Error: ${refusalText[this.refusal]}`]
-        : this.feedback.map((text) =>
-            text.startsWith("Error:") ? text : `Error: ${text}`,
-          )),
-      `Check: ${this.checkId}${rule}; ${this.refusal}.`,
-    ].join(" ");
-  }
-}

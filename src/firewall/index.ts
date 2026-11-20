@@ -6,15 +6,14 @@ export {
   type DecisionRequest,
   type DecisionResponse,
   type EarlierMessage,
-  FirewallRefusal,
   LocalGuidance,
   type StructureCheck,
 } from "./check.js";
-/** Text rules, message-policy loading from its file, and the schemas of decisions. */
+/** Text rules, message-policy loading from its file, and the record of a check. */
 export {
-  firewallDecisionsRequestSchema,
-  firewallDecisionsSchema,
-  FirewallPolicyError,
+  type CheckRecord,
+  checkRecordSchema,
+  type FirewallRefusalReason,
   type LoadedMessagePolicy,
   loadMessagePolicy,
   TextRule,

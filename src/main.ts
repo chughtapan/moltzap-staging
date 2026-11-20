@@ -7,7 +7,7 @@
  * Every outcome but the usage and a stopped daemon exits unsuccessfully.
  */
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
-import { Console, Context, Effect, Layer, PubSub } from "effect";
+import { Console, Effect, Layer, PubSub } from "effect";
 import {
   getOrCreateOwnedAgent,
   loadDaemonSettings,
@@ -21,8 +21,7 @@ import {
   databaseUrl,
   prepareDatabase,
 } from "./database.js";
-import { Firewall } from "./firewall/service.js";
-import { Identity } from "./identity.js";
+import { makeFirewall } from "./firewall/service.js";
 import { structureCheck } from "./norms/index.js";
 import { packageVersion } from "./version.js";
 
@@ -71,19 +70,17 @@ const runDaemon = Effect.gen(function* () {
         ),
       ),
     );
-    const firewall = yield* Layer.build(
-      Firewall.layer(
-        serverAgent.agentKey,
-        settings.messagePolicy,
-        norms && structureCheck(norms),
-      ).pipe(Layer.provide(Layer.succeed(Identity, { me: serverAgent.card }))),
-    );
     const app = yield* makeMcpHttpApp(authentication, {
       serverAgent,
-      firewall: Context.get(firewall, Firewall),
+      firewall: makeFirewall(settings.messagePolicy, {
+        me: serverAgent.card,
+        historyLimit: settings.maximumHistoryRecords ?? 256,
+        notice: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
+        ...(norms === undefined
+          ? {}
+          : { structureCheck: structureCheck(norms) }),
+      }),
       ...(norms === undefined ? {} : { norms }),
-      historyLimit: settings.maximumHistoryRecords ?? 256,
-      withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       turns: new Map(),
       readable: yield* PubSub.unbounded<string>(),
     }).pipe(

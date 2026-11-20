@@ -1,4 +1,4 @@
-/** @file Text rules, the message-policy file and the schemas of decisions. */
+/** @file Text rules, the message-policy file and the record of a check. */
 
 import { FileSystem } from "@effect/platform";
 import {
@@ -58,11 +58,6 @@ export class ProviderRequestSettings extends Schema.Class<ProviderRequestSetting
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
-/** Inclusive Unix milliseconds permit polling across checks completed out of start order. */
-export const firewallDecisionsRequestSchema = exactStruct({
-  since: Schema.optional(Schema.NonNegativeInt),
-});
-
 /**
  * What one completed check concluded, as its caller saves it, without message
  * content: the decision applied to a message the agent sent (`allowed` or
@@ -89,16 +84,6 @@ export const checkRecordSchema = exactStruct({
 });
 /** @useDeclaredType */
 export type CheckRecord = typeof checkRecordSchema.Type;
-
-/** Reports each saved check once per peer. */
-export const firewallDecisionsSchema = exactStruct({
-  decisions: Schema.Array(
-    exactStruct({
-      ...Struct.omit(checkRecordSchema.fields, "peers"),
-      peer: AgentCard,
-    }),
-  ),
-});
 
 /** A message-policy file or the decision provider's key that cannot be loaded, and why. */
 class MessagePolicyConfigurationError extends Data.TaggedError(

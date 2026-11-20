@@ -8,10 +8,9 @@
 import { SqlClient } from "@effect/sql";
 import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Firewall, IncomingDecision } from "../firewall/service.js";
+import type { Firewall } from "../firewall/service.js";
 import type { InstalledNorms } from "../norms/index.js";
 import {
-  type CommunicationError,
   Message,
   MsgId,
   PAGE_SIZE,
@@ -24,7 +23,6 @@ import {
   readHistory,
   readInbox,
   readLatest,
-  type Received,
   sendMessage,
 } from "../communication/service.js";
 import { transaction } from "../database.js";
@@ -33,9 +31,13 @@ import {
   decodeJson,
   encodeJson,
   exactStruct,
-  MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import { type FirewallRefusal, LocalGuidance } from "../firewall/index.js";
+import {
+  type CheckRecord,
+  type FirewallRefusalReason,
+  LocalGuidance,
+} from "../firewall/index.js";
+import { saveDecision, withDecisions } from "./decisions.js";
 import { AGENT_NAME_RULE, AgentCard, AgentName } from "../identity.js";
 
 /** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
@@ -63,17 +65,9 @@ export interface Daemon {
   /** The agent whose firewall checks every message. Every other agent is its client. */
   readonly serverAgent: HostedAgent;
   /** The server agent's firewall. */
-  readonly firewall: typeof Firewall.Service;
+  readonly firewall: Firewall;
   /** The norms the server agent holds, which every agent then reads with `read_norms`. */
   readonly norms?: InstalledNorms;
-  /** The most messages of a conversation a check reads as its recent history. */
-  readonly historyLimit: number;
-  /**
-   * What to tell the sender of a message the firewall withheld for breaking a
-   * rule, when no rule supplied a reply of its own. Without it such a sender
-   * is told nothing.
-   */
-  readonly withheldReply?: string;
   /** The turn of each conversation a message was sent in, by its client's agent id. */
   readonly turns: Map<string, Effect.Semaphore>;
   /** Published with an agent's key each time a message becomes readable for it. */
@@ -208,7 +202,6 @@ const sendFailureText = {
   ...addressFailureText,
   "membership-invalid": "the address names only you",
   "content-invalid": "the message content is invalid",
-  "network-unavailable": "Social Harness is unavailable (network unavailable)",
   "outcome-unknown":
     "the send did not complete; the message may or may not have been sent",
 } as const;
@@ -232,10 +225,48 @@ const historyFailureText = {
   "invalid-address": "the address names you, not another agent",
 } as const;
 
+const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
+  "rule-violation": "It breaks a rule of the agent's message policy.",
+  "unresolved-evidence":
+    "The policy check could not settle whether the message is allowed.",
+  "check-unavailable": "The policy check could not complete.",
+};
+
+/**
+ * A send the server agent's firewall refused. The sender can act on
+ * registered feedback without seeing the check's evidence. `rule` and
+ * `detail` are those of a structure check that refused or passed the message.
+ * The message states each deciding rule's registered feedback as an error, or
+ * the reason when there is none, then the check.
+ */
+export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
+  readonly reason: "firewall-refused";
+  readonly checkId: string;
+  readonly refusal: FirewallRefusalReason;
+  readonly rule?: string;
+  readonly feedback: readonly string[];
+  readonly detail?: unknown;
+}> {
+  override get message(): string {
+    const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
+    return [
+      ...(this.feedback.length === 0
+        ? [`Error: ${refusalText[this.refusal]}`]
+        : this.feedback.map((text) =>
+            text.startsWith("Error:") ? text : `Error: ${text}`,
+          )),
+      `Check: ${this.checkId}${rule}; ${this.refusal}.`,
+    ].join(" ");
+  }
+}
+
 /** History failure never exposes private protocol or persistence diagnostics. */
-class HistoryError extends Schema.TaggedError<HistoryError>()("HistoryError", {
-  reason: Schema.Literal("invalid-address", "unknown-agent"),
-}) {
+export class HistoryError extends Schema.TaggedError<HistoryError>()(
+  "HistoryError",
+  {
+    reason: Schema.Literal("invalid-address", "unknown-agent"),
+  },
+) {
   override get message(): string {
     return `reading failed: ${historyFailureText[this.reason]}`;
   }
@@ -249,10 +280,6 @@ type HistoryRecord =
   | { readonly kind: "sent"; readonly message: Message }
   | ({ readonly kind: "received" } & InboxEntry);
 
-/** Keep address unchanged when supplying the next cursor. */
-interface ReadHistoryRequest extends PaginatedRequest {
-  readonly address: AgentAddress;
-}
 /** One inbox read: the cursor to read after and, in seconds, how long to wait for an entry when none follows it. */
 interface ReceiveRequest {
   readonly cursor?: string;
@@ -283,7 +310,7 @@ export const conversationsOf = Effect.fn("conversationsOf")(
           .map((members) => addressOf(members, self.card.agentId))
           .sort(compareAscii),
       })),
-      Effect.catchAll(historyFailure),
+      Effect.orDie,
     ),
 );
 
@@ -352,51 +379,118 @@ function takeTurn(daemon: Daemon, client: HostedAgent) {
 }
 
 /**
- * Sends one message in its conversation's turn: the server agent's firewall
- * checks it as a message its agent sends or is sent, and one transaction
- * stores it with what was decided. No transaction is open while a check runs.
- * A waiting read wakes once a message it may read is stored. The result
- * carries the message id and canonical conversation; a message the firewall
- * withholds from the server agent is stored and returns the same. Each call
- * creates a new message, so retrying an uncertain send can duplicate it.
+ * The agent `address` names for `self`. Fails with `self` when the address
+ * names the asking agent and with `unknown` when no agent has the name.
+ */
+export const addressedAgent = Effect.fn("addressedAgent")(function* (
+  self: HostedAgent,
+  address: AgentAddress,
+) {
+  const name = address.slice(AGENT_ADDRESS_PREFIX.length);
+  if (name === self.card.agentName) {
+    return yield* Effect.fail("self" as const);
+  }
+  const [agent] = yield* Effect.orDie(agentsWith({ agent_name: name }));
+  return agent ?? (yield* Effect.fail("unknown" as const));
+});
+
+/** The address of `agent`. */
+export const addressOfAgent = (agent: HostedAgent): AgentAddress =>
+  AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${agent.card.agentName}`);
+
+/**
+ * Sends one message between the server agent and a client, whichever of the
+ * two is `author`, in their conversation's turn. The server agent's firewall
+ * checks it as a message its agent sends or is sent. A message the server
+ * agent may not send, or one whose check could not run, fails the send and is
+ * not stored. Otherwise one transaction stores the message with the decision
+ * and, for a message withheld from the server agent, the firewall's reply to
+ * its sender with the decision that allows it. No transaction is open while a
+ * check runs. A waiting read wakes once a message it may read is stored. Each
+ * call creates a new message, so retrying an uncertain send can duplicate it.
  */
 export const send = Effect.fn("send")(
-  function* (daemon: Daemon, self: HostedAgent, input: SendRequest) {
-    const request = structuredClone(input);
-    const name = yield* addressedAgent(request.to, self.card.agentName);
-    const [recipient] = yield* agentsWith({ agent_name: name });
-    if (recipient === undefined) {
-      return yield* new SendError({
-        reason: "unknown-agent",
-        detail: `This daemon has no agent named agent:${name}. Check the name with its owner.`,
+  function* (
+    daemon: Daemon,
+    sent: {
+      readonly author: HostedAgent;
+      readonly recipient: HostedAgent;
+      readonly text: string;
+      readonly replyToMsgId?: MsgId | undefined;
+    },
+  ) {
+    const { author, recipient } = sent;
+    const server = daemon.serverAgent;
+    const outgoing = author.agentKey === server.agentKey;
+    const message = yield* Message.create({
+      author: author.card,
+      recipients: [recipient.card],
+      content: [{ type: "text", text: sent.text }],
+      replyToMsgId: sent.replyToMsgId,
+    }).pipe(Effect.mapError(({ reason }) => new SendError({ reason })));
+    yield* takeTurn(daemon, outgoing ? recipient : author);
+    const earlier = yield* earlierMessages(server, message);
+    const result = outgoing
+      ? yield* daemon.firewall.checkOutgoing(message, earlier)
+      : yield* daemon.firewall.checkIncoming(message, earlier);
+    if (
+      result.kind === "refused" &&
+      (outgoing || result.reason === "check-unavailable")
+    ) {
+      if (result.record !== undefined) {
+        yield* saveDecision(server.agentKey, message, result.record);
+      }
+      return yield* new FirewallRefusal({
+        reason: "firewall-refused",
+        checkId: result.checkId,
+        refusal: result.reason,
+        ...(result.rule === undefined ? {} : { rule: result.rule }),
+        feedback: result.feedback,
+        ...(result.detail === undefined ? {} : { detail: result.detail }),
       });
     }
-    const outgoing = yield* Message.create({
-      author: self.card,
-      recipients: [recipient.card],
-      content: [{ type: "text", text: request.text }],
-      replyToMsgId: request.replyToMsgId,
-    });
+    const reply =
+      result.kind === "refused" && result.reply !== undefined
+        ? yield* replyWith(server, message, result.reply)
+        : undefined;
     const route = {
-      authorKey: self.agentKey,
+      authorKey: author.agentKey,
       recipientKey: recipient.agentKey,
     };
-    if (self.agentKey === daemon.serverAgent.agentKey) {
-      yield* takeTurn(daemon, recipient);
-      yield* sendAsServerAgent(daemon, route, outgoing);
-    } else {
-      yield* takeTurn(daemon, self);
-      yield* sendAsClient(daemon, route, outgoing);
+    yield* transaction(
+      Effect.gen(function* () {
+        yield* sendMessage(route, message, {
+          readable: result.kind === "allowed",
+          ...(result.kind === "allowed" && result.guidance !== undefined
+            ? { guidance: yield* encodeJson(LocalGuidance, result.guidance) }
+            : {}),
+        });
+        if (result.record !== undefined) {
+          yield* saveDecision(server.agentKey, message, result.record);
+        }
+        if (reply !== undefined) {
+          yield* sendMessage(
+            { authorKey: route.recipientKey, recipientKey: route.authorKey },
+            reply.message,
+            { readable: true },
+          );
+          yield* saveDecision(server.agentKey, reply.message, reply.record);
+        }
+      }),
+    ).pipe(Effect.orDie);
+    if (result.kind === "allowed") {
+      yield* PubSub.publish(daemon.readable, recipient.agentKey);
+    } else if (reply !== undefined) {
+      yield* PubSub.publish(daemon.readable, author.agentKey);
     }
-    return { id: outgoing.msgId, address: request.to };
+    return message.msgId;
   },
   Effect.scoped,
-  Effect.catchAll(sendFailure),
-  (effect, ...[, self]) =>
+  (effect, ...[, { author }]) =>
     Effect.tapError(effect, (error) =>
       Effect.logWarning("Send failed").pipe(
         Effect.annotateLogs({
-          agentKey: self.agentKey,
+          agentKey: author.agentKey,
           error: error._tag,
           reason: error.message,
         }),
@@ -404,210 +498,59 @@ export const send = Effect.fn("send")(
     ),
 );
 
-type Route = Parameters<typeof sendMessage>[0];
-
-/** Stores a message the server agent's firewall allows it to send, readable for its client. */
-function sendAsServerAgent(daemon: Daemon, route: Route, outgoing: Message) {
-  return Effect.gen(function* () {
-    const decision = yield* daemon.firewall.checkOutgoing(
-      outgoing,
-      (protocolHistory) => evidenceFor(daemon, outgoing, protocolHistory),
-    );
-    yield* decision.save;
-    if (decision.kind === "refused") {
-      return yield* decision.refusal;
-    }
-    yield* sendMessage(route, outgoing, { readable: true });
-    yield* PubSub.publish(daemon.readable, route.recipientKey);
-  });
-}
-
 /**
- * Stores a message a client sends with what the server agent's firewall
- * decides of it, and sends the reply to a withheld one, in one transaction.
- * The evidence is read at most once and serves both the check and the check
- * of the reply. A check that could not run fails the send.
+ * The firewall's reply to a message it withheld, as an ordinary message from
+ * the server agent to the withheld message's author that names it as the one
+ * it answers. A reply that is not a valid message is not sent.
  */
-function sendAsClient(daemon: Daemon, route: Route, incoming: Message) {
-  return Effect.gen(function* () {
-    const evidence = yield* Effect.cachedFunction((protocolHistory: boolean) =>
-      evidenceFor(daemon, incoming, protocolHistory),
-    );
-    const decision = yield* daemon.firewall.checkIncoming(incoming, evidence);
-    if (
-      decision.kind === "withheld" &&
-      decision.reason === "check-unavailable"
-    ) {
-      return yield* new SendError({
-        reason: "network-unavailable",
-        detail:
-          "the recipient's message check could not run; send the message again later",
-      });
-    }
-    const reply = yield* checkedReply(daemon, incoming, decision, evidence);
-    const received: Received = {
-      readable: decision.kind === "allowed",
-      ...(decision.kind === "allowed" && decision.guidance !== undefined
-        ? { guidance: yield* encodeJson(LocalGuidance, decision.guidance) }
-        : {}),
-    };
-    yield* transaction(
-      Effect.gen(function* () {
-        yield* sendMessage(route, incoming, received);
-        yield* decision.save;
-        yield* reply.save;
-        if (reply.message !== undefined) {
-          yield* sendMessage(
-            { authorKey: route.recipientKey, recipientKey: route.authorKey },
-            reply.message,
-            { readable: true },
-          );
-        }
-      }),
-    );
-    if (received.readable) {
-      yield* PubSub.publish(daemon.readable, route.recipientKey);
-    } else if (reply.message !== undefined) {
-      yield* PubSub.publish(daemon.readable, route.authorKey);
-    }
-  });
-}
-
-/**
- * The reply to a withheld message once the firewall has checked it as a
- * message its agent sends, with the withheld message as one the reply may
- * name: the reply when it is allowed, and the saving of that check either way.
- */
-function checkedReply(
-  daemon: Daemon,
+function replyWith(
+  server: HostedAgent,
   withheld: Message,
-  decision: IncomingDecision,
-  evidence: (protocolHistory: boolean) => ReturnType<typeof evidenceFor>,
+  reply: { readonly text: string; readonly record: CheckRecord },
 ) {
-  return Effect.gen(function* () {
-    const proposed = yield* replyTo(daemon, withheld, decision);
-    if (proposed === undefined) {
-      return { save: Effect.void };
-    }
-    const checked = yield* daemon.firewall.checkOutgoing(
-      proposed,
-      (protocolHistory) =>
-        Effect.map(evidence(protocolHistory), (read) => ({
-          ...read,
-          references: [withheld],
-        })),
-    );
-    return {
-      save: checked.save,
-      ...(checked.kind === "allowed" ? { message: proposed } : {}),
-    };
-  });
-}
-
-/**
- * The reply proposed for a message the firewall withheld: an ordinary message
- * from the server agent to the withheld message's author that names it as the
- * one it answers. A rule's own reply is used when it gave one; otherwise
- * `withheldReply` answers a message that broke a rule. The reply is checked
- * as any message the server agent sends, and is sent only if allowed. A reply
- * that is not a valid message is not sent.
- */
-function replyTo(
-  daemon: Daemon,
-  withheld: Message,
-  decision: IncomingDecision,
-) {
-  if (decision.kind !== "withheld") {
-    return Effect.succeed(undefined);
-  }
-  const text =
-    decision.reply ??
-    (decision.reason === "rule-violation" ? daemon.withheldReply : undefined);
-  if (text === undefined) {
-    return Effect.succeed(undefined);
-  }
   return Message.create({
-    author: daemon.serverAgent.card,
+    author: server.card,
     recipients: [withheld.author],
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text: reply.text }],
     replyToMsgId: withheld.msgId,
-  }).pipe(Effect.orElseSucceed(() => undefined));
+  }).pipe(
+    Effect.map((message) => ({ message, record: reply.record })),
+    Effect.orElseSucceed(() => undefined),
+  );
 }
 
 /**
- * The evidence the check of `next`, the next message of its conversation,
- * reads from the server agent's history: the bounded window of the latest
- * messages, and with `withProtocolHistory` every message of the conversation.
+ * Every message before `next` in its conversation, in order, each with what
+ * the server agent's firewall decided of it.
  */
-function evidenceFor(
-  daemon: Daemon,
-  next: Message,
-  withProtocolHistory: boolean,
-) {
-  return Effect.gen(function* () {
-    const { agentKey } = daemon.serverAgent;
-    const members = [next.author, ...next.recipients];
-    const all = withProtocolHistory
-      ? (yield* readLatest(agentKey, { members })).entries
-      : undefined;
-    const page =
-      all === undefined
-        ? yield* readLatest(agentKey, { members, limit: daemon.historyLimit })
-        : {
-            entries: all.slice(-daemon.historyLimit),
-            earlierMessagesOmitted: all.length > daemon.historyLimit,
-          };
-    let bytes = 0;
-    const recent: HeldMessage[] = [];
-    for (const earlier of [...page.entries].reverse()) {
-      if (bytes + earlier.messageBytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
-        break;
-      }
-      recent.push(earlier);
-      bytes += earlier.messageBytes;
-    }
-    recent.reverse();
-    return {
-      history: recent.map((earlier) => ({
-        message: earlier.message,
-        visibleToAgent: earlier.readable,
-      })),
-      earlierHistoryOmitted:
-        page.earlierMessagesOmitted || recent.length < page.entries.length,
-      gaps:
-        recent.length < page.entries.length
-          ? ["The preceding history exceeds the evidence byte limit."]
-          : [],
-      ...(all === undefined
-        ? {}
-        : {
-            protocolHistory: {
-              messages: all.map(({ message }) => message),
-              complete: true,
-            },
-          }),
-    };
-  });
+function earlierMessages(server: HostedAgent, next: Message) {
+  return readLatest(server.agentKey, {
+    members: [next.author, ...next.recipients],
+  }).pipe(
+    Effect.orDie,
+    Effect.flatMap(({ entries }) =>
+      withDecisions(
+        server.agentKey,
+        entries.map(({ message }) => message),
+      ),
+    ),
+  );
 }
 
 /**
- * One page of a conversation's messages as history records, oldest first,
- * after the cursor an earlier page returned: each one `self` sent, and each
- * one it received and may read. Rule edits leave stored inbox entries as they
- * are.
+ * One page of the messages of `self`'s conversation with `other` as history
+ * records, oldest first, after the cursor an earlier page returned: each one
+ * `self` sent, and each one it received and may read. Rule edits leave stored
+ * inbox entries as they are.
  */
 export const historyRecords = Effect.fn("historyRecords")(function* (
   self: HostedAgent,
-  request: ReadHistoryRequest,
+  other: HostedAgent,
+  cursor?: string,
 ) {
-  const name = yield* addressedAgent(request.address, self.card.agentName);
-  const [other] = yield* agentsWith({ agent_name: name });
-  if (other === undefined) {
-    return yield* new HistoryError({ reason: "unknown-agent" });
-  }
   const page = yield* readHistory(self.agentKey, {
     members: [self.card, other.card],
-    ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+    ...(cursor === undefined ? {} : { cursor }),
   });
   const records: HistoryRecord[] = [];
   for (const held of page.entries) {
@@ -621,18 +564,7 @@ export const historyRecords = Effect.fn("historyRecords")(function* (
     records,
     ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
   };
-}, Effect.catchAll(historyFailure));
-
-/** The agent `to` names. An address that names the local agent is refused. */
-function addressedAgent(
-  to: AgentAddress,
-  localAgentName: AgentName,
-): Effect.Effect<AgentName, SendError> {
-  const name = AgentName.make(to.slice(AGENT_ADDRESS_PREFIX.length));
-  return name === localAgentName
-    ? Effect.fail(new SendError({ reason: "membership-invalid" }))
-    : Effect.succeed(name);
-}
+}, Effect.orDie);
 
 /** The address, as the local agent states it, of its conversation with the other of `members`. */
 function addressOf(
@@ -641,49 +573,4 @@ function addressOf(
 ): AgentAddress {
   const other = members.find((member) => member.agentId !== localAgentId);
   return AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${other?.agentName}`);
-}
-
-/**
- * Fails with what the sender can correct. Any other failure is one of storage
- * and ends the send as a defect, which the tool reports as an unknown outcome.
- */
-function sendFailure(
-  error:
-    | SendError
-    | FirewallRefusal
-    | CommunicationError
-    | {
-        readonly _tag:
-          | "SqlError"
-          | "ParseError"
-          | "JsonRepresentationError"
-          | "FirewallPolicyError";
-      },
-) {
-  if (error._tag === "SendError" || error._tag === "FirewallRefusal") {
-    return Effect.fail(error);
-  }
-  return error._tag === "CommunicationError"
-    ? Effect.fail(new SendError({ reason: error.reason }))
-    : Effect.die(error);
-}
-
-/**
- * Fails with what the reader can correct: a wrong address or an unknown
- * agent. Any other failure is one of storage and ends the read as a defect.
- */
-function historyFailure(
-  error:
-    | HistoryError
-    | SendError
-    | {
-        readonly _tag: "SqlError" | "ParseError" | "JsonRepresentationError";
-      },
-) {
-  if (error._tag === "HistoryError") {
-    return Effect.fail(error);
-  }
-  return error._tag === "SendError"
-    ? Effect.fail(new HistoryError({ reason: "invalid-address" }))
-    : Effect.die(error);
 }
