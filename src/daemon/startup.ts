@@ -1,8 +1,7 @@
 /** @file Opens the daemon's database, installs the server agent's firewall and serves every owner's agent. */
 import type { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
-import { Console, Context, Effect, Layer } from "effect";
+import { Console, Context, Effect, Layer, PubSub } from "effect";
 import {
   databaseConnection,
   databaseUrl,
@@ -11,11 +10,9 @@ import {
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity.js";
 import { packageVersion } from "../version.js";
-import { getOrCreateOwnedAgent, makeHarness, type Owner } from "./agent.js";
-import { makeMcpHttpApp, serveMcp } from "./listener.js";
+import { getOrCreateOwnedAgent } from "./agent.js";
+import { makeMcpHttpApp, serveMcp } from "./server.js";
 import { loadDaemonSettings, refused, spanExport } from "./settings.js";
-import { makeInboxEvents } from "./tool-server.js";
-import { AgentAddress } from "./values.js";
 
 /** The Node file system, typed by the interface the daemon reads files through. */
 const fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer;
@@ -30,13 +27,9 @@ export const runDaemon = Effect.gen(function* () {
   const settings = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
     yield* prepareDatabase;
-    const owner = {
-      issuer: settings.authentication.issuer,
-      subject: settings.serverAgent.subject,
-    };
-    const { norms } = settings;
+    const { authentication, norms } = settings;
     const serverAgent = yield* getOrCreateOwnedAgent(
-      owner,
+      { issuer: authentication.issuer, subject: settings.serverAgent.subject },
       settings.serverAgent.name,
     ).pipe(
       Effect.catchTag("OwnershipError", () =>
@@ -58,40 +51,18 @@ export const runDaemon = Effect.gen(function* () {
         ),
       ),
     );
-    const harnessOf = yield* makeHarness({
+    const app = yield* makeMcpHttpApp(authentication, {
       serverAgent,
-      maximumHistoryRecords: settings.maximumHistoryRecords,
+      firewall: Context.get(firewall, Firewall),
+      hasNorms: norms !== undefined,
+      historyLimit: settings.maximumHistoryRecords ?? 256,
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
-    }).pipe(Effect.provide(firewall));
-    const events = yield* makeInboxEvents;
-    const sql = yield* SqlClient.SqlClient;
-    /** What an owner's requests are answered from: its agent's row and that agent's role. */
-    const agentOfOwner = (caller: Owner) =>
-      getOrCreateOwnedAgent(caller).pipe(
-        Effect.map((agent) => ({
-          ...agent,
-          harness: harnessOf(agent),
-          firewall: Context.get(firewall, Firewall),
-          events,
-          serverAgent:
-            agent.agentKey === serverAgent.agentKey
-              ? undefined
-              : AgentAddress.make(`agent:${serverAgent.card.agentName}`),
-          norms:
-            norms === undefined
-              ? undefined
-              : Context.get(firewall, Firewall).readContracts(),
-        })),
-        Effect.provideService(SqlClient.SqlClient, sql),
-        Effect.orDie,
-      );
-    const app = yield* makeMcpHttpApp(
-      settings.authentication,
-      agentOfOwner,
-    ).pipe(
+      turns: new Map(),
+      readable: yield* PubSub.unbounded<string>(),
+    }).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
         refused(
-          `The OAuth issuer ${settings.authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
+          `The OAuth issuer ${authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
         ),
       ),
     );

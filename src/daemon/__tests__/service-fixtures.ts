@@ -1,6 +1,6 @@
-/** @file SocialHarness fixtures: the server agent's harness over real policy and stored messages in a test database, with the clients that message it. */
+/** @file Fixtures of one daemon's agents: the server agent behind real policy over stored messages in a test database, with the clients that message it. */
 
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, PubSub, Schema } from "effect";
 import type {
   CompiledContract,
   DecisionProvider,
@@ -14,11 +14,16 @@ import { Firewall } from "../../firewall/service.js";
 import { type AgentCard, Identity } from "../../identity.js";
 import { openTestDatabase } from "../../test.js";
 import {
-  type HarnessSettings,
-  makeHarness,
+  conversationsOf,
+  type Daemon,
+  historyRecords,
+  type HostedAgent,
   readInboxEntries,
+  receive,
+  send,
+  type SendRequest,
 } from "../agent.js";
-import { AgentAddress, type SendRequest } from "../values.js";
+import { AgentAddress } from "../values.js";
 
 type Policy = Context.Tag.Service<typeof Firewall>;
 
@@ -100,8 +105,32 @@ export function composedPolicy(
   };
 }
 
-/** How Alice's harness opens. */
-interface OpenOptions extends Omit<HarnessSettings, "serverAgent"> {
+/**
+ * What a daemon shares when `serverAgent` is its server agent behind
+ * `firewall`, with the history limit `runDaemon` defaults to and no norms
+ * unless `settings` say otherwise.
+ */
+export const testDaemon = (
+  serverAgent: HostedAgent,
+  firewall: Policy,
+  settings: Partial<Daemon> = {},
+) =>
+  Effect.map(
+    PubSub.unbounded<string>(),
+    (readable): Daemon => ({
+      serverAgent,
+      firewall,
+      hasNorms: false,
+      historyLimit: 256,
+      turns: new Map(),
+      readable,
+      ...settings,
+    }),
+  );
+
+/** How Alice's daemon opens. */
+interface OpenOptions
+  extends Partial<Pick<Daemon, "historyLimit" | "withheldReply">> {
   readonly policy?: TestPolicy;
   /** The contracts the agent starts with. */
   readonly contracts?: readonly CompiledContract[];
@@ -111,7 +140,7 @@ interface OpenOptions extends Omit<HarnessSettings, "serverAgent"> {
 /**
  * Alice, the server agent, with her clients Bob, Carol and any peer a test
  * adds, on one daemon. `open` installs Alice's firewall and gives her
- * operations; a client then sends through the same harness.
+ * operations as `harness`; a client then sends on the same daemon.
  */
 export const makeHarnessFixture = Effect.gen(function* () {
   const database = yield* openTestDatabase();
@@ -120,21 +149,34 @@ export const makeHarnessFixture = Effect.gen(function* () {
   const bob = yield* join("bob");
   const carol = yield* join("carol");
   const peers = new Map([bob, carol].map((peer) => [peer.card.agentId, peer]));
-  let harnessOf: Effect.Effect.Success<ReturnType<typeof makeHarness>>;
-  const open = Effect.fn(function* (options: OpenOptions = {}) {
+  let daemon: Daemon;
+  /** The operations of `agent` on the open daemon. */
+  const harnessOf = (agent: HostedAgent) => ({
+    send: (request: SendRequest) => database.run(send(daemon, agent, request)),
+    receive: (request: Parameters<typeof receive>[2]) =>
+      database.run(receive(daemon, agent, request)),
+    listConversations: () => database.run(conversationsOf(agent)),
+    readHistory: (request: Parameters<typeof historyRecords>[1]) =>
+      database.run(historyRecords(agent, request)),
+  });
+  const open = Effect.fn(function* ({
+    policy,
+    contracts,
+    decorateFirewall,
+    ...settings
+  }: OpenOptions = {}) {
     const firewall = yield* Layer.build(
       Firewall.layer(
         alice.agentKey,
-        options.policy?.source,
-        options.contracts,
-        options.policy?.provider,
+        policy?.source,
+        contracts,
+        policy?.provider,
       ).pipe(Layer.provide(Layer.succeed(Identity, { me: alice.card }))),
     ).pipe(Effect.map(Context.get(Firewall)));
-    harnessOf = yield* makeHarness({ ...options, serverAgent: alice }).pipe(
-      Effect.provideService(
-        Firewall,
-        options.decorateFirewall?.(firewall) ?? firewall,
-      ),
+    daemon = yield* testDaemon(
+      alice,
+      decorateFirewall?.(firewall) ?? firewall,
+      settings,
     );
     return {
       harness: harnessOf(alice),
@@ -150,7 +192,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       ),
     };
   }, database.run);
-  /** The operations of a client of the open harness. */
+  /** The operations of a client of the open daemon. */
   const client = (card: AgentCard) =>
     Effect.map(Effect.fromNullable(peers.get(card.agentId)), (peer) =>
       harnessOf(peer),
