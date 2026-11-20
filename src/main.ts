@@ -21,7 +21,7 @@ import {
   databaseUrl,
   prepareDatabase,
 } from "./database.js";
-import { makeFirewall } from "./firewall/service.js";
+import { makeFirewall } from "./firewall/firewall.js";
 import { structureCheck } from "./norms/index.js";
 import { packageVersion } from "./version.js";
 

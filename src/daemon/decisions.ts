@@ -13,7 +13,7 @@ import {
   type CheckRecord,
   checkRecordSchema,
   type EarlierMessage,
-} from "../firewall/index.js";
+} from "../firewall/firewall.js";
 import { AgentCard } from "../identity.js";
 
 /** Inclusive Unix milliseconds permit polling across checks completed out of start order. */

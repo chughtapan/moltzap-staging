@@ -8,7 +8,6 @@
 import { SqlClient } from "@effect/sql";
 import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Firewall } from "../firewall/service.js";
 import type { InstalledNorms } from "../norms/index.js";
 import {
   type CommunicationError,
@@ -34,9 +33,10 @@ import {
 } from "../encoding.js";
 import {
   type CheckRecord,
+  type Firewall,
   type FirewallRefusalReason,
   LocalGuidance,
-} from "../firewall/index.js";
+} from "../firewall/firewall.js";
 import { AGENT_NAME_RULE, AgentCard, AgentName } from "../identity.js";
 import { saveDecision, withDecisions } from "./decisions.js";
 

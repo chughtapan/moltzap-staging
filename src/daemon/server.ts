@@ -53,7 +53,7 @@ import {
   wellFormedString,
 } from "../communication/index.js";
 import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
-import { LocalGuidance } from "../firewall/index.js";
+import { LocalGuidance } from "../firewall/firewall.js";
 import { AgentId, AgentName } from "../identity.js";
 import { packageVersion } from "../version.js";
 import {
