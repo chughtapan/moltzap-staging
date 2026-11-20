@@ -172,9 +172,6 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: 'catalog:'
         version: 1.41.1
-      ajv:
-        specifier: 'catalog:'
-        version: 8.18.0
       effect:
         specifier: 3.22.1
         version: 3.22.1
@@ -203,6 +200,9 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
+      ajv:
+        specifier: 'catalog:'
+        version: 8.18.0
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)
