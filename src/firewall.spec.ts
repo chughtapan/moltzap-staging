@@ -33,8 +33,7 @@ import {
   peer,
   policy,
   privacy,
-} from "../__tests__/firewall-fixtures.js";
-import { Message } from "../messages.js";
+} from "./__tests__/firewall-fixtures.js";
 import {
   type DecisionProvider,
   DecisionProviderError,
@@ -46,6 +45,7 @@ import {
   type StructureCheck,
   TextRule,
 } from "./firewall.js";
+import { Message } from "./messages.js";
 
 type Direction = "incoming" | "outgoing";
 
@@ -228,7 +228,7 @@ live("loads the packaged message policy", () =>
   Effect.gen(function* () {
     const loaded = yield* loadConfigured(
       fileURLToPath(
-        new URL("../../config/firewall/message-policy.json", import.meta.url),
+        new URL("../config/firewall/message-policy.json", import.meta.url),
       ),
       "key-value",
     );

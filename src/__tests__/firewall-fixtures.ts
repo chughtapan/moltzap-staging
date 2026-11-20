@@ -6,7 +6,7 @@ import {
   type LoadedMessagePolicy,
   makeFirewall,
   type TextRule,
-} from "../firewall/firewall.js";
+} from "../firewall.js";
 import {
   AgentCard,
   AgentId,

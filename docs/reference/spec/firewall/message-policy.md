@@ -148,7 +148,7 @@ The settings file's `messagePolicyFile` names a JSON file.
 | `rules` | Optional: a `TextRule` array, default `[]`. |
 | `decisionProvider` | Required with `rules` and for held norms with English rules: `{model}`. |
 | `settings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 15 s per request. |
-| `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
+| `maximumConcurrentChecks` | Optional shared inference concurrency. |
 
 | Rule field | Requirement |
 | --- | --- |

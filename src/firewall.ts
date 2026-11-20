@@ -24,7 +24,7 @@ import {
   Stream,
 } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import { AgentCard, type Message } from "../messages.js";
+import { AgentCard, type Message } from "./messages.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 

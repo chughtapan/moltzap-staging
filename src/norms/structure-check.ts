@@ -10,7 +10,7 @@ import {
   type EarlierMessage,
   type StructureCheck,
   TextRule,
-} from "../firewall/firewall.js";
+} from "../firewall.js";
 import {
   type Act,
   checkStructure,

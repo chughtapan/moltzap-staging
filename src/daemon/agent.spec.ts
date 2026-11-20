@@ -12,10 +12,7 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import type {
-  DecisionProvider,
-  DecisionRequest,
-} from "../firewall/firewall.js";
+import type { DecisionProvider, DecisionRequest } from "../firewall.js";
 import { digest } from "../__tests__/agents.js";
 import {
   composedPolicy,

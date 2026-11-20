@@ -42,7 +42,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import { checkRecordSchema, LocalGuidance } from "../firewall/firewall.js";
+import { checkRecordSchema, LocalGuidance } from "../firewall.js";
 import {
   type AgentCard,
   AgentId,
