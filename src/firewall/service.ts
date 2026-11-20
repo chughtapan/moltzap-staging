@@ -2,8 +2,7 @@
 
 import { Clock, Effect, Exit, Schedule } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import type { Message } from "../communication/index.js";
-import type { AgentCard } from "../identity.js";
+import type { AgentCard, Message } from "../messages.js";
 import type {
   CheckRecord,
   Direction,
@@ -11,7 +10,6 @@ import type {
   LoadedMessagePolicy,
   TextRule,
 } from "./rules.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
   type AssessmentText,
   checkCapturedMessage,
@@ -205,8 +203,7 @@ function refused(
             direction,
             decision: direction === "outgoing" ? "refused" : "withheld",
             time,
-            peers:
-              direction === "outgoing" ? message.recipients : [message.author],
+            peer: direction === "outgoing" ? message.recipient : message.author,
           },
         }),
     ...(reply === undefined || direction === "outgoing"
@@ -219,7 +216,7 @@ function refused(
               direction: "outgoing",
               decision: "allowed",
               time,
-              peers: [message.author],
+              peer: message.author,
               reason: "eligible",
               decidedBy: [],
               checkedRuleIds: [],
@@ -280,8 +277,7 @@ function checkMessageText(
           direction,
           decision: "allowed",
           time: now,
-          peers:
-            direction === "outgoing" ? message.recipients : [message.author],
+          peer: direction === "outgoing" ? message.recipient : message.author,
           reason,
           decidedBy,
           checkedRuleIds,
@@ -328,10 +324,10 @@ function checkEvidence(
   for (const card of [
     self,
     message.author,
-    ...message.recipients,
+    message.recipient,
     ...window.history.flatMap((entry) => [
       entry.message.author,
-      ...entry.message.recipients,
+      entry.message.recipient,
     ]),
   ]) {
     cards.set(card.agentId, card);
@@ -356,6 +352,9 @@ function checkEvidence(
       : { protocol: structure.protocol }),
   };
 }
+
+/** Byte limit of the history window the provider reads. */
+const MAXIMUM_RUNTIME_ITEM_BYTES = 2 * 1024 * 1024;
 
 /**
  * The provider's window of the earlier messages: the latest `historyLimit`
@@ -395,12 +394,8 @@ function assessmentText(message: Message): AssessmentText {
   return {
     id: referenceId(`${message.author.agentId}:${message.msgId}`),
     sender: message.author.agentId,
-    recipients: [message.recipients[0].agentId],
-    text: message.content
-      .map((part) =>
-        part.type === "text" ? part.text : JSON.stringify(part.value),
-      )
-      .join("\n"),
+    recipients: [message.recipient.agentId],
+    text: message.text,
   };
 }
 

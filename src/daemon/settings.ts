@@ -7,12 +7,11 @@ import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
 import packageJson from "../../package.json" with { type: "json" };
-import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
 } from "../firewall/index.js";
-import { AgentName } from "../identity.js";
+import { AgentName } from "../messages.js";
 import {
   initialNormsHaveRules,
   type InstalledNorms,
@@ -38,6 +37,24 @@ export class DaemonConfigurationError extends Data.TaggedError(
 export const refused = (message: string) =>
   new DaemonConfigurationError({ message });
 
+/**
+ * The URL `value` names when it parses, uses one of `protocols` (each with its
+ * colon) and carries no userinfo and no fragment; otherwise `undefined`.
+ */
+const plainUrl = (
+  value: string | URL,
+  protocols: readonly string[],
+): URL | undefined => {
+  if (!URL.canParse(value)) {
+    return undefined;
+  }
+  const url = new URL(value);
+  return protocols.includes(url.protocol) &&
+    [url.username, url.password, url.hash].every((part) => part === "")
+    ? url
+    : undefined;
+};
+
 const httpsUrl = Schema.String.pipe(
   Schema.filter((value) => plainUrl(value, ["https:"])?.search === ""),
 );
@@ -54,7 +71,7 @@ const oauthIssuer = Schema.Union(
 );
 
 /** The OAuth resource the daemon is, and the issuer whose tokens it admits. */
-const authentication = exactStruct({
+const authentication = Schema.Struct({
   resource: httpsUrl.pipe(
     Schema.filter(
       (value) =>
@@ -66,11 +83,14 @@ const authentication = exactStruct({
   scope: Schema.String.pipe(Schema.pattern(/^[\x21\x23-\x5B\x5D-\x7E]+$/u)),
 });
 /** The settings file as an operator writes it. */
-const settingsFile = exactStruct({
+const settingsFile = Schema.Struct({
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
   authentication,
-  serverAgent: exactStruct({ name: AgentName, subject: Schema.NonEmptyString }),
+  serverAgent: Schema.Struct({
+    name: AgentName,
+    subject: Schema.NonEmptyString,
+  }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),
   maximumHistoryRecords: Schema.optional(
@@ -103,7 +123,11 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   );
   const filesystem = yield* FileSystem.FileSystem;
   const file = yield* filesystem.readFileString(settingsPath).pipe(
-    Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(settingsFile))),
+    Effect.flatMap(
+      Schema.decodeUnknown(Schema.parseJson(settingsFile), {
+        onExcessProperty: "error",
+      }),
+    ),
     Effect.mapError(() =>
       refused("The daemon settings file is unreadable or invalid"),
     ),

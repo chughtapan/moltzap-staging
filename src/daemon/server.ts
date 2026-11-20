@@ -37,16 +37,20 @@ import {
   Schema,
   type Scope,
   Stream,
-  Struct,
 } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import { Message, MsgId, wellFormedString } from "../communication/index.js";
-import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
 import { checkRecordSchema, LocalGuidance } from "../firewall/index.js";
-import { AgentCard, AgentId, AgentName } from "../identity.js";
+import {
+  type AgentCard,
+  AgentId,
+  AgentName,
+  Message,
+  MsgId,
+  wellFormedString,
+} from "../messages.js";
 import {
   addressedAgent,
   addressOfAgent,
@@ -309,7 +313,7 @@ function requestServer(
     {
       description:
         "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries. Pass wait to wait up to that many seconds when no entry follows the cursor; the call returns as soon as one becomes readable, or with no entries when the wait ends.",
-      input: exactStruct({
+      input: Schema.Struct({
         ...PaginatedRequest.fields,
         wait: Schema.optional(
           Schema.Number.pipe(
@@ -345,9 +349,9 @@ function requestServer(
             : "List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them."
         } ${ACT_SYNTAX}`,
         input: noArguments,
-        output: exactStruct({
+        output: Schema.Struct({
           norms: Schema.Array(
-            exactStruct({
+            Schema.Struct({
               name: Schema.String,
               description: Schema.String,
               document: Schema.String,
@@ -443,13 +447,7 @@ function registerServerAgentTools(
       description:
         "List the address of every conversation with a message. Use read_conversation to read one address.",
       input: noArguments,
-      output: Schema.Struct({
-        addresses: Schema.Array(AgentAddress),
-      }).pipe(
-        Schema.filter((page) =>
-          isStrictlyAscending(page.addresses, compareAscii),
-        ),
-      ),
+      output: Schema.Struct({ addresses: Schema.Array(AgentAddress) }),
       readOnly: true,
     },
     () => conversationsOf(agent),
@@ -460,7 +458,7 @@ function registerServerAgentTools(
     {
       description:
         "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. A page holds the oldest records after cursor; pass nextCursor as cursor, with the same address, until it is absent.",
-      input: exactStruct({
+      input: Schema.Struct({
         address: AgentAddress,
         ...PaginatedRequest.fields,
       }),
@@ -475,30 +473,13 @@ function registerServerAgentTools(
     {
       description:
         "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
-      input: exactStruct({ since: Schema.optional(Schema.NonNegativeInt) }),
-      output: exactStruct({
-        decisions: Schema.Array(
-          exactStruct({
-            ...Struct.omit(checkRecordSchema.fields, "peers"),
-            peer: AgentCard,
-          }),
-        ),
-      }),
+      input: Schema.Struct({ since: Schema.optional(Schema.NonNegativeInt) }),
+      output: Schema.Struct({ decisions: Schema.Array(checkRecordSchema) }),
       readOnly: true,
     },
     ({ since }) =>
-      Effect.map(readDecisions(since ?? 0), (records) => ({
-        decisions: records.flatMap(decisionsOf),
-      })),
+      Effect.map(readDecisions(since ?? 0), (decisions) => ({ decisions })),
   );
-}
-
-/** One decision for each peer of a check, as `read_firewall_decisions` reports it. */
-function decisionsOf(record: typeof checkRecordSchema.Type) {
-  return record.peers.map((peer) => ({
-    ...Struct.omit(record, "peers"),
-    peer,
-  }));
 }
 
 /** The tools of a client, which name no recipient and no conversation: both are the server agent. */
@@ -510,7 +491,7 @@ function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
     {
       description:
         "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
-      input: exactStruct({
+      input: Schema.Struct({
         text: Schema.propertySignature(wellFormedString).annotations({
           description: "The message text.",
         }),
@@ -527,7 +508,7 @@ function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
     {
       description:
         "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent.",
-      input: exactStruct({ ...PaginatedRequest.fields }),
+      input: Schema.Struct({ ...PaginatedRequest.fields }),
       output: historyRecordsPage,
       readOnly: true,
     },

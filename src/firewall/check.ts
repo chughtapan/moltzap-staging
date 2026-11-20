@@ -1,24 +1,23 @@
 /** @file Asks the decision provider whether one message breaks each applicable text rule, and concludes the check from its answers. */
 
 import { Data, Effect, Schema } from "effect";
-import type { Message } from "../communication/index.js";
+import type { Message } from "../messages.js";
 import type {
   Direction,
   FirewallRefusalReason,
   ProviderRequestSettings,
   TextRule,
 } from "./rules.js";
-import { exactStruct } from "../encoding.js";
 
 /**
  * One instruction of a message's guidance: a rule the provider could not
  * settle for an allowed incoming message, the rule's registered text and the
  * choice the provider leaned to, with its probability.
  */
-const uncertainInstructionSchema = exactStruct({
+const uncertainInstructionSchema = Schema.Struct({
   ruleId: Schema.NonEmptyTrimmedString,
   instruction: Schema.NonEmptyString,
-  uncertain: exactStruct({
+  uncertain: Schema.Struct({
     choice: Schema.NonEmptyTrimmedString,
     probability: Schema.Number.pipe(Schema.between(0, 1)),
   }),
@@ -177,7 +176,7 @@ const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
  * The guidance a host reads with one message: its check, and an instruction
  * for each rule the provider could not settle for the allowed incoming message.
  */
-export const LocalGuidance = exactStruct({
+export const LocalGuidance = Schema.Struct({
   checkId: checkIdSchema,
   instructions: Schema.Array(uncertainInstructionSchema),
 });

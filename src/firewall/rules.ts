@@ -2,8 +2,7 @@
 
 import { FileSystem } from "@effect/platform";
 import { Config, Data, Effect, Option, type Redacted, Schema } from "effect";
-import { exactStruct } from "../encoding.js";
-import { AgentCard } from "../identity.js";
+import { AgentCard } from "../messages.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
@@ -53,21 +52,21 @@ export class ProviderRequestSettings extends Schema.Class<ProviderRequestSetting
 /**
  * What one completed check concluded, as its caller saves it, without message
  * content: the decision applied to a message the agent sent (`allowed` or
- * `refused`) or received (`allowed` or `withheld`), and its peers. `time` is
+ * `refused`) or received (`allowed` or `withheld`), and its peer. `time` is
  * Unix milliseconds. `decidedBy[].advice` contains the rule's feedback for a
  * refused or withheld message, or its guidance for an allowed one.
  * `checkedRuleIds` lists the rules the check judged: a rule that does not
  * apply to the message's direction is not listed.
  */
-export const checkRecordSchema = exactStruct({
+export const checkRecordSchema = Schema.Struct({
   checkId: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),
   decision: Schema.Literal("allowed", "refused", "withheld"),
   time: Schema.NonNegativeInt,
-  peers: Schema.Array(AgentCard),
+  peer: AgentCard,
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
-    exactStruct({
+    Schema.Struct({
       ruleId: Schema.NonEmptyString,
       advice: Schema.optional(Schema.NonEmptyString),
     }),

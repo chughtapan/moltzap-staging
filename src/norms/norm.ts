@@ -5,7 +5,7 @@
  */
 
 import { Either, Schema, Struct } from "effect";
-import type { Message } from "../communication/index.js";
+import type { Message } from "../messages.js";
 import { TextRule } from "../firewall/index.js";
 
 const name = Schema.String.pipe(
@@ -173,18 +173,9 @@ export function initialNormsHaveRules(installed: InstalledNorms): boolean {
   return installed.some((norm) => norm.textRules.length > 0);
 }
 
-/**
- * Reads a message as one act. A norm governs text messages: the whole text is
- * one parenthesized act, with no other content part.
- */
+/** Reads a message as one act: the whole text is one parenthesized act. */
 export function readAct(message: Message): Either.Either<Act, NormProblem> {
-  if (message.content.some((part) => part.type !== "text")) {
-    return Either.left(structural("This contract governs text messages."));
-  }
-  const text = message.content
-    .map((part) => (part.type === "text" ? part.text : ""))
-    .join("\n");
-  return readSExpressions(text, false).pipe(
+  return readSExpressions(message.text, false).pipe(
     Either.mapLeft((error) => structural(error.detail)),
     Either.flatMap(([form, ...extra]) => {
       if (form?.kind !== "list" || extra.length !== 0) {

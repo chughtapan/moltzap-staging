@@ -17,14 +17,12 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { Message } from "../communication/index.js";
-import { encodeJson } from "../encoding.js";
 import {
   type CheckRecord,
   checkRecordSchema,
   type EarlierMessage,
 } from "../firewall/index.js";
-import { AgentCard, AgentName } from "../identity.js";
+import { AgentCard, AgentName, Message } from "../messages.js";
 /**
  * The rejected database URL remains private because PostgreSQL URLs can contain credentials.
  * Exported so dependent declarations can name the inferred Effect failure.
@@ -285,8 +283,8 @@ export const saveMessage = Effect.fn("saveMessage")(function* (
   received: Received,
 ) {
   const sql = yield* SqlClient.SqlClient;
-  const recipient = message.recipients[0].agentId;
-  const encoded = yield* encodeJson(Message, message);
+  const recipient = message.recipient.agentId;
+  const encoded = yield* Schema.encode(Schema.parseJson(Message))(message);
   yield* sql.withTransaction(
     Effect.gen(function* () {
       if (received.readable) {
