@@ -91,73 +91,87 @@ function checkMessage(
   message: Message,
   earlier: readonly EarlierMessage[],
   now: number,
-): Effect.Effect.Success<ReturnType<StructureCheck>> {
+): Result {
   const view = projectProtocol(installed, earlier);
   const held = readHeldAct(view, installed, message);
   return Either.match(
     Either.flatMap(held, (read) => fitAct(view, read, message, now)),
     {
-      onLeft: (problem) => {
-        const selected = Either.getOrUndefined(held)?.norm;
-        const reply = refusalReply(view.instance?.norm)?.(problem.detail);
-        return {
-          kind: "refused",
-          reason: problem.reason,
-          ruleId: `${view.instance?.norm.name ?? "norm"}-${problem.stage}`,
-          feedback: problem.detail,
-          detail: {
-            ...(selected === undefined
-              ? {}
-              : { norm: selected.name, digest: selected.digest }),
-            stage: problem.stage,
-            explanation: problem.detail,
-            ...(problem.field === undefined ? {} : { field: problem.field }),
-          },
-          ...(reply === undefined ? {} : { reply }),
-        };
-      },
-      onRight: ({ act, norm, form }) => {
-        const named = { norm: norm.name, digest: norm.digest };
-        const replyTo = refusalReply(norm);
-        return {
-          kind: "passed",
-          textRules: norm.textRules
-            .filter((rule) => rule.act === undefined || rule.act === act.name)
-            .map(
-              (rule) =>
-                new TextRule({ ...Struct.omit(rule, "act"), applies: "both" }),
-            ),
-          protocol: {
-            ...named,
-            act: act.name,
-            description: norm.description,
-            state: [...(view.instance?.facts.keys() ?? [])],
-            form: form.fields,
-          },
-          detail: { ...named, act: act.name, stage: "semantic" },
-          ...(replyTo === undefined ? {} : { replyTo }),
-        };
-      },
+      onLeft: (problem) =>
+        refusal(view, problem, Either.getOrUndefined(held)?.norm),
+      onRight: (fitted) => pass(view, fitted),
     },
   );
 }
 
+type Result = Effect.Effect.Success<ReturnType<StructureCheck>>;
+
+/**
+ * The refusal of a message with `problem`, under a rule named for the norm of
+ * the instance in progress and the stage that failed. Its detail names
+ * `selected`, the norm the message was read as an act of, when there is one.
+ */
+function refusal(
+  view: ProtocolView,
+  problem: NormProblem,
+  selected?: Norm,
+): Result {
+  const reply = refusalReply(view.instance?.norm)?.(problem.detail);
+  return {
+    kind: "refused",
+    reason: problem.reason,
+    ruleId: `${view.instance?.norm.name ?? "norm"}-${problem.stage}`,
+    feedback: problem.detail,
+    detail: {
+      ...(selected === undefined
+        ? {}
+        : { norm: selected.name, digest: selected.digest }),
+      stage: problem.stage,
+      explanation: problem.detail,
+      ...(problem.field === undefined ? {} : { field: problem.field }),
+    },
+    ...(reply === undefined ? {} : { reply }),
+  };
+}
+
+/**
+ * The pass of an act that fits: the English rules its norm gives the act and
+ * every act, and what the decision provider reads of the instance.
+ */
+function pass(view: ProtocolView, { act, norm, form }: FittedAct): Result {
+  const named = { norm: norm.name, digest: norm.digest };
+  const replyTo = refusalReply(norm);
+  return {
+    kind: "passed",
+    textRules: norm.textRules
+      .filter((rule) => rule.act === undefined || rule.act === act.name)
+      .map(
+        (rule) =>
+          new TextRule({ ...Struct.omit(rule, "act"), applies: "both" }),
+      ),
+    protocol: {
+      ...named,
+      act: act.name,
+      description: norm.description,
+      state: [...(view.instance?.facts.keys() ?? [])],
+      form: form.fields,
+    },
+    detail: { ...named, act: act.name, stage: "semantic" },
+    ...(replyTo === undefined ? {} : { replyTo }),
+  };
+}
+
 /**
  * Phrases the act that tells the sender of a withheld message why, when
- * `norm` declares one in `:on-refusal` with a `reason` field.
+ * `norm` declares one in `:on-refusal`. The compiler admits only a refusal
+ * act with a `reason` field.
  */
 function refusalReply(norm?: Norm) {
   const act = norm?.onRefusal;
-  const form = norm?.forms.find((declared) => declared.act === act);
-  if (
-    norm === undefined ||
-    act === undefined ||
-    form?.fields.every((field) => field.name !== "reason") !== false
-  ) {
-    return undefined;
-  }
-  return (reason: string) =>
-    formatAct({ name: act, norm: norm.name, fields: { reason } });
+  return norm === undefined || act === undefined
+    ? undefined
+    : (reason: string) =>
+        formatAct({ name: act, norm: norm.name, fields: { reason } });
 }
 
 /**
@@ -265,10 +279,11 @@ function checkProtocol(
   return Either.gen(function* () {
     yield* checkReference(view, form, message, invalid);
     const instance = view.instance;
-    if (instance === undefined || form.starts) {
-      return instance === undefined && form.starts
-        ? undefined
-        : yield* Either.left(invalid);
+    if (instance === undefined) {
+      return yield* form.starts ? Either.void : Either.left(invalid);
+    }
+    if (form.starts) {
+      return yield* Either.left(invalid);
     }
     const author = message.author.agentId;
     const role = roleOf(instance, author);

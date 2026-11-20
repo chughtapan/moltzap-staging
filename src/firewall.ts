@@ -237,7 +237,7 @@ interface Checked {
 }
 
 /** What a refusal is built from: the check's conclusion and the text that answers a withheld message. */
-interface Refused extends Pick<CheckRecord, "decidedBy" | "checkedRuleIds"> {
+interface Refusal extends Pick<CheckRecord, "decidedBy" | "checkedRuleIds"> {
   readonly reason: FirewallRefusalReason;
   readonly rule?: string;
   readonly feedback: readonly string[];
@@ -304,20 +304,7 @@ function check(
     );
     const checked = { message, direction, now: yield* Clock.currentTimeMillis };
     if (structure?.kind === "refused") {
-      const reply =
-        structure.reply ??
-        (structure.reason === "rule-violation" && installed.notice !== undefined
-          ? `${installed.notice} ${structure.feedback}`
-          : undefined);
-      return refused(checked, {
-        reason: structure.reason,
-        rule: structure.ruleId,
-        decidedBy: [{ ruleId: structure.ruleId }],
-        checkedRuleIds: [structure.ruleId],
-        feedback: [structure.feedback],
-        ...(structure.detail === undefined ? {} : { detail: structure.detail }),
-        ...(reply === undefined ? {} : { reply }),
-      });
+      return refusedByStructure(checked, structure, installed.notice);
     }
     const rules = [
       ...installed.source.policy.rules,
@@ -345,6 +332,38 @@ function check(
   });
 }
 
+/** What a structure check says of a message it refuses. */
+type StructureRefusal = Extract<
+  Effect.Effect.Success<ReturnType<StructureCheck>>,
+  { readonly kind: "refused" }
+>;
+
+/**
+ * The refusal a structure check decided, under that check's rule. A withheld
+ * message is answered with the check's own reply, else, when it broke a rule,
+ * with the notice and the check's explanation.
+ */
+function refusedByStructure(
+  checked: Checked,
+  structure: StructureRefusal,
+  notice?: string,
+): CheckResult {
+  const reply =
+    structure.reply ??
+    (structure.reason === "rule-violation" && notice !== undefined
+      ? `${notice} ${structure.feedback}`
+      : undefined);
+  return refused(checked, {
+    reason: structure.reason,
+    rule: structure.ruleId,
+    decidedBy: [{ ruleId: structure.ruleId }],
+    checkedRuleIds: [structure.ruleId],
+    feedback: [structure.feedback],
+    ...(structure.detail === undefined ? {} : { detail: structure.detail }),
+    ...(reply === undefined ? {} : { reply }),
+  });
+}
+
 /** One rule's answer as the check reads it. */
 type Answer = Effect.Effect.Success<ReturnType<typeof askProvider>>[number];
 
@@ -364,22 +383,11 @@ function conclude(
     readonly notice?: string;
   },
 ): CheckResult {
-  const { direction } = checked;
-  const { answers = [], checkedRuleIds, detail } = judged;
-  const violated = answers.filter((answer) => answer.violates);
-  const unsure = answers.filter((answer) => answer.unsure);
-  const held = judged.gap || (direction === "outgoing" && unsure.length !== 0);
-  if (judged.answers !== undefined && violated.length === 0 && !held) {
-    return allowed(checked, unsure, checkedRuleIds);
+  const { checkedRuleIds, detail } = judged;
+  const { reason, deciding } = verdict(checked.direction, judged);
+  if (reason === "eligible") {
+    return allowed(checked, deciding, checkedRuleIds);
   }
-  const reason = refusalReason(
-    violated.length !== 0,
-    judged.answers !== undefined,
-  );
-  const deciding =
-    reason === "unresolved-evidence" && direction === "outgoing"
-      ? unsure
-      : violated;
   const decidedBy = deciding.map(({ rule }) => ({
     ruleId: rule.id,
     advice: rule.feedback ?? rule.guidance,
@@ -388,7 +396,7 @@ function conclude(
   const reply =
     judged.replyTo?.(
       feedback.join(" ") || `The semantic policy check returned ${reason}.`,
-    ) ?? textReply(violated, judged.notice);
+    ) ?? textReply(reason === "rule-violation" ? deciding : [], judged.notice);
   return refused(checked, {
     reason,
     decidedBy,
@@ -397,6 +405,39 @@ function conclude(
     ...(detail === undefined ? {} : { detail }),
     ...(reply === undefined ? {} : { reply }),
   });
+}
+
+/**
+ * What the answers decide and which of them decided it. No answers make the
+ * check unavailable. A violation refuses. An unsure answer holds an outgoing
+ * draft, and a history cut at the byte limit holds either way. Otherwise the
+ * message is eligible, and the unsure answers give an incoming one its
+ * guidance.
+ */
+function verdict(
+  direction: Direction,
+  {
+    answers,
+    gap,
+  }: { readonly answers?: readonly Answer[]; readonly gap: boolean },
+): {
+  readonly reason: CheckRecord["reason"];
+  readonly deciding: readonly Answer[];
+} {
+  if (answers === undefined) {
+    return { reason: "check-unavailable", deciding: [] };
+  }
+  const violated = answers.filter((answer) => answer.violates);
+  if (violated.length !== 0) {
+    return { reason: "rule-violation", deciding: violated };
+  }
+  const unsure = answers.filter((answer) => answer.unsure);
+  if (direction === "outgoing" && unsure.length !== 0) {
+    return { reason: "unresolved-evidence", deciding: unsure };
+  }
+  return gap
+    ? { reason: "unresolved-evidence", deciding: [] }
+    : { reason: "eligible", deciding: unsure };
 }
 
 /**
@@ -415,17 +456,6 @@ function textReply(violated: readonly Answer[], notice?: string) {
     return replies.join("\n");
   }
   return violated.length === 0 ? undefined : notice;
-}
-
-/** Why a check that does not allow its message refuses it. */
-function refusalReason(
-  violated: boolean,
-  answered: boolean,
-): FirewallRefusalReason {
-  if (!answered) {
-    return "check-unavailable";
-  }
-  return violated ? "rule-violation" : "unresolved-evidence";
 }
 
 /**
@@ -472,7 +502,7 @@ function allowed(
  */
 function refused(
   { message, direction, now }: Checked,
-  { reply, rule, feedback, detail, ...concluded }: Refused,
+  { reply, rule, feedback, detail, ...concluded }: Refusal,
 ): CheckResult {
   const checkId = mintCheckId();
   return {
