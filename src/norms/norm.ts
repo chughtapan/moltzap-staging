@@ -289,7 +289,7 @@ export function readSExpressions(
 }
 
 /** The text of one expression, with strings quoted as JSON, which `readSExpressions` reads back. */
-export function writeSExpression(value: SExpression): string {
+function writeSExpression(value: SExpression): string {
   switch (value.kind) {
     case "symbol":
       return value.value;
