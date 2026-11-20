@@ -76,6 +76,8 @@ import {
 import { AgentId, AgentName } from "./identity.js";
 import { packageVersion } from "./version.js";
 
+// safer-arch-ignore no-fat-orchestrator: The daemon's one serving file registers every tool.
+
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
   port: number,
@@ -193,20 +195,30 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
     const response = yield* HttpApp.fromWebHandler((mcpRequest) =>
       requestRuntime.run(runtime, () => mcp.fetch(mcpRequest, { authInfo })),
     ).pipe(Effect.interruptible, Effect.orDie);
-    const untilExpiry = Stream.interruptAfter(
-      Math.max(0, (authInfo.expiresAt ?? 0) * 1000 - Date.now()),
-    );
-    return yield* Match.value(response.body).pipe(
-      Match.tag("Stream", (body) =>
-        HttpServerResponse.setBody(
-          response,
-          HttpBody.stream(untilExpiry(body.stream), body.contentType),
-        ),
+    return yield* limitResponseStream(
+      response,
+      Stream.interruptAfter(
+        Math.max(0, (authInfo.expiresAt ?? 0) * 1000 - Date.now()),
       ),
-      Match.orElse(() => response),
     );
   }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 });
+
+/** Ends a streamed response body when `limit` says so. Other bodies are returned as they are. */
+function limitResponseStream(
+  response: HttpServerResponse.HttpServerResponse,
+  limit: <A, E>(body: Stream.Stream<A, E>) => Stream.Stream<A, E>,
+) {
+  return Match.value(response.body).pipe(
+    Match.tag("Stream", (body) =>
+      HttpServerResponse.setBody(
+        response,
+        HttpBody.stream(limit(body.stream), body.contentType),
+      ),
+    ),
+    Match.orElse(() => response),
+  );
+}
 
 /** The agent of the owner an admitted request's token names. */
 function admittedAgent(authInfo?: AuthInfo) {
@@ -259,8 +271,18 @@ const historyRecordsPage = Schema.Struct({
   ...Page.fields,
 });
 
+/**
+ * The longest a receive_messages call may wait. It stays under the time after
+ * which hosts and proxies give up on a tool call.
+ */
+const MAXIMUM_WAIT_SECONDS = 50;
+
 /** A send that ends unexpectedly may have been sent. */
 const sendOutcomeUnknown = new SendError({ reason: "outcome-unknown" });
+
+/** How a message states one act of a norm, as every reader of the norms needs it. */
+const ACT_SYNTAX =
+  "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
 
 /** The MCP server for one request, with the inbox event and the tools of `agent`'s role. */
 function requestServer(
@@ -274,11 +296,6 @@ function requestServer(
   );
   const { card } = agent;
   const isServerAgent = agent.agentKey === daemon.serverAgent.agentKey;
-  /**
-   * The longest a receive_messages call may wait. It stays under the time
-   * after which hosts and proxies give up on a tool call.
-   */
-  const maximumWaitSeconds = 50;
   register(
     mcp,
     "status",
@@ -302,9 +319,9 @@ function requestServer(
         wait: Schema.optional(
           Schema.Number.pipe(
             Schema.positive(),
-            Schema.lessThanOrEqualTo(maximumWaitSeconds),
+            Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
           ).annotations({
-            description: `a number of seconds, at most ${String(maximumWaitSeconds)}, to wait for an entry when none follows the cursor. Call receive_messages again with nextCursor to keep waiting. Without wait the call returns at once.`,
+            description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for an entry when none follows the cursor. Call receive_messages again with nextCursor to keep waiting. Without wait the call returns at once.`,
           }),
         ),
       }),
@@ -330,7 +347,7 @@ function requestServer(
           isServerAgent
             ? "List the installed norms and their complete documents: the roles, when each act may be sent and the fields it takes."
             : "List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them."
-        } A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.`,
+        } ${ACT_SYNTAX}`,
         input: noArguments,
         output: exactStruct({
           norms: Schema.Array(
@@ -577,6 +594,12 @@ function standard<A, I>(
   };
 }
 
+/** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
+const INBOX_CHECK_MILLISECONDS = 1000;
+
+/** The longest a webhook subscription lives without a refresh. */
+const WEBHOOK_TTL_MILLISECONDS = 30 * 60_000;
+
 /** The name of the event whose occurrences are an agent's inbox entries, in read order. */
 const INBOX_EVENT = "org.social-harness/inbox.pending";
 
@@ -597,10 +620,8 @@ function makeInboxEvents() {
         inRequest(
           Effect.map(admittedAgent(http?.authInfo), ({ agentKey }) => agentKey),
         ),
-      /** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
-      checkIntervalMs: 1000,
-      /** The longest a webhook subscription lives without a refresh. */
-      webhookTtlMs: 30 * 60_000,
+      checkIntervalMs: INBOX_CHECK_MILLISECONDS,
+      webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
       webhookSender: nodeWebhookSender(),
     });
     events.registerEvent(INBOX_EVENT, {
