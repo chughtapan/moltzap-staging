@@ -11,6 +11,7 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
+import type { DecisionProvider, DecisionRequest } from "../firewall/index.js";
 import { digest } from "../__tests__/agents.js";
 import {
   composedPolicy,
@@ -21,11 +22,6 @@ import {
 import { openTestDatabase } from "../__tests__/test.js";
 import { MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
-import {
-  type DecisionProvider,
-  type DecisionRequest,
-  FirewallPolicyError,
-} from "../firewall/index.js";
 import { AgentName } from "../identity.js";
 import {
   contractOf,
@@ -200,9 +196,9 @@ it("stores a withheld message for its sender, whose send succeeds, and keeps it 
       policy: composedPolicy(violation),
     });
     yield* subject.sendFrom({ text: "Private peer content" });
-    expect((yield* runtime.firewall.readDecisions({})).decisions).toMatchObject(
-      [{ reason: "rule-violation", decision: "withheld" }],
-    );
+    expect(yield* runtime.decisions).toMatchObject([
+      { reason: "rule-violation", decision: "withheld" },
+    ]);
     expect(yield* runtime.inbox).toEqual([]);
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
@@ -221,8 +217,8 @@ it("fails a client's send and stores nothing when the check of its message could
     });
     expect(
       yield* subject.sendFrom({ text: "Hello" }).pipe(Effect.flip),
-    ).toMatchObject({ _tag: "SendError", reason: "network-unavailable" });
-    expect((yield* runtime.firewall.readDecisions({})).decisions).toEqual([]);
+    ).toMatchObject({ _tag: "FirewallRefusal", refusal: "check-unavailable" });
+    expect(yield* runtime.decisions).toEqual([]);
     expect(yield* subject.historyOf()).toEqual([]);
   }));
 
@@ -231,7 +227,7 @@ it("answers a message that broke a rule with the configured reply when no rule g
     const subject = yield* makeHarnessFixture;
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
-      withheldReply,
+      notice: withheldReply,
       policy: composedPolicy(incomingViolation),
     });
     yield* subject.sendFrom({ text: "Private peer content" });
@@ -260,20 +256,6 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
     expect(yield* runtime.inbox).toEqual([]);
   }));
 
-it("sends no reply that its own message policy refuses, and saves that refusal", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({
-      policy: composedPolicy(violation, "reply"),
-    });
-    yield* subject.sendFrom({ text: "Private peer content" });
-    const { decisions } = yield* runtime.firewall.readDecisions({});
-    expect(
-      decisions.map(({ decision }) => decision).sort(compareAscii),
-    ).toEqual(["refused", "withheld"]);
-    expect(yield* subject.sent).toEqual([]);
-  }));
-
 it("stores nothing of a message whose decision cannot be saved, fails its send and keeps serving", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
@@ -284,15 +266,10 @@ it("stores nothing of a message whose decision cannot be saved, fails its send a
       }),
       decorateFirewall: (firewall) => ({
         ...firewall,
-        checkIncoming: (incoming, evidence) =>
-          Effect.map(firewall.checkIncoming(incoming, evidence), (decision) =>
-            fails
-              ? {
-                  ...decision,
-                  save: new FirewallPolicyError({
-                    reason: "persistence-failed",
-                  }),
-                }
+        checkIncoming: (incoming, earlier) =>
+          Effect.map(firewall.checkIncoming(incoming, earlier), (decision) =>
+            fails && decision.record !== undefined
+              ? { ...decision, record: { ...decision.record, time: -1 } }
               : decision,
           ),
       }),
@@ -301,14 +278,12 @@ it("stores nothing of a message whose decision cannot be saved, fails its send a
       .sendFrom({ text: "Publish atomically" })
       .pipe(Effect.exit);
     expect(Exit.isFailure(sent) && Cause.isDie(sent.cause)).toBe(true);
-    expect((yield* runtime.firewall.readDecisions({})).decisions).toEqual([]);
+    expect(yield* runtime.decisions).toEqual([]);
     expect(yield* subject.historyOf()).toEqual([]);
     fails = false;
     yield* subject.sendFrom({ text: "Publish atomically" });
     expect(yield* runtime.inbox).toHaveLength(1);
-    expect((yield* runtime.firewall.readDecisions({})).decisions).toHaveLength(
-      1,
-    );
+    expect(yield* runtime.decisions).toHaveLength(1);
   }));
 
 /** `open` starts an instance and `close`, from the other agent, ends it. */
@@ -336,7 +311,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     const subject = yield* makeHarnessFixture;
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
-      withheldReply,
+      notice: withheldReply,
       contracts: [exchange],
       policy: composedPolicy({
         decide: (request) => Effect.succeed(decisionResponse(request)),
@@ -346,7 +321,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     const outOfTurn = yield* subject.sendFrom({
       text: "(close :ontology exchange)",
     });
-    const { decisions } = yield* runtime.firewall.readDecisions({});
+    const decisions = yield* runtime.decisions;
     expect(
       decisions
         .map(({ direction, decision }) => `${direction} ${decision}`)
@@ -357,13 +332,21 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
       "outgoing allowed",
       "outgoing allowed",
     ]);
-    expect(yield* subject.sent).toMatchObject(
+    const replies = yield* subject.sent;
+    expect(replies).toMatchObject(
       [plain, outOfTurn].map((withheld) => ({
         recipients: [subject.bob],
         replyToMsgId: withheld.id,
-        content: [{ type: "text", text: withheldReply }],
       })),
     );
+    expect(
+      replies.map(({ content }) =>
+        content.every(
+          (part) =>
+            part.type === "text" && part.text.startsWith(`${withheldReply} `),
+        ),
+      ),
+    ).toEqual([true, true]);
     yield* subject.sendFrom({ text: "(open :ontology exchange)" });
     expect(yield* runtime.inbox).toHaveLength(1);
   }));

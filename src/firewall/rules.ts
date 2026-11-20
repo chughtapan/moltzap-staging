@@ -1,4 +1,4 @@
-/** @file Text rules, the message-policy file and the schemas of decisions. */
+/** @file Text rules, the message-policy file and the record of a check. */
 
 import { FileSystem } from "@effect/platform";
 import { Config, Data, Effect, Option, type Redacted, Schema } from "effect";
@@ -50,21 +50,21 @@ export class ProviderRequestSettings extends Schema.Class<ProviderRequestSetting
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
-/** Inclusive Unix milliseconds permit polling across checks completed out of start order. */
-export const firewallDecisionsRequestSchema = exactStruct({
-  since: Schema.optional(Schema.NonNegativeInt),
-});
-
 /**
- * Contains one row per peer without message content.
- * `decidedBy[].advice` contains the
- * rule's feedback for a refused or withheld message, or its guidance for an
- * allowed one. `checkedRuleIds` lists the rules the check judged: a
- * rule that does not apply to the message's direction is not listed.
+ * What one completed check concluded, as its caller saves it, without message
+ * content: the decision applied to a message the agent sent (`allowed` or
+ * `refused`) or received (`allowed` or `withheld`), and its peers. `time` is
+ * Unix milliseconds. `decidedBy[].advice` contains the rule's feedback for a
+ * refused or withheld message, or its guidance for an allowed one.
+ * `checkedRuleIds` lists the rules the check judged: a rule that does not
+ * apply to the message's direction is not listed.
  */
-export const firewallDecisionSummarySchema = exactStruct({
+export const checkRecordSchema = exactStruct({
+  checkId: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),
-  peer: AgentCard,
+  decision: Schema.Literal("allowed", "refused", "withheld"),
+  time: Schema.NonNegativeInt,
+  peers: Schema.Array(AgentCard),
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
     exactStruct({
@@ -73,41 +73,9 @@ export const firewallDecisionSummarySchema = exactStruct({
     }),
   ),
   checkedRuleIds: Schema.Array(Schema.NonEmptyString),
-  activeRevision: Schema.NonEmptyString,
 });
-
-/**
- * Reports each saved check with the decision the daemon applied. A sent
- * message is `allowed` or `refused`; a received one is `allowed` or `withheld`.
- */
-export const firewallDecisionsSchema = exactStruct({
-  decisions: Schema.Array(
-    exactStruct({
-      ...firewallDecisionSummarySchema.fields,
-      decision: Schema.Literal("allowed", "refused", "withheld"),
-      checkId: Schema.NonEmptyString,
-      time: Schema.NonNegativeInt,
-    }),
-  ),
-});
-
-const policyReasonText: Readonly<
-  Record<FirewallPolicyError["reason"], string>
-> = {
-  "persistence-failed": "the decisions could not be stored",
-};
-
-/** The message policy could not be installed, or its decisions could not be stored or read. */
-export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>()(
-  "FirewallPolicyError",
-  {
-    reason: Schema.Literal("persistence-failed"),
-  },
-) {
-  override get message(): string {
-    return policyReasonText[this.reason];
-  }
-}
+/** @useDeclaredType */
+export type CheckRecord = typeof checkRecordSchema.Type;
 
 /** A message-policy file or the decision provider's key that cannot be loaded, and why. */
 class MessagePolicyConfigurationError extends Data.TaggedError(

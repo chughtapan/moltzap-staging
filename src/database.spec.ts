@@ -24,14 +24,9 @@ const rows: Readonly<
   Record<string, Readonly<Record<string, string | number>>>
 > = {
   firewall_checks: {
-    check_id: "check",
     message_key: "author/message",
-    direction: "outgoing",
-    message: "{}",
-    input: "{}",
-    result: "{}",
     decided_at: 0,
-    decision: "allowed",
+    record: "{}",
   },
   message_log: {
     conversation_id: "conversation",

@@ -1,12 +1,13 @@
 /** @file Fixtures of one daemon's agents: the server agent behind real policy over stored messages in a test database, with the clients that message it. */
 
-import { Context, Effect, Layer, PubSub, Schema } from "effect";
+import { Effect, PubSub, Schema } from "effect";
 import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../firewall/index.js";
+import type { AgentCard } from "../identity.js";
 import { Message } from "../communication/index.js";
 import {
   AgentAddress,
@@ -16,16 +17,18 @@ import {
   type HostedAgent,
   readInboxEntries,
   receive,
-  send,
   type SendRequest,
 } from "../daemon/agent.js";
-import { Firewall } from "../firewall/service.js";
-import { type AgentCard, Identity } from "../identity.js";
+import { readDecisions } from "../daemon/decisions.js";
+import {
+  readConversation,
+  sendToAddress,
+  sendToServerAgent,
+} from "../daemon/server.js";
+import { type Firewall, makeFirewall } from "../firewall/service.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";
 import { openTestDatabase } from "./test.js";
-
-type Policy = Context.Tag.Service<typeof Firewall>;
 
 /**
  * Deterministic judgments still exercise the real question construction. Every
@@ -105,35 +108,26 @@ export function composedPolicy(
   };
 }
 
-/**
- * What a daemon shares when `serverAgent` is its server agent behind
- * `firewall`, with the history limit `runDaemon` defaults to and no norms
- * unless `settings` say otherwise.
- */
-export const testDaemon = (
-  serverAgent: HostedAgent,
-  firewall: Policy,
-  settings: Partial<Daemon> = {},
-) =>
+/** What a daemon shares when `serverAgent` is its server agent behind `firewall`, with no norms. */
+export const testDaemon = (serverAgent: HostedAgent, firewall: Firewall) =>
   Effect.map(
     PubSub.unbounded<string>(),
     (readable): Daemon => ({
       serverAgent,
       firewall,
-      historyLimit: 256,
       turns: new Map(),
       readable,
-      ...settings,
     }),
   );
 
-/** How Alice's daemon opens. */
-interface OpenOptions
-  extends Partial<Pick<Daemon, "historyLimit" | "withheldReply">> {
+/** How Alice's daemon opens: the history limit `main.ts` defaults to unless given, and no notice unless given. */
+interface OpenOptions {
+  readonly historyLimit?: number;
+  readonly notice?: string;
   readonly policy?: TestPolicy;
   /** The contracts the agent starts with. */
   readonly contracts?: InstalledNorms["contracts"];
-  readonly decorateFirewall?: (firewall: Policy) => Policy;
+  readonly decorateFirewall?: (firewall: Firewall) => Firewall;
 }
 
 /**
@@ -151,35 +145,46 @@ export const makeHarnessFixture = Effect.gen(function* () {
   let daemon: Daemon;
   /** The operations of `agent` on the open daemon. */
   const harnessOf = (agent: HostedAgent) => ({
-    send: (request: SendRequest) => database.run(send(daemon, agent, request)),
+    send: (request: SendRequest) =>
+      database.run(
+        agent === alice
+          ? sendToAddress(daemon, agent, request)
+          : sendToServerAgent(daemon, agent, request),
+      ),
     receive: (request: Parameters<typeof receive>[2]) =>
       database.run(receive(daemon, agent, request)),
     listConversations: () => database.run(conversationsOf(agent)),
-    readHistory: (request: Parameters<typeof historyRecords>[1]) =>
-      database.run(historyRecords(agent, request)),
+    readHistory: (request: Parameters<typeof readConversation>[1]) =>
+      database.run(
+        agent === alice
+          ? readConversation(agent, request)
+          : historyRecords(agent, alice, request.cursor),
+      ),
   });
   const open = Effect.fn(function* ({
     policy,
     contracts,
     decorateFirewall,
-    ...settings
+    historyLimit = 256,
+    notice,
   }: OpenOptions = {}) {
-    const firewall = yield* Layer.build(
-      Firewall.layer(
-        alice.agentKey,
-        policy?.source,
-        contracts && structureCheck({ contracts }),
-        policy?.provider,
-      ).pipe(Layer.provide(Layer.succeed(Identity, { me: alice.card }))),
-    ).pipe(Effect.map(Context.get(Firewall)));
-    daemon = yield* testDaemon(
-      alice,
-      decorateFirewall?.(firewall) ?? firewall,
-      settings,
-    );
+    const firewall = makeFirewall({
+      ...(policy ?? {}),
+      me: alice.card,
+      historyLimit,
+      ...(notice === undefined ? {} : { notice }),
+      ...(contracts === undefined
+        ? {}
+        : { structureCheck: structureCheck({ contracts }) }),
+    });
+    daemon = yield* testDaemon(alice, decorateFirewall?.(firewall) ?? firewall);
     return {
       harness: harnessOf(alice),
-      firewall,
+      /** The decisions Alice's firewall has made, as `read_firewall_decisions` gives them. */
+      decisions: Effect.map(
+        database.run(readDecisions(alice.agentKey, {})),
+        ({ decisions }) => decisions,
+      ),
       /** Every entry of Alice's inbox, in read order. */
       inbox: readInboxEntries(alice.agentKey, {
         limit: 1000,
