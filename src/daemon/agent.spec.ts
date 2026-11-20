@@ -3,6 +3,7 @@
 import { scopedLive as it } from "@effect/vitest";
 import { Deferred, Effect, FastCheck as fc, Fiber } from "effect";
 import { expect } from "vitest";
+import type { DecisionProvider } from "../firewall.js";
 import {
   callTool,
   decisionState,
@@ -10,30 +11,51 @@ import {
   inProcessDaemon,
   send,
 } from "../__tests__/daemon.js";
-import {
-  answering,
-  answersTo,
-  policy,
-  privacy,
-} from "../__tests__/firewall-fixtures.js";
+import { answersTo, type TestPolicy } from "../__tests__/firewall-fixtures.js";
 import { openTestDatabase } from "../__tests__/test.js";
 import { form, noFields, normOf } from "../norms/__tests__/norms-fixtures.js";
 import { getOrCreateOwnedAgent } from "./agent.js";
 
-/** A policy whose one rule every message a client sends breaks, and no message of the server agent. */
-const incomingViolation = (action?: "deny" | "reply") =>
-  policy([{ ...privacy, ...(action === undefined ? {} : { action }) }], {
-    decide: (request) =>
-      Effect.succeed(
-        answersTo(
-          request,
-          {},
-          decisionState(request.state).direction === "incoming"
-            ? "violation"
-            : "compliant",
-        ),
+/** The one rule of every policy here. */
+const privacy = {
+  id: "privacy",
+  applies: "both" as const,
+  text: "Protect the owner's private information.",
+  feedback: "Keep private information private.",
+};
+
+/** A message policy of the rule `privacy`, judged by `provider`. With `action`, the rule replies to or silently withholds what breaks it. */
+const policy = (
+  provider: DecisionProvider,
+  action?: "deny" | "reply",
+): TestPolicy => ({
+  provider,
+  source: {
+    policy: {
+      rules: [{ ...privacy, ...(action === undefined ? {} : { action }) }],
+      settings: { minimumProbability: 0.8, timeoutMilliseconds: 5_000 },
+    },
+  },
+});
+
+/** A provider that finds every message compliant. */
+const compliant: DecisionProvider = {
+  decide: (request) => Effect.succeed(answersTo(request)),
+};
+
+/** A provider that finds every message a client sends in violation, and no message of the server agent. */
+const incomingViolation: DecisionProvider = {
+  decide: (request) =>
+    Effect.succeed(
+      answersTo(
+        request,
+        {},
+        decisionState(request.state).direction === "incoming"
+          ? "violation"
+          : "compliant",
       ),
-  });
+    ),
+};
 
 /** A daemon with its server agent Alice and her client Bob signed in. */
 const aliceAndBob = (options?: Parameters<typeof inProcessDaemon>[0]) =>
@@ -75,7 +97,7 @@ it("checks the messages of one conversation in order while another conversation 
     const release = yield* Deferred.make<undefined>();
     const assessed: string[] = [];
     const { daemon, alice, bob } = yield* aliceAndBob({
-      policy: policy([privacy], {
+      policy: policy({
         decide: (request) =>
           Effect.gen(function* () {
             const { text } = decisionState(request.state).candidate;
@@ -139,7 +161,7 @@ it("reads the inbox a page of fifty at a time after a cursor, the same page agai
 it("stores a withheld message for its sender, whose send succeeds, and keeps it from the recipient's inbox and history", () =>
   Effect.gen(function* () {
     const { alice, bob } = yield* aliceAndBob({
-      policy: incomingViolation(),
+      policy: policy(incomingViolation),
     });
 
     yield* send(bob, { text: "Private peer content" });
@@ -156,9 +178,7 @@ it("stores a withheld message for its sender, whose send succeeds, and keeps it 
 it("fails a client's send and stores nothing when the check of its message could not run", () =>
   Effect.gen(function* () {
     const { alice, bob } = yield* aliceAndBob({
-      policy: policy([privacy], {
-        decide: () => Effect.succeed({ answers: {} }),
-      }),
+      policy: policy({ decide: () => Effect.succeed({ answers: {} }) }),
     });
 
     expect(yield* send(bob, { text: "Hello" }).pipe(Effect.flip)).toMatchObject(
@@ -180,7 +200,7 @@ it.each([
     Effect.gen(function* () {
       const { alice, bob } = yield* aliceAndBob({
         notice: "Not accepted.",
-        policy: incomingViolation(action),
+        policy: policy(incomingViolation, action),
       });
 
       const withheld = yield* send(bob, { text: "Private peer content" });
@@ -223,7 +243,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     const { alice, bob } = yield* aliceAndBob({
       notice: "Not accepted.",
       norms: [exchange],
-      policy: policy([privacy], answering()),
+      policy: policy(compliant),
     });
 
     const plain = yield* send(bob, { text: "Hello, can you help?" });
@@ -245,7 +265,7 @@ it("checks each act of a norm against the whole conversation, though the provide
     const { alice, bob } = yield* aliceAndBob({
       historyLimit: 1,
       norms: [exchange],
-      policy: policy([privacy], answering()),
+      policy: policy(compliant),
     });
 
     for (let instance = 0; instance < 3; instance += 1) {
