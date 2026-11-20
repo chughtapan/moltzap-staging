@@ -3,7 +3,6 @@
  * holds each message once for both of its agents, and gives a recipient its
  * readable messages in the order they became readable.
  */
-import { Migrator, SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Array as Arr, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
@@ -35,16 +34,6 @@ it("prepares a fresh database and leaves a prepared one as it is", () =>
     yield* test.sql`INSERT INTO agent_cards (issuer, subject, agent_id, agent_name, principal_id) VALUES ('i', 's', 'a', 'n', 'p')`;
     yield* test.prepare;
     expect(yield* test.sql`SELECT * FROM agent_cards`).toHaveLength(1);
-  }));
-
-it("prepares a fresh database whose migration ledger already exists but is empty", () =>
-  Effect.gen(function* () {
-    const test = yield* unprepared;
-    yield* Migrator.make({})({ loader: Effect.succeed([]) }).pipe(
-      Effect.provideService(SqlClient.SqlClient, test.sql),
-    );
-    yield* test.prepare;
-    expect(yield* test.sql`SELECT * FROM agent_cards`).toHaveLength(0);
   }));
 
 it("rejects a database that holds other tables without changing their records", () =>

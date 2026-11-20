@@ -52,13 +52,13 @@ import {
   wellFormedString,
 } from "../messages.js";
 import {
+  type AddressError,
   addressedAgent,
   addressOfAgent,
   AgentAddress,
   conversationsOf,
   type Daemon,
   getOrCreateOwnedAgent,
-  HistoryError,
   historyRecords,
   InboxEntry,
   PAGE_SIZE,
@@ -385,72 +385,92 @@ function requestServer(
   return mcp;
 }
 
+/** One of the two conversation tools as a role has it: what it says, what it takes and the peer its input names. */
+interface PeerTool<Input, Encoded> {
+  readonly description: string;
+  readonly input: Schema.Schema<Input, Encoded>;
+  readonly peer: (
+    input: Input,
+  ) => Effect.Effect<AgentCard, AddressError, SqlClient.SqlClient>;
+}
+
 /**
- * Sends the server agent's message to the client its address names. An
- * address that names no agent, or the server agent, refuses the send.
+ * Registers `send_message` and `read_conversation` for `agent`. The server
+ * agent names its peer by address; a client's peer is the server agent.
  */
-const sendToAddress = Effect.fn("sendToAddress")(function* (
-  daemon: Daemon,
-  agent: AgentCard,
-  { to, ...message }: SendRequest,
+function registerConversationTools<
+  Sent extends Omit<SendRequest, "to">,
+  SentEncoded,
+  Read extends { readonly cursor?: string },
+  ReadEncoded,
+>(
+  mcp: McpServer,
+  context: { readonly daemon: Daemon; readonly agent: AgentCard },
+  sending: PeerTool<Sent, SentEncoded>,
+  reading: PeerTool<Read, ReadEncoded>,
 ) {
-  const recipient = yield* addressedAgent(to);
-  if (recipient === undefined) {
-    return yield* new SendError({
-      reason: "unknown-agent",
-      detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
-    });
-  }
-  if (recipient.agentId === agent.agentId) {
-    return yield* new SendError({ reason: "membership-invalid" });
-  }
-  const id = yield* send(daemon, { ...message, author: agent, recipient });
-  return { id, address: to };
-});
+  const { daemon, agent } = context;
+  register(
+    mcp,
+    "send_message",
+    {
+      description: sending.description,
+      input: sending.input,
+      output: SendResult,
+      unexpected: sendOutcomeUnknown,
+    },
+    (input) =>
+      Effect.gen(function* () {
+        const recipient = yield* sending.peer(input);
+        const id = yield* send(daemon, {
+          text: input.text,
+          replyToMsgId: input.replyToMsgId,
+          author: agent,
+          recipient,
+        });
+        return { id, address: addressOfAgent(recipient.agentName) };
+      }),
+  );
+  register(
+    mcp,
+    "read_conversation",
+    {
+      description: reading.description,
+      input: reading.input,
+      output: historyRecordsPage,
+      readOnly: true,
+    },
+    (input) =>
+      Effect.flatMap(reading.peer(input), (other) =>
+        historyRecords(agent, other, input.cursor),
+      ),
+  );
+}
 
-/** A page of the server agent's conversation with the client an address names. */
-const readConversation = Effect.fn("readConversation")(function* (
-  agent: AgentCard,
-  request: { readonly address: AgentAddress; readonly cursor?: string },
-) {
-  const other = yield* addressedAgent(request.address);
-  if (other === undefined) {
-    return yield* new HistoryError({ reason: "unknown-agent" });
-  }
-  if (other.agentId === agent.agentId) {
-    return yield* new HistoryError({ reason: "invalid-address" });
-  }
-  return yield* historyRecords(agent, other, request.cursor);
-});
-
-/** Sends a client's message to the server agent. */
-const sendToServerAgent = Effect.fn("sendToServerAgent")(function* (
-  daemon: Daemon,
-  agent: AgentCard,
-  message: Omit<SendRequest, "to">,
-) {
-  const recipient = daemon.serverAgent;
-  const id = yield* send(daemon, { ...message, author: agent, recipient });
-  return { id, address: addressOfAgent(recipient.agentName) };
-});
-
-/** The tools only the server agent has: it addresses any client and reads its firewall's decisions. */
+/** The server agent's tools: it addresses any client and reads its firewall's decisions. */
 function registerServerAgentTools(
   mcp: McpServer,
   daemon: Daemon,
   agent: AgentCard,
 ) {
-  register(
+  registerConversationTools(
     mcp,
-    "send_message",
+    { daemon, agent },
     {
       description:
         "Send a message. Returns id, the message id, and address, the canonical conversation address. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
       input: SendRequest,
-      output: SendResult,
-      unexpected: sendOutcomeUnknown,
+      peer: ({ to }) => addressedAgent(agent, to),
     },
-    (request) => sendToAddress(daemon, agent, request),
+    {
+      description:
+        "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. A page holds the oldest records after cursor; pass nextCursor as cursor, with the same address, until it is absent.",
+      input: Schema.Struct({
+        address: AgentAddress,
+        ...PaginatedRequest.fields,
+      }),
+      peer: ({ address }) => addressedAgent(agent, address),
+    },
   );
   register(
     mcp,
@@ -463,21 +483,6 @@ function registerServerAgentTools(
       readOnly: true,
     },
     () => conversationsOf(agent),
-  );
-  register(
-    mcp,
-    "read_conversation",
-    {
-      description:
-        "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. A page holds the oldest records after cursor; pass nextCursor as cursor, with the same address, until it is absent.",
-      input: Schema.Struct({
-        address: AgentAddress,
-        ...PaginatedRequest.fields,
-      }),
-      output: historyRecordsPage,
-      readOnly: true,
-    },
-    (request) => readConversation(agent, request),
   );
   register(
     mcp,
@@ -496,10 +501,10 @@ function registerServerAgentTools(
 
 /** The tools of a client, which name no recipient and no conversation: both are the server agent. */
 function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
-  const { serverAgent } = daemon;
-  register(
+  const peer = () => Effect.succeed(daemon.serverAgent);
+  registerConversationTools(
     mcp,
-    "send_message",
+    { daemon, agent },
     {
       description:
         "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
@@ -509,22 +514,14 @@ function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
         }),
         replyToMsgId: Schema.optional(MsgId),
       }),
-      output: SendResult,
-      unexpected: sendOutcomeUnknown,
+      peer,
     },
-    (message) => sendToServerAgent(daemon, agent, message),
-  );
-  register(
-    mcp,
-    "read_conversation",
     {
       description:
         "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent.",
       input: Schema.Struct({ ...PaginatedRequest.fields }),
-      output: historyRecordsPage,
-      readOnly: true,
+      peer,
     },
-    ({ cursor }) => historyRecords(agent, serverAgent, cursor),
   );
 }
 
