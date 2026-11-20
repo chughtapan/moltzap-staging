@@ -54,7 +54,6 @@ address, member, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `network-unavailable`: the request did not reach the daemon.
 - `outcome-unknown`: the invocation may have taken effect. Interruption,
   defects or response loss after a request may have reached the daemon produce
   this outcome.
