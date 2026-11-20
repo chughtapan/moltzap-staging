@@ -1,10 +1,10 @@
 /** @file One daemon process delivers between its server agent and a client, in one order for both. */
 
-import { INBOX_EVENT } from "@social-harness/social-harness";
 import { Effect, Fiber, Stream } from "effect";
 import { expect, it } from "vitest";
 import {
   callTool,
+  INBOX_EVENT,
   inboxStream,
   joinParticipants,
   nextItem,

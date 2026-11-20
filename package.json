@@ -24,22 +24,6 @@
     "LICENSE",
     "NOTICE"
   ],
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./service": {
-      "types": "./dist/daemon/startup.d.ts",
-      "import": "./dist/daemon/startup.js"
-    },
-    "./test": {
-      "types": "./dist/test.d.ts",
-      "import": "./dist/test.js"
-    }
-  },
   "bin": {
     "sharnessd": "./dist/main.js"
   },

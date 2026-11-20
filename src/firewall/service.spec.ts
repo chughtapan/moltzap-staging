@@ -10,7 +10,7 @@ import {
 import { type Context, Duration, Effect, FastCheck as fc } from "effect";
 import { describe, expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import { openTestDatabase } from "../test.js";
+import { openTestDatabase } from "../__tests__/test.js";
 import {
   evidence,
   firewallLayer,

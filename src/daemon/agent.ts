@@ -35,15 +35,10 @@ import {
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
 import { type FirewallRefusal, LocalGuidance } from "../firewall/index.js";
-import { AgentCard, AgentName } from "../identity.js";
-import {
-  AGENT_ADDRESS_PREFIX,
-  AgentAddress,
-  type InboxEntry,
-} from "./values.js";
+import { AGENT_NAME_RULE, AgentCard, AgentName } from "../identity.js";
 
 /** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
-export interface Owner {
+interface Owner {
   readonly issuer: string;
   readonly subject: string;
 }
@@ -136,6 +131,44 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
   },
 );
 
+/** The scheme of an address naming one agent. */
+const AGENT_ADDRESS_PREFIX = "agent:";
+
+const isAgentName = Schema.is(AgentName);
+
+/** The agent name an `agent:` address names, or undefined when the value is not an agent address. */
+const parseAgentAddress = (value: string): AgentName | undefined => {
+  if (!value.startsWith(AGENT_ADDRESS_PREFIX)) {
+    return undefined;
+  }
+  const name = value.slice(AGENT_ADDRESS_PREFIX.length);
+  return isAgentName(name) ? name : undefined;
+};
+
+/** The address of one agent. */
+export const AgentAddress = Schema.String.pipe(
+  Schema.filter((value) => parseAgentAddress(value) !== undefined, {
+    description: `agent:<name>; a name is ${AGENT_NAME_RULE}`,
+  }),
+  Schema.brand("AgentAddress"),
+  Schema.annotations({ identifier: "AgentAddress" }),
+);
+/**
+ * A validated agent address.
+ * @useDeclaredType
+ */
+export type AgentAddress = typeof AgentAddress.Type;
+
+/** One message as the host reads it. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
+export const InboxEntry = Schema.Struct({
+  address: AgentAddress,
+  message: Message,
+  guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+});
+/** @useDeclaredType */
+export type InboxEntry = typeof InboxEntry.Type;
+
 /** What `send` takes: the recipient's address, the text and the message it answers. */
 export const SendRequest = exactStruct({
   to: Schema.propertySignature(AgentAddress).annotations({
@@ -199,12 +232,9 @@ const historyFailureText = {
 } as const;
 
 /** History failure never exposes private protocol or persistence diagnostics. */
-export class HistoryError extends Schema.TaggedError<HistoryError>()(
-  "HistoryError",
-  {
-    reason: Schema.Literal("invalid-address", "unknown-agent"),
-  },
-) {
+class HistoryError extends Schema.TaggedError<HistoryError>()("HistoryError", {
+  reason: Schema.Literal("invalid-address", "unknown-agent"),
+}) {
   override get message(): string {
     return `reading failed: ${historyFailureText[this.reason]}`;
   }
@@ -244,16 +274,17 @@ export const readInboxEntries = Effect.fn("readInboxEntries")(function* (
 });
 
 /** The address of every conversation of `self`, in order. */
-export function conversationsOf(self: HostedAgent) {
-  return listConversations(self.agentKey).pipe(
-    Effect.map((conversations) => ({
-      addresses: conversations
-        .map((members) => addressOf(members, self.card.agentId))
-        .sort(compareAscii),
-    })),
-    Effect.catchAll(historyFailure),
-  );
-}
+export const conversationsOf = Effect.fn("conversationsOf")(
+  (self: HostedAgent) =>
+    listConversations(self.agentKey).pipe(
+      Effect.map((conversations) => ({
+        addresses: conversations
+          .map((members) => addressOf(members, self.card.agentId))
+          .sort(compareAscii),
+      })),
+      Effect.catchAll(historyFailure),
+    ),
+);
 
 /** The inbox entry of a message its recipient may read, with the guidance stored for it. */
 function entryOf(held: HeldMessage) {

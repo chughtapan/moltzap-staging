@@ -23,15 +23,14 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import { FirewallRefusal } from "../firewall/index.js";
 import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
-} from "./__tests__/mcp-fixtures.js";
-import { HistoryError, SendError } from "./agent.js";
+} from "../__tests__/mcp-fixtures.js";
+import { FirewallRefusal } from "../firewall/index.js";
+import { AgentAddress, SendError } from "./agent.js";
 import { serveMcp } from "./server.js";
-import { AgentAddress } from "./values.js";
 
 const response = Schema.parseJson(
   Schema.Struct({
@@ -356,7 +355,9 @@ it("answers a failed call with the failure's message and its fields", () =>
     ).toEqual({
       isError: true,
       content: [
-        { text: new HistoryError({ reason: "unknown-agent" }).message },
+        {
+          text: "reading failed: an agent the address names is not a known agent",
+        },
       ],
       structuredContent: { reason: "unknown-agent" },
     });

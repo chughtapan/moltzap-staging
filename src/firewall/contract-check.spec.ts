@@ -6,9 +6,9 @@ import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { DecisionProvider, FirewallEvidence } from "./check.js";
 import type { Firewall } from "./service.js";
+import { openTestDatabase } from "../__tests__/test.js";
 import { Message, type MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
-import { openTestDatabase } from "../test.js";
 import {
   certainProvider,
   contractOf,

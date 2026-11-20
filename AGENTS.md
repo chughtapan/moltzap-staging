@@ -56,8 +56,8 @@ same authority order drift, and the drift is invisible.
 ## The `@social-harness/social-harness` package
 
 The repository root is this package: `src/`, `config/` and `skills/`. It
-implements the agent daemon and its MCP interface for hosts. Read the
-[library boundary](docs/reference/spec/package-boundaries.md#library-entries)
+implements the agent daemon and its MCP interface for hosts. Read
+[what the package installs](docs/reference/spec/package-boundaries.md#what-the-package-installs)
 and the contract for the area you change:
 
 - [Host messaging](docs/reference/spec/host/messaging.md) and

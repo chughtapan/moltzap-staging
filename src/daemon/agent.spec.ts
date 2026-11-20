@@ -12,6 +12,13 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import { digest } from "../__tests__/agents.js";
+import {
+  composedPolicy,
+  decisionResponse,
+  decisionState,
+  makeHarnessFixture,
+} from "../__tests__/service-fixtures.js";
+import { openTestDatabase } from "../__tests__/test.js";
 import { MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
@@ -25,15 +32,7 @@ import {
   FirewallPolicyError,
 } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
-import { openTestDatabase } from "../test.js";
-import {
-  composedPolicy,
-  decisionResponse,
-  decisionState,
-  makeHarnessFixture,
-} from "./__tests__/service-fixtures.js";
-import { getOrCreateOwnedAgent } from "./agent.js";
-import { AgentAddress } from "./values.js";
+import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
 
 const bobAddress = AgentAddress.make("agent:bob");
 const carolAddress = AgentAddress.make("agent:carol");
