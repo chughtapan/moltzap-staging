@@ -19,7 +19,7 @@ import {
   processTrace,
   SERVER_AGENT_NAME,
   SERVER_AGENT_OWNER,
-  sharedDaemon,
+  sharedServer,
   stopProcess,
 } from "./daemon-fixture.js";
 
@@ -42,7 +42,7 @@ const runProcess = Effect.fn("runProcess")(function* (
   return { stdout, stderr, exitCode };
 }, Effect.scoped);
 
-/** Each trace starts one daemon, and some of them start it more than once. */
+/** Each trace starts one server, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 180_000;
 
 /**
@@ -122,16 +122,16 @@ it(
   "refuses each settings file it cannot serve and an occupied port, saying which, and starts with a policy and norms named relative to the settings file",
   processTrace(
     Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
+      const sharnessd = yield* sharedServer();
       const fs = yield* FileSystem.FileSystem;
       const write = (path: string, content: string) =>
         fs
-          .makeDirectory(dirname(join(daemon.directory, path)), {
+          .makeDirectory(dirname(join(sharnessd.directory, path)), {
             recursive: true,
           })
           .pipe(
             Effect.zipRight(
-              fs.writeFileString(join(daemon.directory, path), content),
+              fs.writeFileString(join(sharnessd.directory, path), content),
             ),
             Effect.as(path),
           );
@@ -166,29 +166,29 @@ it(
         ],
       ];
       const settings = yield* fs.readFileString(
-        join(daemon.directory, "settings.json"),
+        join(sharnessd.directory, "settings.json"),
       );
       for (const [changes, said] of refusals) {
         yield* fs.writeFileString(
-          join(daemon.directory, "settings.json"),
+          join(sharnessd.directory, "settings.json"),
           JSON.stringify({ ...JSON.parse(settings), ...changes }),
         );
-        const refused = yield* daemon.startupFailure();
+        const refused = yield* sharnessd.startupFailure();
         expect([changes, refused.exitCode]).toEqual([changes, 1]);
         expect(refused.logs).toContain(said);
       }
 
       yield* fs.writeFileString(
-        join(daemon.directory, "settings.json"),
+        join(sharnessd.directory, "settings.json"),
         settings,
       );
-      yield* daemon.configure({
+      yield* sharnessd.configure({
         maximumHistoryRecords: 1024,
         messagePolicyFile: judged,
         normsDirectory: "nested/norms",
       });
-      yield* daemon.start();
-      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+      yield* sharnessd.start();
+      const server = yield* sharnessd.signInAs(SERVER_AGENT_OWNER);
       const shown = yield* Effect.tryPromise(() =>
         server.mcp.callTool({ name: "read_norms", arguments: {} }),
       );
@@ -196,9 +196,9 @@ it(
         norms: [{ name: "ping", document: ruledNorm }],
       });
 
-      const occupied = yield* daemon.startupFailure();
+      const occupied = yield* sharnessd.startupFailure();
       expect(occupied.exitCode).toBe(1);
-      expect(occupied.logs).toContain(`could not listen on ${daemon.host}`);
+      expect(occupied.logs).toContain(`could not listen on ${sharnessd.host}`);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
@@ -208,26 +208,26 @@ it(
   "admits a token granted the scope as the agent of its subject, refuses every other request with the SDK's answer, and stops promptly with a stream open",
   processTrace(
     Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      const running = yield* daemon.start();
+      const sharnessd = yield* sharedServer();
+      const running = yield* sharnessd.start();
       const other = yield* issuerFixture();
       const client = yield* HttpClient.HttpClient;
       const statusOf = (path: string, bearer: string) =>
-        HttpClientRequest.post(new URL(path, daemon.endpoint)).pipe(
+        HttpClientRequest.post(new URL(path, sharnessd.endpoint)).pipe(
           bearer === "" ? identity : HttpClientRequest.bearerToken(bearer),
           client.execute,
           Effect.map((response) => response.status),
         );
       const issued = (
         owner: string,
-        claims: Parameters<typeof daemon.bearer>[1],
-      ) => Effect.map(daemon.bearer(owner, claims), Redacted.value);
+        claims: Parameters<typeof sharnessd.bearer>[1],
+      ) => Effect.map(sharnessd.bearer(owner, claims), Redacted.value);
 
       expect(yield* statusOf("/mcp", "")).toBe(401);
       expect(yield* statusOf("/other", yield* issued("bob", {}))).toBe(404);
       const good = yield* issued("bob", {});
       for (const defective of [
-        yield* other.token("bob", daemon.resource),
+        yield* other.token("bob", sharnessd.resource),
         `${good.slice(0, -4)}AAAA`,
         yield* issued("bob", { secondsLeft: -1 }),
         yield* issued("", {}),
@@ -238,11 +238,11 @@ it(
         yield* statusOf("/mcp", yield* issued("bob", { scope: "other:scope" })),
       ).toBe(403);
 
-      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+      const server = yield* sharnessd.signInAs(SERVER_AGENT_OWNER);
       expect(server.name).toBe(SERVER_AGENT_NAME);
-      const bob = yield* daemon.signInAs("bob");
+      const bob = yield* sharnessd.signInAs("bob");
       expect(bob.name).toMatch(/^agent-[0-9a-f]{24}$/u);
-      expect((yield* daemon.signInAs("bob")).name).toBe(bob.name);
+      expect((yield* sharnessd.signInAs("bob")).name).toBe(bob.name);
 
       yield* Effect.forkScoped(Stream.runDrain(inboxStream(bob, "0", "push")));
       yield* callTool(bob, "receive_messages");
@@ -266,12 +266,12 @@ it(
   "keeps each owner's agent name, history and inbox across a restart, where a cursor from before it reads the same entries",
   processTrace(
     Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      const original = yield* daemon.start();
+      const sharnessd = yield* sharedServer();
+      const original = yield* sharnessd.start();
       const sent = yield* Effect.scoped(
         Effect.gen(function* () {
-          const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
-          const client = yield* daemon.signInAs("bob");
+          const server = yield* sharnessd.signInAs(SERVER_AGENT_OWNER);
+          const client = yield* sharnessd.signInAs("bob");
           expect(server.name).toBe(SERVER_AGENT_NAME);
 
           const opening = yield* send(client, { text: "opening" });
@@ -298,10 +298,10 @@ it(
         }),
       );
       yield* stopProcess(original);
-      yield* daemon.start();
+      yield* sharnessd.start();
 
-      const client = yield* daemon.signInAs("bob");
-      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+      const client = yield* sharnessd.signInAs("bob");
+      const server = yield* sharnessd.signInAs(SERVER_AGENT_OWNER);
       expect(client.name).toBe(sent.client);
       expect(server.name).toBe(SERVER_AGENT_NAME);
       const [start, afterFirst] = sent.cursors;
