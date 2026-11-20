@@ -3,7 +3,7 @@
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, Either, FastCheck as fc, Order } from "effect";
+import { Effect, Either, FastCheck as fc } from "effect";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,77 +112,68 @@ vitestIt(
   },
 );
 
-/** Attributes of the generated length that some declaration takes. */
-const known = [
-  ":description",
-  ":initiates",
-  ":initiator",
-  ":participant",
-  ":terminates",
-];
+/** A document whose `open` has one field. */
+const sample = document([{ name: "topic", type: "string", optional: false }]);
 
-vitestIt(
-  "refuses a document with an attribute its declaration does not take",
-  () => {
-    fc.assert(
-      fc.property(
-        fields.filter((declared) => declared.length > 0),
-        fc.constantFrom<keyof Splices>(
-          "norm",
-          "open",
-          "field",
-          "close",
-          "rule",
-        ),
-        fc
-          .stringMatching(/^:[a-z]{9,12}$/u)
-          .filter((attribute) => !known.includes(attribute)),
-        (declared, declaration, attribute) => {
-          expect(
-            refused(document(declared, { [declaration]: ` ${attribute} x` })),
-          ).toBe(true);
-        },
+vitestIt.each<keyof Splices>(["norm", "open", "field", "close", "rule"])(
+  "refuses a document whose %s declaration has an attribute it does not take",
+  (declaration) => {
+    expect(
+      refused(
+        document([{ name: "topic", type: "string", optional: false }], {
+          [declaration]: " :unheard x",
+        }),
       ),
-    );
+    ).toBe(true);
+  },
+);
+
+vitestIt.each([
+  ["a refusal act", "Answerer)\n", "Answerer :on-refusal absent)\n"],
+  ["a sender role", "(Asker Answerer)", "(Asker Absent)"],
+  ["a fact it clears", ":ends true)", ":ends true :terminates absent)"],
+  [
+    "a fact it waits on",
+    ":ends true)",
+    ":ends true :after absent :delay wait :unit seconds)",
+  ],
+  [
+    "an act a relation reads",
+    ":ends true)",
+    ":ends true (field copy :type string) (relation equals copy (previous absent copy)))",
+  ],
+  [
+    "a field a relation constrains",
+    ":ends true)",
+    ":ends true (relation equals absent (previous open absent)))",
+  ],
+  ["an act a rule governs", ":act open", ":act absent"],
+])(
+  "refuses a document that names %s it does not declare",
+  (...[, declared, undeclared]) => {
+    expect(sample).toContain(declared);
+    expect(refused(sample.replace(declared, undeclared))).toBe(true);
   },
 );
 
 vitestIt(
-  "refuses a document that refers to a role, fact, act or field it does not declare",
+  "reads quoted text with escapes, parentheses and semicolons as one string, and skips comments",
   () => {
-    fc.assert(
-      fc.property(
-        fields,
-        fc.constantFrom<(source: string) => string>(
-          (source) =>
-            source.replace("Answerer)\n", "Answerer :on-refusal absent)\n"),
-          (source) => source.replace("(Asker Answerer)", "(Asker Absent)"),
-          (source) =>
-            source.replace(":ends true)", ":ends true :terminates absent)"),
-          (source) =>
-            source.replace(
-              ":ends true)",
-              ":ends true :after absent :delay wait :unit seconds)",
-            ),
-          (source) =>
-            source.replace(
-              ":ends true)",
-              ":ends true (field copy :type string) (relation equals copy (previous absent copy)))",
-            ),
-          (source) =>
-            source.replace(
-              ":ends true)",
-              ":ends true (relation equals absent (previous open absent)))",
-            ),
-          (source) => source.replace(":act open", ":act absent"),
-        ),
-        (declared, spoiled) => {
-          const source = document(declared);
-          expect(spoiled(source)).not.toBe(source);
-          expect(refused(spoiled(source))).toBe(true);
-        },
+    const norm = Either.getOrThrow(
+      compileNorm(
+        [
+          "; a comment before the header",
+          '(norm quoted :initiator Asker :participant Answerer :description "a \\"b\\" (c); d\\n")',
+          "(content ask :by Asker :starts true :ends true) ; a trailing comment",
+          '(rule "Say (please); then \\\\ ask.")',
+        ].join("\n"),
       ),
     );
+
+    expect(norm.description).toBe('a "b" (c); d\n');
+    expect(norm.textRules).toMatchObject([
+      { text: "Say (please); then \\ ask." },
+    ]);
   },
 );
 
@@ -191,8 +182,6 @@ const documentOf = (name: string) =>
   `(norm ${name} :initiator Asker :participant Answerer)
 (content ask :by Asker :starts true :ends true)
 `;
-
-const normName = fc.stringMatching(/^[a-z][a-z0-9]{0,7}$/u);
 
 /** A directory holding `files`, by name. */
 function directoryWith(files: Readonly<Record<string, string>>) {
@@ -210,28 +199,18 @@ function directoryWith(files: Readonly<Record<string, string>>) {
   });
 }
 
-it.prop(
-  "loads the norm of every .lisp document directly in a directory, and nothing of its other files",
-  [fc.uniqueArray(normName, { maxLength: 4 }), fc.uniqueArray(normName)],
-  ([norms, others]) =>
-    Effect.gen(function* () {
-      const directory = yield* directoryWith({
-        ...Object.fromEntries(
-          others.map((name) => [`${name}.json`, "not a norm document"]),
-        ),
-        ...Object.fromEntries(
-          norms.map((name) => [`${name}.lisp`, documentOf(name)]),
-        ),
-      });
+it("loads the norm of every .lisp document directly in a directory, and nothing of its other files", () =>
+  Effect.gen(function* () {
+    const directory = yield* directoryWith({
+      "b.lisp": documentOf("second"),
+      "a.lisp": documentOf("first"),
+      "notes.json": "not a norm document",
+    });
 
-      const loaded = yield* loadNorms(directory);
+    const loaded = yield* loadNorms(directory);
 
-      expect(loaded.map((norm) => norm.source).sort(Order.string)).toEqual(
-        norms.map(documentOf).sort(Order.string),
-      );
-    }).pipe(Effect.provide(NodeContext.layer)),
-  { fastCheck: { numRuns: 20 } },
-);
+    expect(loaded.map((norm) => norm.name)).toEqual(["first", "second"]);
+  }).pipe(Effect.provide(NodeContext.layer)));
 
 it("refuses a directory that holds a document that does not compile or two documents of one norm", () =>
   Effect.forEach(

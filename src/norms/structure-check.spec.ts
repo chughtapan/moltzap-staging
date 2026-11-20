@@ -1,18 +1,11 @@
-/** @file The structure check passes exactly the acts a norm's turn rules allow after a conversation's earlier messages and the firewall's checks of them, and answers a refusal with the norm's refusal act. */
+/** @file The structure check passes exactly the acts a norm's turn rules and forms allow after a conversation's earlier messages and the firewall's checks of them, names what is wrong with any other message, and answers a refusal with the norm's refusal act. */
 
-import { scopedLive } from "@effect/vitest";
-import { Effect, FastCheck as fc, Option, Schema } from "effect";
+import { Effect, Either, FastCheck as fc, Option, Schema } from "effect";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import type { EarlierMessage } from "../firewall.js";
 import { peer } from "../__tests__/firewall-fixtures.js";
 import { type AgentCard, Message, MsgId } from "../messages.js";
-import {
-  form,
-  noFields,
-  normOf,
-  valueField,
-} from "./__tests__/norms-fixtures.js";
-import { type Act, formatAct, type Norm } from "./norm.js";
+import { compileNorm } from "./compiler.js";
 import { structureCheck } from "./structure-check.js";
 
 beforeAll(() => {
@@ -26,107 +19,106 @@ const alice = peer("alice", 1);
 const bob = peer("bob", 2);
 const agents = [alice, bob] as const;
 
+/** The norm a document declares. */
+const normFrom = (document: string) => Either.getOrThrow(compileNorm(document));
+type Norm = ReturnType<typeof normFrom>;
+
+/** The text of an act: its performative, its norm and each field, with strings quoted and a selection as a list. */
+function actText(
+  name: string,
+  norm: string,
+  fields: Readonly<Record<string, string | number | readonly string[]>> = {},
+) {
+  const stated = Object.entries(fields).map(
+    ([field, value]) =>
+      ` :${field} ${
+        typeof value === "object"
+          ? `(${value.map((choice) => JSON.stringify(choice)).join(" ")})`
+          : JSON.stringify(value)
+      }`,
+  );
+  return `(${name} :ontology ${norm}${stated.join("")})`;
+}
+
 /**
  * Offers alternate. `offer` opens an instance. Only the recipient of the
  * current offer may `counter` it or `choose` its value, replying in its
  * chain, and choosing settles it. Either agent may `finish`.
  */
-const turns = normOf("turns", [
-  {
-    ...form,
-    act: "offer",
-    by: ["Sender"],
-    fields: valueField,
-    starts: true,
-    initiates: ["offered"],
-  },
-  {
-    ...form,
-    act: "counter",
-    by: { recipient: { fact: "offered" } },
-    fields: valueField,
-    when: ["offered"],
-    initiates: ["offered"],
-  },
-  {
-    ...form,
-    act: "choose",
-    by: { recipient: { fact: "offered" } },
-    fields: valueField,
-    when: ["offered"],
-    terminates: ["offered"],
-    initiates: ["selected"],
-    relations: [
-      {
-        operator: "equals",
-        field: "value",
-        source: { kind: "field", act: { fact: "offered" }, field: "value" },
-      },
-    ],
-  },
-  {
-    ...form,
-    act: "finish",
-    by: ["Sender", "Receiver"],
-    fields: noFields,
-    ends: true,
-  },
-]);
+const turns = normFrom(`
+(norm turns :initiator Sender :participant Receiver)
+(content offer :by Sender :starts true :initiates offered
+  (field value :type string))
+(content counter :by (recipient (fact offered)) :when offered :initiates offered
+  (field value :type string))
+(content choose :by (recipient (fact offered)) :when offered
+  :terminates offered :initiates selected
+  (field value :type string)
+  (relation equals value (previous (fact offered) value)))
+(content finish :by (Sender Receiver) :ends true)
+`);
 
 /** A message id no generated history holds. */
 const unknownId = Schema.decodeUnknownSync(MsgId)(`msg_${"A".repeat(43)}`);
 
 /**
- * Checks `act` from `author` against `history` at `now`, and adds its message
- * to the history as one the firewall allowed when the check passes it. A
- * history that holds every message twice gives the same answer.
+ * Checks the act `text` from `author` against `history` at `now`, and adds
+ * its message to the history as one the firewall allowed when the check
+ * passes it. A history that holds every message twice gives the same answer.
  */
 function attempt(
   norm: Norm,
   history: EarlierMessage[],
   taken: {
     readonly author: AgentCard;
-    readonly act: Act;
+    readonly text: string;
     readonly now: number;
     readonly reply: Option.Option<MsgId>;
   },
 ) {
-  const message = actMessage(taken.author, stepId(history.length), taken.act, {
-    replyToMsgId: Option.getOrUndefined(taken.reply),
-  });
-  const { kind } = check(norm, history, message, taken.now);
-  expect(check(norm, [...history, ...history], message, taken.now).kind).toBe(
+  const candidate = message(
+    taken.author,
+    taken.text,
+    { replyToMsgId: Option.getOrUndefined(taken.reply) },
+    stepId(history.length),
+  );
+  const { kind } = check(norm, candidate, history, taken.now);
+  expect(check(norm, candidate, [...history, ...history], taken.now).kind).toBe(
     kind,
   );
-  history.push({ message, checkedAt: taken.now, allowed: kind === "passed" });
+  history.push({
+    message: candidate,
+    checkedAt: taken.now,
+    allowed: kind === "passed",
+  });
   return kind === "passed";
 }
 
-/** What the structure check of an agent that holds `norm` says of `message` at `now`, after `history`. */
-function check(
-  norm: Norm,
-  history: readonly EarlierMessage[],
-  message: Message,
-  now: number,
-) {
-  vi.setSystemTime(now);
-  return Effect.runSync(structureCheck([norm])(message, history));
-}
-
-/** A direct message from `author` to the other agent that states `act`. */
-function actMessage(
+/** A message of `text` from `author` to the other agent, under `msgId` or a new id. */
+function message(
   author: AgentCard,
-  msgId: MsgId,
-  act: Act,
-  reference: Pick<Message, "replyToMsgId">,
+  text: string,
+  reference: Pick<Message, "replyToMsgId"> = {},
+  msgId?: MsgId,
 ): Message {
   return Schema.decodeSync(Message)({
     author,
     recipient: author.agentId === alice.agentId ? bob : alice,
-    msgId,
+    msgId: msgId ?? MsgId.mint(),
     ...reference,
-    text: formatAct(act),
+    text,
   });
+}
+
+/** What the structure check of an agent that holds `norm` says of `candidate` at `now`, after `history`. */
+function check(
+  norm: Norm,
+  candidate: Message,
+  history: readonly EarlierMessage[] = [],
+  now = 0,
+) {
+  vi.setSystemTime(now);
+  return Effect.runSync(structureCheck([norm])(candidate, history));
 }
 
 /** The message id of step `index` of a walk. */
@@ -289,11 +281,11 @@ it("permits exactly the acts the turn rules allow, whoever sends them and whiche
         const expected = modelPermits(model, taken, reply);
         const permitted = attempt(turns, history, {
           author: agents[taken.author] ?? alice,
-          act: {
-            name: taken.act,
-            norm: "turns",
-            fields: taken.act === "finish" ? {} : { value: taken.value },
-          },
+          text: actText(
+            taken.act,
+            "turns",
+            taken.act === "finish" ? {} : { value: taken.value },
+          ),
           now: 0,
           reply,
         });
@@ -315,40 +307,26 @@ it("permits an act with a delay and a limit only once its fact is that old and w
         sent: fc.nat({ max: 4 }),
       }),
       ({ wait, elapsed, maximum, sent }) => {
-        const timed = normOf("timed", [
-          {
-            ...form,
-            act: "hold",
-            by: ["Sender"],
-            fields: [
-              { name: "wait", type: "integer", optional: false, minimum: 0 },
-            ],
-            starts: true,
-            initiates: ["held"],
-          },
-          {
-            ...form,
-            act: "poll",
-            by: ["Sender", "Receiver"],
-            fields: noFields,
-            when: ["held"],
-            maximum,
-            delay: { fact: "held", field: "wait" },
-          },
-        ]);
+        const timed = normFrom(`
+(norm timed :initiator Sender :participant Receiver)
+(content hold :by Sender :starts true :initiates held
+  (field wait :type integer :minimum 0))
+(content poll :by (Sender Receiver) :when held :max ${maximum}
+  :after held :delay wait :unit seconds)
+`);
         const history: EarlierMessage[] = [];
         const start = 1_000;
         const due = start + wait * 1000;
         attempt(timed, history, {
           author: alice,
-          act: { name: "hold", norm: "timed", fields: { wait } },
+          text: actText("hold", "timed", { wait }),
           now: start,
           reply: Option.none(),
         });
         const poll = (now: number) =>
           attempt(timed, history, {
             author: bob,
-            act: { name: "poll", norm: "timed", fields: {} },
+            text: actText("poll", "timed"),
             now,
             reply: Option.some(stepId(0)),
           });
@@ -364,177 +342,294 @@ it("permits an act with a delay and a limit only once its fact is that old and w
 });
 
 /** `open` starts an instance, `close` ends it, and `reject` answers a withheld act. */
-const exchange = normOf(
-  "exchange",
-  [
-    {
-      ...form,
-      act: "open",
-      by: ["Sender"],
-      fields: valueField,
-      starts: true,
-      initiates: ["opened"],
-    },
-    {
-      ...form,
-      act: "close",
-      by: ["Receiver"],
-      fields: noFields,
-      when: ["opened"],
-      ends: true,
-    },
-    {
-      ...form,
-      act: "reject",
-      by: ["Sender", "Receiver"],
-      fields: [{ name: "reason", type: "string", optional: false }],
-      when: ["opened"],
-    },
-  ],
-  { onRefusal: "reject" },
-);
+const exchange = normFrom(`
+(norm exchange :initiator Sender :participant Receiver :on-refusal reject)
+(content open :by Sender :starts true :initiates opened
+  (field value :type string))
+(content close :by Receiver :when opened :ends true)
+(content reject :by (Sender Receiver) :when opened
+  (field reason :type string))
+`);
 
-/** Two one-act instances, with a rule for each act and one for both. */
-const duo = normOf(
-  "duo",
-  ["ask", "tell"].map((act) => ({
-    ...form,
-    act,
-    by: ["Sender"],
-    fields: noFields,
-    starts: true,
-    ends: true,
-  })),
-  {
-    textRules: [
-      { id: "duo-rule-1", act: "ask", text: "Ask politely." },
-      { id: "duo-rule-2", act: "tell", text: "Tell briefly." },
-      { id: "duo-rule-3", text: "Stay on the subject." },
-    ],
-  },
-);
-
-/** A direct message of `text` from `author` to `recipient`. */
-function direct(
-  author: AgentCard,
-  recipient: AgentCard,
-  text: string,
-  replyToMsgId?: MsgId,
-) {
-  return Message.create({
-    author,
-    recipient: recipient,
-    text,
-    replyToMsgId,
-  });
-}
-
-const actText = (name: string, norm: string, fields: Act["fields"] = {}) =>
-  formatAct({ name, norm, fields });
-
-scopedLive.prop(
-  "refuses every text that is not an act of a held norm",
-  [fc.string({ minLength: 1 })],
-  ([text]) =>
-    Effect.gen(function* () {
-      const result = yield* structureCheck([exchange])(
-        yield* direct(alice, bob, text),
-        [],
-      );
-
-      expect(result).toMatchObject({
+it("refuses every text that is not an act of a held norm", () => {
+  fc.assert(
+    fc.property(fc.string({ minLength: 1 }), (text) => {
+      expect(check(exchange, message(alice, text))).toMatchObject({
         kind: "refused",
         reason: "rule-violation",
         ruleId: "norm-structural",
         detail: { stage: "structural" },
       });
     }),
-  { fastCheck: { numRuns: 60 } },
-);
+    { numRuns: 60 },
+  );
+});
 
-scopedLive.each(["ask", "tell"])(
+it.each(["ask", "tell"])(
   "passes the act %s with the rules its norm gives that act and every act",
-  (act) =>
-    Effect.gen(function* () {
-      const result = yield* structureCheck([duo])(
-        yield* direct(alice, bob, actText(act, "duo")),
-        [],
-      );
+  (act) => {
+    const duo = normFrom(`
+(norm duo :initiator Sender :participant Receiver)
+(content ask :by Sender :starts true :ends true)
+(content tell :by Sender :starts true :ends true)
+(rule :act ask "Ask politely.")
+(rule :act tell "Tell briefly.")
+(rule "Stay on the subject.")
+`);
 
-      expect(result).toMatchObject({
-        kind: "passed",
-        textRules: [
-          { id: act === "ask" ? "duo-rule-1" : "duo-rule-2", applies: "both" },
-          { id: "duo-rule-3", applies: "both" },
-        ],
-        protocol: { norm: "duo", act },
-      });
-    }),
+    expect(check(duo, message(alice, actText(act, "duo")))).toMatchObject({
+      kind: "passed",
+      textRules: [
+        { id: act === "ask" ? "duo-rule-1" : "duo-rule-2", applies: "both" },
+        { id: "duo-rule-3", applies: "both" },
+      ],
+      protocol: { norm: "duo", act },
+    });
+  },
 );
 
-scopedLive.prop(
-  "continues an instance only from an opening act the firewall allowed",
-  [
-    fc.constantFrom(
-      { checkedAt: 1, allowed: true },
-      { checkedAt: 1, allowed: false },
-      { allowed: false },
-    ),
-    fc.string(),
-  ],
-  ([checked, value]) =>
-    Effect.gen(function* () {
-      const open = yield* direct(
-        alice,
-        bob,
-        actText("open", "exchange", { value }),
-      );
+it.each([
+  { checked: { checkedAt: 1, allowed: true }, continues: "passed" },
+  { checked: { checkedAt: 1, allowed: false }, continues: "refused" },
+  { checked: { allowed: false }, continues: "refused" },
+])(
+  "continues an instance only from an opening act the firewall allowed: $checked",
+  ({ checked, continues }) => {
+    const open = message(alice, actText("open", "exchange", { value: "x" }));
 
-      const result = yield* structureCheck([exchange])(
-        yield* direct(bob, alice, actText("close", "exchange"), open.msgId),
-        [{ message: open, ...checked }],
-      );
+    const result = check(
+      exchange,
+      message(bob, actText("close", "exchange"), { replyToMsgId: open.msgId }),
+      [{ message: open, ...checked }],
+    );
 
-      expect(result.kind).toBe(checked.allowed ? "passed" : "refused");
-    }),
-  { fastCheck: { numRuns: 12 } },
+    expect(result.kind).toBe(continues);
+  },
 );
 
-scopedLive.prop(
-  "answers a message withheld in an instance, by its own refusal or a later one, with the norm's refusal act",
-  [
-    fc.oneof(
-      fc.string({ minLength: 1 }),
-      fc.constantFrom(
-        actText("unknown", "exchange"),
-        actText("close", "exchange", { extra: "unasked" }),
-        actText("open", "exchange", { value: "again" }),
-        actText("close", "other"),
-        actText("close", "exchange"),
+it.each([
+  { what: "plain text", text: "hello", stage: "structural" },
+  {
+    what: "an act the norm lacks",
+    text: "(unknown :ontology exchange)",
+    stage: "structural",
+  },
+  {
+    what: "a field its form lacks",
+    text: '(close :ontology exchange :extra "unasked")',
+    stage: "structural",
+  },
+  {
+    what: "a comment after the act",
+    text: "(close :ontology exchange) ; note",
+    stage: "structural",
+  },
+  {
+    what: "an unclosed act",
+    text: "(close :ontology exchange",
+    stage: "structural",
+  },
+  {
+    what: "a second opening",
+    text: '(open :ontology exchange :value "again")',
+    stage: "protocol",
+  },
+  {
+    what: "an act of another norm",
+    text: "(close :ontology other)",
+    stage: "protocol",
+  },
+])(
+  "refuses $what in an instance under the norm's $stage rule, and answers with the norm's refusal act",
+  ({ text, stage }) => {
+    const open = message(alice, actText("open", "exchange", { value: "x" }));
+
+    const result = check(
+      exchange,
+      message(bob, text, { replyToMsgId: open.msgId }),
+      [{ message: open, checkedAt: 1, allowed: true }],
+    );
+
+    expect(result).toMatchObject({
+      kind: "refused",
+      ruleId: `exchange-${stage}`,
+    });
+    expect(result.kind === "refused" && result.reply).toBe(
+      `(reject :ontology exchange :reason ${JSON.stringify(
+        result.kind === "refused" && result.feedback,
+      )})`,
+    );
+  },
+);
+
+it("phrases the refusal of an act it passes as the norm's refusal act", () => {
+  const open = message(alice, actText("open", "exchange", { value: "x" }));
+
+  const result = check(
+    exchange,
+    message(bob, actText("close", "exchange"), { replyToMsgId: open.msgId }),
+    [{ message: open, checkedAt: 1, allowed: true }],
+  );
+
+  expect(result.kind === "passed" && result.replyTo?.('Say "please".')).toBe(
+    '(reject :ontology exchange :reason "Say \\"please\\".")',
+  );
+});
+
+/** A norm whose one act, `open`, has the declared fields. */
+const sampleOf = (fields: readonly string[]) =>
+  normFrom(`
+(norm sample :initiator Sender :participant Receiver)
+(content open :by Sender :starts true :ends true
+  ${fields.join("\n  ")})
+`);
+
+/** Whether a field declared as `declaration` accepts the value an act states as `value`. */
+const accepted = (
+  declaration: string,
+  value: string | number | readonly string[],
+) =>
+  check(
+    sampleOf([`(field field ${declaration})`]),
+    message(alice, actText("open", "sample", { field: value })),
+  ).kind === "passed";
+
+it("names exactly the fields an act is missing, adds or gets wrong", () => {
+  const names = ["slot", "hours", "note", "constructor", "prototype"];
+  const field = fc.record({
+    declared: fc.boolean(),
+    required: fc.boolean(),
+    stated: fc.constantFrom("absent", "valid", "invalid"),
+  });
+  fc.assert(
+    fc.property(fc.tuple(field, field, field, field, field), (fields) => {
+      const named = fields.map((state, index) => ({
+        ...state,
+        name: names[index] ?? "",
+      }));
+      const result = check(
+        sampleOf(
+          named
+            .filter((state) => state.declared)
+            .map(
+              (state) =>
+                `(field ${state.name} :type string :max-length 3${state.required ? "" : " :optional true"})`,
+            ),
+        ),
+        message(
+          alice,
+          actText(
+            "open",
+            "sample",
+            Object.fromEntries(
+              named
+                .filter((state) => state.stated !== "absent")
+                .map((state) => [
+                  state.name,
+                  state.stated === "valid" ? "yes" : "never",
+                ]),
+            ),
+          ),
+        ),
+      );
+      const failureOf = (state: (typeof named)[number]) => {
+        if (!state.declared) {
+          return state.stated === "absent" ? [] : ["is not a valid field of"];
+        }
+        if (state.stated === "absent") {
+          return state.required ? ["is required for"] : [];
+        }
+        return state.stated === "valid" ? [] : ["is not valid for"];
+      };
+      const expected = named.flatMap((state) =>
+        failureOf(state).map(
+          (failure) => `Error: ${state.name} ${failure} open in sample.`,
+        ),
+      );
+      const stated =
+        result.kind === "refused"
+          ? result.feedback.split(/(?<=\.) (?=Error: )/u)
+          : [];
+      expect(new Set(stated)).toEqual(new Set(expected));
+      expect(stated).toHaveLength(expected.length);
+    }),
+  );
+});
+
+it("refuses a value another type of field is given", () => {
+  const kinds = [
+    { declaration: ":type string", value: "a" },
+    { declaration: ":type integer", value: 1 },
+    { declaration: ":type multi-select :choices (a)", value: ["a"] },
+  ];
+  for (const asked of kinds) {
+    for (const given of kinds) {
+      expect(accepted(asked.declaration, given.value)).toBe(asked === given);
+    }
+  }
+});
+
+it("holds an integer to its bounds and to whole values", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: -100, max: 100 }),
+      fc.integer({ min: 0, max: 50 }),
+      fc.oneof(
+        fc.integer({ min: -200, max: 200 }),
+        fc.double({ min: -200, max: 200, noNaN: true }),
       ),
+      (minimum, span, value) => {
+        const maximum = minimum + span;
+        expect(
+          accepted(
+            `:type integer :minimum ${minimum} :maximum ${maximum}`,
+            value,
+          ),
+        ).toBe(Number.isInteger(value) && value >= minimum && value <= maximum);
+      },
     ),
-    fc.string({ minLength: 1 }),
-  ],
-  ([text, feedback]) =>
-    Effect.gen(function* () {
-      const open = yield* direct(
-        alice,
-        bob,
-        actText("open", "exchange", { value: "first" }),
-      );
+  );
+});
 
-      const result = yield* structureCheck([exchange])(
-        yield* direct(bob, alice, text, open.msgId),
-        [{ message: open, checkedAt: 1, allowed: true }],
-      );
+it("reads any quoted string and counts its length in code points against its bounds", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ unit: "grapheme", maxLength: 8 }),
+      fc.integer({ min: 0, max: 4 }),
+      fc.integer({ min: 0, max: 4 }),
+      (text, minLength, span) => {
+        const maxLength = minLength + span;
+        const length = Array.from(text).length;
+        expect(
+          accepted(
+            `:type string :min-length ${minLength} :max-length ${maxLength}`,
+            text,
+          ),
+        ).toBe(length >= minLength && length <= maxLength);
+      },
+    ),
+  );
+});
 
-      expect(
-        result.kind === "refused" ? result.reply : result.replyTo?.(feedback),
-      ).toBe(
-        actText("reject", "exchange", {
-          reason: result.kind === "refused" ? result.feedback : feedback,
-        }),
-      );
-    }),
-  { fastCheck: { numRuns: 20 } },
-);
+it("checks each selected item against the choices and their count against its bounds", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.constantFrom("a", "b", "x"), { maxLength: 5 }),
+      fc.integer({ min: 0, max: 3 }),
+      fc.integer({ min: 0, max: 3 }),
+      (selected, minItems, span) => {
+        const maxItems = minItems + span;
+        expect(
+          accepted(
+            `:type multi-select :choices (a b) :min-items ${minItems} :max-items ${maxItems}`,
+            selected,
+          ),
+        ).toBe(
+          selected.length >= minItems &&
+            selected.length <= maxItems &&
+            !selected.includes("x"),
+        );
+      },
+    ),
+  );
+});
