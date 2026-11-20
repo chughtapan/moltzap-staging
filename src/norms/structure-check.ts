@@ -5,7 +5,7 @@
  */
 
 import { Clock, Effect, Either, Struct } from "effect";
-import type { Message } from "../communication/index.js";
+import type { Message } from "../messages.js";
 import {
   type EarlierMessage,
   type StructureCheck,
@@ -313,7 +313,7 @@ function senderPermitted(
     return false;
   }
   return "recipient" in form.by
-    ? anchor?.message.recipients[0]?.agentId === author
+    ? anchor?.message.recipient.agentId === author
     : form.by.includes(role);
 }
 
@@ -449,7 +449,7 @@ function advance(
   const prior: Instance = view.instance ?? {
     norm,
     initiator: entry.message.author.agentId,
-    participant: entry.message.recipients[0].agentId,
+    participant: entry.message.recipient.agentId,
     facts: new Map(),
     counts: new Map(),
     acts: [],

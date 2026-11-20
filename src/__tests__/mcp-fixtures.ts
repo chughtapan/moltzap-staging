@@ -8,7 +8,7 @@ import { Effect } from "effect";
 import { getOrCreateOwnedAgent } from "../daemon/agent.js";
 import { makeMcpHttpApp } from "../daemon/server.js";
 import { type Firewall, makeFirewall } from "../firewall/firewall.js";
-import { AgentName } from "../identity.js";
+import { AgentName } from "../messages.js";
 import { testDaemon } from "./service-fixtures.js";
 import { issuerFixture, openTestDatabase, requiredScope } from "./test.js";
 

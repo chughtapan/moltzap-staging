@@ -4,9 +4,8 @@ import { scopedLive } from "@effect/vitest";
 import { Effect, FastCheck as fc, Option, Schema } from "effect";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import type { EarlierMessage } from "../firewall/firewall.js";
-import type { AgentCard } from "../identity.js";
 import { peer } from "../__tests__/firewall-fixtures.js";
-import { Message, messageWithId, MsgId } from "../communication/index.js";
+import { type AgentCard, Message, MsgId } from "../messages.js";
 import {
   form,
   noFields,
@@ -121,14 +120,13 @@ function actMessage(
   act: Act,
   reference: Pick<Message, "replyToMsgId">,
 ): Message {
-  return Effect.runSync(
-    messageWithId(
-      author,
-      agents.filter((agent) => agent.agentId !== author.agentId),
-      { msgId, ...reference },
-      [{ type: "text", text: formatAct(act) }],
-    ),
-  );
+  return Schema.decodeSync(Message)({
+    author,
+    recipient: author.agentId === alice.agentId ? bob : alice,
+    msgId,
+    ...reference,
+    text: formatAct(act),
+  });
 }
 
 /** The message id of step `index` of a walk. */
@@ -425,8 +423,8 @@ function direct(
 ) {
   return Message.create({
     author,
-    recipients: [recipient],
-    content: [{ type: "text", text }],
+    recipient: recipient,
+    text,
     replyToMsgId,
   });
 }

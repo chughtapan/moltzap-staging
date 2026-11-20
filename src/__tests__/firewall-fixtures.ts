@@ -1,14 +1,19 @@
 /** @file Shared fixtures for firewall tests: an agent's firewall, messages, rules and a test provider. */
 
 import { Effect, Encoding } from "effect";
-import { Message } from "../communication/index.js";
 import {
   type DecisionProvider,
   type LoadedMessagePolicy,
   makeFirewall,
   type TextRule,
 } from "../firewall/firewall.js";
-import { AgentCard, AgentId, AgentName, PrincipalId } from "../identity.js";
+import {
+  AgentCard,
+  AgentId,
+  AgentName,
+  Message,
+  PrincipalId,
+} from "../messages.js";
 
 /** A fixed rule the test provider always finds broken. */
 export const privacy = {
@@ -44,10 +49,8 @@ export const certainProvider: DecisionProvider = {
 export function outgoing(self: AgentCard) {
   return Message.create({
     author: self,
-    recipients: [peer("bob", 2)],
-    content: [
-      { type: "text", text: "The private record says the owner is away." },
-    ],
+    recipient: peer("bob", 2),
+    text: "The private record says the owner is away.",
   });
 }
 
@@ -55,8 +58,8 @@ export function outgoing(self: AgentCard) {
 export function incoming(self: AgentCard) {
   return Message.create({
     author: peer("bob", 2),
-    recipients: [self],
-    content: [{ type: "text", text: "Hello" }],
+    recipient: self,
+    text: "Hello",
   });
 }
 

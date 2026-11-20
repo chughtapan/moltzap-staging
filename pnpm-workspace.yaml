@@ -34,7 +34,6 @@ catalog:
   effect: ^3.22.0
   eslint: ^9
   eslint-plugin-agent-code-guard: 0.0.24
-  fast-check: 3.23.2
   husky: ^9.0.0
   jiti: ^2.7.0
   jose: 6.2.5

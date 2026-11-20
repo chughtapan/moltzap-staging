@@ -1,8 +1,6 @@
 /** @file Fixtures of one daemon's agents: the server agent behind real policy over stored messages in a test database, with the clients that message it. */
 
 import { Effect, PubSub, Schema } from "effect";
-import type { AgentCard } from "../identity.js";
-import { Message } from "../communication/index.js";
 import {
   AgentAddress,
   conversationsOf,
@@ -22,6 +20,7 @@ import {
   type LoadedMessagePolicy,
   makeFirewall,
 } from "../firewall/firewall.js";
+import { type AgentCard, Message } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";
 import { openTestDatabase } from "./test.js";

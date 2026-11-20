@@ -24,9 +24,7 @@ import {
   Stream,
 } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import type { Message } from "../communication/index.js";
-import { exactStruct, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
-import { AgentCard } from "../identity.js";
+import { AgentCard, type Message } from "../messages.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
@@ -65,21 +63,22 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
 /**
  * What one completed check concluded, as its caller saves it, without message
  * content: the decision applied to a message the agent sent (`allowed` or
- * `refused`) or received (`allowed` or `withheld`), and its peers. `time` is
+ * `refused`) or received (`allowed` or `withheld`), and its peer. `time` is
  * Unix milliseconds. `decidedBy[].advice` contains the rule's feedback for a
  * refused or withheld message, or its guidance for an allowed one.
  * `checkedRuleIds` lists the rules the check judged: a rule that does not
  * apply to the message's direction is not listed.
  */
-export const checkRecordSchema = exactStruct({
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the daemon stores and returns from read_firewall_decisions.
+export const checkRecordSchema = Schema.Struct({
   checkId: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),
   decision: Schema.Literal("allowed", "refused", "withheld"),
   time: Schema.NonNegativeInt,
-  peers: Schema.Array(AgentCard),
+  peer: AgentCard,
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
-    exactStruct({
+    Schema.Struct({
       ruleId: Schema.NonEmptyString,
       advice: Schema.optional(Schema.NonEmptyString),
     }),
@@ -95,13 +94,14 @@ export type CheckRecord = typeof checkRecordSchema.Type;
  * the provider could not settle for the allowed incoming message: the rule's
  * registered text and the choice the provider leaned to, with its probability.
  */
-export const LocalGuidance = exactStruct({
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the daemon stores and puts in its inbox entry schema.
+export const LocalGuidance = Schema.Struct({
   checkId: Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u)),
   instructions: Schema.Array(
-    exactStruct({
+    Schema.Struct({
       ruleId: Schema.NonEmptyTrimmedString,
       instruction: Schema.NonEmptyString,
-      uncertain: exactStruct({
+      uncertain: Schema.Struct({
         choice: Schema.NonEmptyTrimmedString,
         probability: Schema.Number.pipe(Schema.between(0, 1)),
       }),
@@ -650,7 +650,7 @@ function allowed(
       direction,
       decision: "allowed",
       time: now,
-      peers: peersOf(message, direction),
+      peer: peerOf(message, direction),
       reason: "eligible",
       decidedBy: advised.map(({ ruleId, advice }) => ({ ruleId, advice })),
       checkedRuleIds,
@@ -687,7 +687,7 @@ function refused(
             direction,
             decision: direction === "outgoing" ? "refused" : "withheld",
             time,
-            peers: peersOf(message, direction),
+            peer: peerOf(message, direction),
           },
         }),
     ...(reply === undefined || direction === "outgoing"
@@ -700,7 +700,7 @@ function refused(
               direction: "outgoing",
               decision: "allowed",
               time,
-              peers: [message.author],
+              peer: message.author,
               reason: "eligible",
               decidedBy: [],
               checkedRuleIds: [],
@@ -710,15 +710,18 @@ function refused(
   };
 }
 
-/** The other agents of a message the agent sends or receives. */
-function peersOf(message: Message, direction: Direction) {
-  return direction === "outgoing" ? message.recipients : [message.author];
+/** The other agent of a message the agent sends or receives. */
+function peerOf(message: Message, direction: Direction) {
+  return direction === "outgoing" ? message.recipient : message.author;
 }
 
 /** A check id correlates a check without granting lookup authority. */
 function mintCheckId() {
   return `chk_${randomBytes(32).toString("hex")}`;
 }
+
+/** Byte limit of the history window the provider reads. */
+const MAXIMUM_RUNTIME_ITEM_BYTES = 2 * 1024 * 1024;
 
 /**
  * The provider's window of the earlier messages: the latest `historyLimit`
@@ -844,10 +847,10 @@ function providerState(
   for (const card of [
     self,
     message.author,
-    ...message.recipients,
+    message.recipient,
     ...window.history.flatMap((entry) => [
       entry.message.author,
-      ...entry.message.recipients,
+      entry.message.recipient,
     ]),
   ]) {
     cards.set(card.agentId, card);
@@ -885,12 +888,8 @@ function assessmentText(message: Message) {
       .update(`${message.author.agentId}:${message.msgId}`)
       .digest("hex")}`,
     sender: message.author.agentId,
-    recipients: [message.recipients[0].agentId],
-    text: message.content
-      .map((part) =>
-        part.type === "text" ? part.text : JSON.stringify(part.value),
-      )
-      .join("\n"),
+    recipients: [message.recipient.agentId],
+    text: message.text,
   };
 }
 

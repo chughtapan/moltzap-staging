@@ -110,7 +110,7 @@ A check receives the message, its participants, rules and
 bounded conversation evidence once. The check applies to that captured
 evidence and exact message, without a freshness comparison or an
 automatic second check when later evidence arrives. Acceptance preserves the
-checked recipients, content and message identity.
+checked recipient, text and message identity.
 
 ### Available history
 
@@ -178,7 +178,7 @@ The decision feed gives
 the `decision`: `allowed` or `refused` for a message the agent sent, `allowed`
 or `withheld` for one it received. `checkedRuleIds` lists the rules the check
 judged; a rule that does not apply to the message, by its direction, is not listed.
-Outgoing checks produce one row per recipient captured before
+Outgoing checks produce one row for the recipient captured before
 the check, including refused first messages without a conversation. Incoming
 rows identify authors. Daemon-generated failures have no row. Retained identities survive restart without lookup.
 

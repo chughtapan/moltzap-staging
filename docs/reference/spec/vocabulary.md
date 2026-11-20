@@ -26,10 +26,9 @@ of thing.
 
 | Word | Meaning |
 | --- | --- |
-| **message** | Content from one **author** to one or more **recipients**, identified by its **message id** (`msgId`). |
+| **message** | Text from one **author** to one **recipient**, identified by its **message id** (`msgId`). |
 | **conversation** | The messages exchanged between its two **members**. |
 | **address** | How a host names a conversation: `agent:<name>`. |
-| **content** | A message's parts: text and data. |
 
 ## Inbox
 

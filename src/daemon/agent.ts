@@ -5,21 +5,9 @@
  * firewall checks every message of its conversations.
  */
 
-import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
+import { Data, Duration, Effect, Order, PubSub, Queue, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import type { InstalledNorms } from "../norms/index.js";
-import {
-  type CommunicationError,
-  Message,
-  MsgId,
-  wellFormedString,
-} from "../communication/index.js";
-import {
-  compareAscii,
-  decodeJson,
-  encodeJson,
-  exactStruct,
-} from "../encoding.js";
 import {
   type CheckRecord,
   type Firewall,
@@ -31,8 +19,12 @@ import {
   type AgentCard,
   AgentId,
   AgentName,
+  type CommunicationError,
+  Message,
+  MsgId,
   PrincipalId,
-} from "../identity.js";
+  wellFormedString,
+} from "../messages.js";
 import {
   agentNamed,
   agentOwnedBy,
@@ -70,9 +62,6 @@ export interface Daemon {
   readonly readable: PubSub.PubSub<string>;
 }
 
-const minted = (prefix: string) =>
-  `${prefix}${randomBytes(16).toString("base64url")}`;
-
 /**
  * The owner's agent, created on first use with a new identifier and
  * principal. Concurrent first calls for one owner return the same agent. With
@@ -82,10 +71,10 @@ const minted = (prefix: string) =>
 export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
   function* (owner: Owner, agentName?: AgentName) {
     yield* saveAgent(owner, {
-      agentId: AgentId.make(minted("agt_")),
+      agentId: AgentId.mint(),
       agentName:
         agentName ?? AgentName.make(`agent-${randomBytes(12).toString("hex")}`),
-      principalId: PrincipalId.make(minted("prn_")),
+      principalId: PrincipalId.mint(),
     });
     const saved = yield* agentOwnedBy(owner);
     if (
@@ -126,21 +115,6 @@ export const AgentAddress = Schema.String.pipe(
  */
 export type AgentAddress = typeof AgentAddress.Type;
 
-/** A place in an ordered read, as decimal text. A read returns what follows it. */
-export const Cursor = Schema.String.pipe(
-  Schema.pattern(/^\d{1,15}$/u),
-).annotations({ description: "the nextCursor of an earlier result" });
-
-/** Omit cursor to begin and pass the returned nextCursor unchanged. */
-export const PaginatedRequest = exactStruct({
-  cursor: Schema.optional(Cursor),
-});
-
-/** Absence of nextCursor marks the end of the listing. */
-export const Page = exactStruct({
-  nextCursor: Schema.optional(Cursor),
-});
-
 /** The most inbox entries, history records or conversation addresses one page holds. */
 export const PAGE_SIZE = 50;
 
@@ -159,7 +133,7 @@ export const InboxEntry = Schema.Struct({
 export type InboxEntry = typeof InboxEntry.Type;
 
 /** What `send` takes: the recipient's address, the text and the message it answers. */
-export const SendRequest = exactStruct({
+export const SendRequest = Schema.Struct({
   to: Schema.propertySignature(AgentAddress).annotations({
     description: "The recipient: agent:<name>.",
   }),
@@ -297,9 +271,12 @@ export const readInboxEntries = Effect.fn("readInboxEntries")(function* (
 /** The address of every conversation of `self`, in order. */
 export const conversationsOf = Effect.fn("conversationsOf")((self: AgentCard) =>
   Effect.map(conversationPeers(self.agentId), (peers) => ({
-    addresses: peers.map(addressOfAgent).sort(compareAscii),
+    addresses: peers.map(addressOfAgent).sort(Order.string),
   })),
 );
+
+/** The guidance of a message as the store holds it: JSON text. */
+const storedGuidance = Schema.parseJson(LocalGuidance);
 
 /** The inbox entry of a message its recipient may read, with the guidance stored for it. */
 function entryOf({ message, guidance }: StoredMessage) {
@@ -307,7 +284,7 @@ function entryOf({ message, guidance }: StoredMessage) {
   return guidance === null
     ? Effect.succeed<InboxEntry>({ address, message })
     : Effect.map(
-        Effect.orDie(decodeJson(LocalGuidance, guidance)),
+        Effect.orDie(Schema.decode(storedGuidance)(guidance)),
         (decoded): InboxEntry => ({ address, message, guidance: decoded }),
       );
 }
@@ -393,8 +370,8 @@ export const send = Effect.fn("send")(
     const outgoing = author.agentId === server.agentId;
     const message = yield* Message.create({
       author,
-      recipients: [recipient],
-      content: [{ type: "text", text: sent.text }],
+      recipient,
+      text: sent.text,
       replyToMsgId: sent.replyToMsgId,
     }).pipe(
       Effect.catchTag(
@@ -432,7 +409,7 @@ export const send = Effect.fn("send")(
         : undefined;
     const guidance =
       result.kind === "allowed" && result.guidance !== undefined
-        ? yield* Effect.orDie(encodeJson(LocalGuidance, result.guidance))
+        ? yield* Effect.orDie(Schema.encode(storedGuidance)(result.guidance))
         : undefined;
     yield* transaction(
       Effect.gen(function* () {
@@ -481,8 +458,8 @@ function replyWith(
 ) {
   return Message.create({
     author: server,
-    recipients: [withheld.author],
-    content: [{ type: "text", text: reply.text }],
+    recipient: withheld.author,
+    text: reply.text,
     replyToMsgId: withheld.msgId,
   }).pipe(
     Effect.map((message) => ({ message, record: reply.record })),

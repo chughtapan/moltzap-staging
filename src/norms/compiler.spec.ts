@@ -3,12 +3,11 @@
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, Either, FastCheck as fc } from "effect";
+import { Effect, Either, FastCheck as fc, Order } from "effect";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it as vitestIt } from "vitest";
-import { compareAscii } from "../encoding.js";
 import { compileNorm, loadNorms } from "./compiler.js";
 
 const shipped = fileURLToPath(
@@ -227,8 +226,8 @@ it.prop(
 
       const loaded = yield* loadNorms(directory);
 
-      expect(loaded.map((norm) => norm.source).sort(compareAscii)).toEqual(
-        norms.map(documentOf).sort(compareAscii),
+      expect(loaded.map((norm) => norm.source).sort(Order.string)).toEqual(
+        norms.map(documentOf).sort(Order.string),
       );
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 20 } },

@@ -34,7 +34,7 @@ import {
   policy,
   privacy,
 } from "../__tests__/firewall-fixtures.js";
-import { Message } from "../communication/index.js";
+import { Message } from "../messages.js";
 import {
   type DecisionProvider,
   DecisionProviderError,
@@ -587,8 +587,8 @@ it.each([true, false])(
       const large = {
         message: yield* Message.create({
           author: peer("bob", 2),
-          recipients: [alice],
-          content: [{ type: "text", text: "x".repeat(32_000) }],
+          recipient: alice,
+          text: "x".repeat(32_000),
         }),
         allowed: true,
         checkedAt: 1,
@@ -681,7 +681,7 @@ describe("Firewall checks", () => {
           record: {
             direction,
             decision: direction === "outgoing" ? "refused" : "withheld",
-            peers: [bob],
+            peer: bob,
             reason: "rule-violation",
             decidedBy: [{ ruleId: privacy.id, advice: privacy.feedback }],
             checkedRuleIds: [privacy.id],
@@ -835,9 +835,9 @@ describe("Firewall replies", () => {
             reply.text,
             reply.record.direction,
             reply.record.decision,
-            reply.record.peers,
+            reply.record.peer,
           ],
-        ).toEqual(text && [text, "outgoing", "allowed", [bob]]);
+        ).toEqual(text && [text, "outgoing", "allowed", bob]);
       }),
   );
 

@@ -8,6 +8,7 @@ import {
   Exit,
   FastCheck as fc,
   Fiber,
+  Order,
   Schema,
 } from "effect";
 import { expect } from "vitest";
@@ -23,9 +24,7 @@ import {
   makeHarnessFixture,
 } from "../__tests__/service-fixtures.js";
 import { openTestDatabase } from "../__tests__/test.js";
-import { MsgId } from "../communication/index.js";
-import { compareAscii } from "../encoding.js";
-import { AgentName } from "../identity.js";
+import { AgentName, MsgId } from "../messages.js";
 import { form, noFields, normOf } from "../norms/__tests__/norms-fixtures.js";
 import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
 
@@ -99,7 +98,7 @@ it("sends each call as new work to the agent it names, with the reply reference 
         const [stored] = (yield* subject.sent).slice(dispatched);
         expect(stored).toMatchObject({
           msgId: receipt.id,
-          recipients: [{ agentName: name }],
+          recipient: { agentName: name },
         });
         expect(stored?.replyToMsgId).toBe(replyToMsgId);
       }),
@@ -209,9 +208,7 @@ it("answers a message that broke a rule with the configured reply when no rule g
       policy: composedPolicy(incomingViolation),
     });
     yield* subject.sendFrom({ text: "Private peer content" });
-    expect(yield* subject.sent).toMatchObject([
-      { content: [{ type: "text", text: withheldReply }] },
-    ]);
+    expect(yield* subject.sent).toMatchObject([{ text: withheldReply }]);
     expect(yield* runtime.inbox).toEqual([]);
     expect(yield* subject.historyOf()).toEqual(["sent", "received"]);
   }));
@@ -226,9 +223,9 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
     expect(yield* subject.sent).toMatchObject([
       {
         author: subject.self,
-        recipients: [subject.bob],
+        recipient: subject.bob,
         replyToMsgId: withheld.id,
-        content: [{ type: "text", text: "Keep private information private." }],
+        text: "Keep private information private.",
       },
     ]);
     expect(yield* runtime.inbox).toEqual([]);
@@ -303,7 +300,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     expect(
       decisions
         .map(({ direction, decision }) => `${direction} ${decision}`)
-        .sort(compareAscii),
+        .sort(Order.string),
     ).toEqual([
       "incoming withheld",
       "incoming withheld",
@@ -313,17 +310,12 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     const replies = yield* subject.sent;
     expect(replies).toMatchObject(
       [plain, outOfTurn].map((withheld) => ({
-        recipients: [subject.bob],
+        recipient: subject.bob,
         replyToMsgId: withheld.id,
       })),
     );
     expect(
-      replies.map(({ content }) =>
-        content.every(
-          (part) =>
-            part.type === "text" && part.text.startsWith(`${withheldReply} `),
-        ),
-      ),
+      replies.map(({ text }) => text.startsWith(`${withheldReply} `)),
     ).toEqual([true, true]);
     yield* subject.sendFrom({ text: "(open :ontology exchange)" });
     expect(yield* runtime.inbox).toHaveLength(1);
@@ -340,7 +332,7 @@ it("answers an act its text rule withholds with that rule's feedback when it hol
     expect(yield* subject.sent).toMatchObject([
       {
         replyToMsgId: act.id,
-        content: [{ type: "text", text: "Keep private information private." }],
+        text: "Keep private information private.",
       },
     ]);
   }));
@@ -421,9 +413,10 @@ it("continues a conversation's history from the cursor a page returned, with wha
       address: bobAddress,
       cursor: first.nextCursor,
     });
-    expect(
-      rest.records.map((record) => record.message.content[0]),
-    ).toMatchObject([{ text: "Message 50" }, { text: "Later message" }]);
+    expect(rest.records.map((record) => record.message.text)).toEqual([
+      "Message 50",
+      "Later message",
+    ]);
     expect(rest.nextCursor).toBeUndefined();
   }));
 
@@ -437,7 +430,7 @@ it("lists every conversation once, in address order", () =>
       { concurrency: 1 },
     );
     expect(yield* runtime.harness.listConversations()).toEqual({
-      addresses: [...new Set(held)].sort(compareAscii),
+      addresses: [...new Set(held)].sort(Order.string),
     });
   }));
 
@@ -465,9 +458,7 @@ it("cancels an unaccepted draft and releases its conversation's turn", () =>
     yield* Deferred.await(entered);
     yield* Fiber.interrupt(cancelled);
     yield* runtime.harness.send({ to: bobAddress, text: "Next draft" });
-    expect(yield* subject.sent).toMatchObject([
-      { content: [{ text: "Next draft" }] },
-    ]);
+    expect(yield* subject.sent).toMatchObject([{ text: "Next draft" }]);
   }));
 
 it("retains a draft's input while its caller changes the original object", () =>
@@ -490,9 +481,7 @@ it("retains a draft's input while its caller changes the original object", () =>
     input.text = "Later mutation";
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(sending);
-    expect(yield* subject.sent).toMatchObject([
-      { content: [{ text: "Captured draft" }] },
-    ]);
+    expect(yield* subject.sent).toMatchObject([{ text: "Captured draft" }]);
   }));
 
 it("reads a saved conversation's history with each agent", () =>

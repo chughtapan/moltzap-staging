@@ -3,7 +3,7 @@
 import { Effect, Encoding, Schema } from "effect";
 import { createHash } from "node:crypto";
 import { getOrCreateOwnedAgent } from "../daemon/agent.js";
-import { AgentCard, AgentName } from "../identity.js";
+import { AgentCard, AgentName } from "../messages.js";
 
 /** The same card for the same name on every call; Alice, Bob, Carol and Dave have ids of one repeated byte. */
 export function testAgentCard(address: string): AgentCard {
