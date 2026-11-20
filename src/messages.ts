@@ -146,7 +146,9 @@ export type Message = typeof messageSchema.Type;
 export const Message = Object.assign(messageSchema, {
   /** A new message with a fresh id, or the refusal of what cannot be one. */
   create: (input: Omit<Message, "msgId">) =>
-    Schema.decode(messageSchema)({ ...input, msgId: MsgId.mint() }).pipe(
+    Effect.suspend(() =>
+      Schema.decode(messageSchema)({ ...input, msgId: MsgId.mint() }),
+    ).pipe(
       Effect.mapError(
         () => new CommunicationError({ reason: "content-invalid" }),
       ),

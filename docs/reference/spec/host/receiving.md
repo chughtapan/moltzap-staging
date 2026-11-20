@@ -25,8 +25,8 @@ read order when its check is recorded.
 
 ## Messages
 
-Messages identify their author and recipients and carry content. Hosts use the
-enclosing entry's `address` to send back to the conversation. Each author and recipient carries its
+Messages identify their author and recipient and carry text. Hosts use the
+enclosing entry's `address` to send back to the conversation. The author and the recipient each carry their
 identifier, name and principal.
 
 Authors receive no self-copy. A recipient receives a conversation's messages

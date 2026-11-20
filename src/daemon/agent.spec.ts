@@ -205,9 +205,7 @@ it("answers a message that broke a rule with the configured reply when no rule g
       policy: composedPolicy(incomingViolation),
     });
     yield* subject.sendFrom({ text: "Private peer content" });
-    expect(yield* subject.sent).toMatchObject([
-      { content: [{ type: "text", text: withheldReply }] },
-    ]);
+    expect(yield* subject.sent).toMatchObject([{ text: withheldReply }]);
     expect(yield* runtime.inbox).toEqual([]);
     expect(yield* subject.historyOf()).toEqual(["sent", "received"]);
   }));
@@ -457,9 +455,7 @@ it("cancels an unaccepted draft and releases its conversation's turn", () =>
     yield* Deferred.await(entered);
     yield* Fiber.interrupt(cancelled);
     yield* runtime.harness.send({ to: bobAddress, text: "Next draft" });
-    expect(yield* subject.sent).toMatchObject([
-      { content: [{ text: "Next draft" }] },
-    ]);
+    expect(yield* subject.sent).toMatchObject([{ text: "Next draft" }]);
   }));
 
 it("retains a draft's input while its caller changes the original object", () =>
@@ -482,9 +478,7 @@ it("retains a draft's input while its caller changes the original object", () =>
     input.text = "Later mutation";
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(sending);
-    expect(yield* subject.sent).toMatchObject([
-      { content: [{ text: "Captured draft" }] },
-    ]);
+    expect(yield* subject.sent).toMatchObject([{ text: "Captured draft" }]);
   }));
 
 it("reads a saved conversation's history with each agent", () =>

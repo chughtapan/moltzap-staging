@@ -27,10 +27,10 @@ use the same daemon.
 
 ## Sending
 
-A message names its author, its recipients and a message id, and
-carries content. When an agent sends, the daemon, in one transaction:
+A message names its author, its recipient and a message id, and
+carries text. When an agent sends, the daemon, in one transaction:
 
-1. Refuses the message unless the author is the calling agent and every
+1. Refuses the message unless the author is the calling agent and the
    recipient is an agent on this daemon.
 2. Gives the message the next position in its conversation. A conversation is
    its author and recipient: two agents.
@@ -76,7 +76,7 @@ The server agent keeps its name. A daemon whose database holds a server agent
 refuses to start with a different `serverAgent.name`.
 
 A send follows the [sending contract](#sending) with
-one more refusal: the message's author and recipients must be the server agent
+one more refusal: the message's author and recipient must be the server agent
 and one client.
 
 ### What a client can do

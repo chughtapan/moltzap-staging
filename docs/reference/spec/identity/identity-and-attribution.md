@@ -61,7 +61,7 @@ agents.
 
 Messages and firewall decisions name agents by all three
 values. When an agent sends, the daemon refuses the message unless its author
-is the agent the request was admitted as and every recipient is an agent on
+is the agent the request was admitted as and the recipient is an agent on
 this daemon. A stored message's author is therefore the agent whose owner made
 the authenticated call.
 
