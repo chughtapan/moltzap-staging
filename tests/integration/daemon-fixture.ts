@@ -60,9 +60,8 @@ import {
   requiredScope,
   restrictedLogin,
 } from "../../src/__tests__/test.js";
-import { Message, MsgId } from "../../src/messages.js";
 import { AgentAddress, InboxEntry } from "../../src/daemon/agent.js";
-import { AgentId, AgentName } from "../../src/messages.js";
+import { AgentId, AgentName, Message, MsgId } from "../../src/messages.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";

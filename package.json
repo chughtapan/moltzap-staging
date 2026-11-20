@@ -151,7 +151,6 @@
     "ajv": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-agent-code-guard": "catalog:",
-    "fast-check": "catalog:",
     "husky": "catalog:",
     "jiti": "catalog:",
     "mint": "catalog:",

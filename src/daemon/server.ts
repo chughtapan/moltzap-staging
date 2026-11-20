@@ -56,15 +56,12 @@ import {
   addressOfAgent,
   AgentAddress,
   conversationsOf,
-  Cursor,
   type Daemon,
   getOrCreateOwnedAgent,
   HistoryError,
   historyRecords,
   InboxEntry,
-  Page,
   PAGE_SIZE,
-  PaginatedRequest,
   readInboxEntries,
   receive,
   send,
@@ -91,6 +88,21 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
     }),
   );
   yield* http.serve(app);
+});
+
+/** A place in an ordered read, as decimal text. A read returns what follows it. */
+const Cursor = Schema.String.pipe(Schema.pattern(/^\d{1,15}$/u)).annotations({
+  description: "the nextCursor of an earlier result",
+});
+
+/** Omit cursor to begin and pass the returned nextCursor unchanged. */
+const PaginatedRequest = Schema.Struct({
+  cursor: Schema.optional(Cursor),
+});
+
+/** Absence of nextCursor marks the end of the listing. */
+const Page = Schema.Struct({
+  nextCursor: Schema.optional(Cursor),
 });
 
 /** The issuer's metadata could not be read, names another issuer or names no key set. */

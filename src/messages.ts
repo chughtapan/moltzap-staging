@@ -149,7 +149,8 @@ export const Message = Object.assign(messageSchema, {
     Effect.suspend(() =>
       Schema.decode(messageSchema)({ ...input, msgId: MsgId.mint() }),
     ).pipe(
-      Effect.mapError(
+      Effect.catchTag(
+        "ParseError",
         () => new CommunicationError({ reason: "content-invalid" }),
       ),
       Effect.withSpan("Message.create"),

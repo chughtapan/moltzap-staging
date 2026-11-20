@@ -8,6 +8,7 @@ import {
   Exit,
   FastCheck as fc,
   Fiber,
+  Order,
   Schema,
 } from "effect";
 import { expect } from "vitest";
@@ -20,8 +21,7 @@ import {
   makeHarnessFixture,
 } from "../__tests__/service-fixtures.js";
 import { openTestDatabase } from "../__tests__/test.js";
-import { MsgId } from "../messages.js";
-import { AgentName } from "../messages.js";
+import { AgentName, MsgId } from "../messages.js";
 import { form, noFields, normOf } from "../norms/__tests__/norms-fixtures.js";
 import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
 
@@ -297,7 +297,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     expect(
       decisions
         .map(({ direction, decision }) => `${direction} ${decision}`)
-        .sort(),
+        .sort(Order.string),
     ).toEqual([
       "incoming withheld",
       "incoming withheld",
@@ -427,7 +427,7 @@ it("lists every conversation once, in address order", () =>
       { concurrency: 1 },
     );
     expect(yield* runtime.harness.listConversations()).toEqual({
-      addresses: [...new Set(held)].sort(),
+      addresses: [...new Set(held)].sort(Order.string),
     });
   }));
 

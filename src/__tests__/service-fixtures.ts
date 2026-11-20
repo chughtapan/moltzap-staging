@@ -7,8 +7,6 @@ import type {
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../firewall/index.js";
-import type { AgentCard } from "../messages.js";
-import { Message } from "../messages.js";
 import {
   AgentAddress,
   conversationsOf,
@@ -21,6 +19,7 @@ import {
 } from "../daemon/agent.js";
 import { readDecisions } from "../daemon/store.js";
 import { type Firewall, makeFirewall } from "../firewall/service.js";
+import { type AgentCard, Message } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";
 import { openTestDatabase } from "./test.js";

@@ -2,8 +2,13 @@
 
 import { Effect, Encoding } from "effect";
 import type { DecisionProvider } from "../check.js";
-import { Message } from "../../messages.js";
-import { AgentCard, AgentId, AgentName, PrincipalId } from "../../messages.js";
+import {
+  AgentCard,
+  AgentId,
+  AgentName,
+  Message,
+  PrincipalId,
+} from "../../messages.js";
 import {
   decodeMessagePolicy,
   type LoadedMessagePolicy,

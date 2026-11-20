@@ -6,7 +6,7 @@
  */
 
 import { FileSystem } from "@effect/platform";
-import { Data, Effect, Either } from "effect";
+import { Data, Effect, Either, Order } from "effect";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -54,7 +54,7 @@ export const loadNorms = Effect.fn("loadNorms")(
     const fs = yield* FileSystem.FileSystem;
     const files = yield* fs.readDirectory(directory);
     const norms: InstalledNorms = yield* Effect.forEach(
-      files.filter((file) => file.endsWith(".lisp")).sort(),
+      files.filter((file) => file.endsWith(".lisp")).sort(Order.string),
       (file) =>
         fs
           .readFileString(join(directory, file))

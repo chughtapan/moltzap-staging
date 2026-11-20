@@ -58,6 +58,7 @@ export class ProviderRequestSettings extends Schema.Class<ProviderRequestSetting
  * `checkedRuleIds` lists the rules the check judged: a rule that does not
  * apply to the message's direction is not listed.
  */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the daemon stores and returns from read_firewall_decisions.
 export const checkRecordSchema = Schema.Struct({
   checkId: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),

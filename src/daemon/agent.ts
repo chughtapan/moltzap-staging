@@ -5,10 +5,15 @@
  * firewall checks every message of its conversations.
  */
 
-import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
+import { Data, Duration, Effect, Order, PubSub, Queue, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import type { Firewall } from "../firewall/service.js";
 import type { InstalledNorms } from "../norms/index.js";
+import {
+  type CheckRecord,
+  type FirewallRefusalReason,
+  LocalGuidance,
+} from "../firewall/index.js";
 import {
   AGENT_NAME_RULE,
   type AgentCard,
@@ -20,11 +25,6 @@ import {
   PrincipalId,
   wellFormedString,
 } from "../messages.js";
-import {
-  type CheckRecord,
-  type FirewallRefusalReason,
-  LocalGuidance,
-} from "../firewall/index.js";
 import {
   agentNamed,
   agentOwnedBy,
@@ -114,21 +114,6 @@ export const AgentAddress = Schema.String.pipe(
  * @useDeclaredType
  */
 export type AgentAddress = typeof AgentAddress.Type;
-
-/** A place in an ordered read, as decimal text. A read returns what follows it. */
-export const Cursor = Schema.String.pipe(
-  Schema.pattern(/^\d{1,15}$/u),
-).annotations({ description: "the nextCursor of an earlier result" });
-
-/** Omit cursor to begin and pass the returned nextCursor unchanged. */
-export const PaginatedRequest = Schema.Struct({
-  cursor: Schema.optional(Cursor),
-});
-
-/** Absence of nextCursor marks the end of the listing. */
-export const Page = Schema.Struct({
-  nextCursor: Schema.optional(Cursor),
-});
 
 /** The most inbox entries, history records or conversation addresses one page holds. */
 export const PAGE_SIZE = 50;
@@ -286,7 +271,7 @@ export const readInboxEntries = Effect.fn("readInboxEntries")(function* (
 /** The address of every conversation of `self`, in order. */
 export const conversationsOf = Effect.fn("conversationsOf")((self: AgentCard) =>
   Effect.map(conversationPeers(self.agentId), (peers) => ({
-    addresses: peers.map(addressOfAgent).sort(),
+    addresses: peers.map(addressOfAgent).sort(Order.string),
   })),
 );
 

@@ -176,6 +176,7 @@ const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
  * The guidance a host reads with one message: its check, and an instruction
  * for each rule the provider could not settle for the allowed incoming message.
  */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the daemon stores and puts in its inbox entry schema.
 export const LocalGuidance = Schema.Struct({
   checkId: checkIdSchema,
   instructions: Schema.Array(uncertainInstructionSchema),
