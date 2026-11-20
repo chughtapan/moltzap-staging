@@ -212,5 +212,4 @@ unavailable. No implicit rewind, reopening or cancellation occurs.
 An ending
 act closes the local instance. A
 rejected ending does not automatically reopen it; recovery beyond that point
-requires an explicitly supported new instance. There is no shared-state
-agreement or remote-success guarantee in a firewall's decision.
+requires an explicitly supported new instance.
