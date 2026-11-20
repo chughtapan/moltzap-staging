@@ -1,4 +1,5 @@
 /** @file Reads the settings file and the files it names into the daemon's settings. */
+import packageJson from "../../package.json" with { type: "json" };
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { FileSystem } from "@effect/platform";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
@@ -18,7 +19,9 @@ import {
   loadNorms,
   type NormsConfigurationError,
 } from "../norms/index.js";
-import { packageVersion } from "../version.js";
+
+/** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
+export const packageVersion: string = packageJson.version;
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.

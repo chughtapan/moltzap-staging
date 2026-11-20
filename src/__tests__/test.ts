@@ -13,7 +13,7 @@ import {
 import { randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer owns the issuer listener's lifetime.
 import { createServer } from "node:http";
-import { databaseConnection, prepareDatabase } from "../database.js";
+import { databaseConnection, prepareDatabase } from "../daemon/store.js";
 
 const serverUrl = Config.redacted("SHARNESS_PG_TEST_URL").pipe(
   Effect.catchTag("ConfigError", () =>
@@ -68,7 +68,7 @@ export type TestDatabase = Effect.Effect.Success<
 
 /**
  * Creates a login of `database`'s tables that can read and write rows but can
- * neither create objects nor bypass row policies, as the login a daemon serves
+ * not create objects, as the login a daemon serves
  * through cannot. Returns the URL that reaches the schema as that login;
  * closing the scope drops it.
  */

@@ -37,36 +37,31 @@ import {
   Schema,
   type Scope,
   Stream,
+  Struct,
 } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
-import {
-  Cursor,
-  Message,
-  MsgId,
-  Page,
-  PAGE_SIZE,
-  PaginatedRequest,
-  wellFormedString,
-} from "../communication/index.js";
+import { Message, MsgId, wellFormedString } from "../communication/index.js";
 import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
-import { LocalGuidance } from "../firewall/index.js";
-import { AgentId, AgentName } from "../identity.js";
-import { packageVersion } from "../version.js";
+import { checkRecordSchema, LocalGuidance } from "../firewall/index.js";
+import { AgentCard, AgentId, AgentName } from "../identity.js";
 import {
   addressedAgent,
   addressOfAgent,
   AgentAddress,
   conversationsOf,
+  Cursor,
   type Daemon,
   getOrCreateOwnedAgent,
   HistoryError,
   historyRecords,
-  type HostedAgent,
   InboxEntry,
+  Page,
+  PAGE_SIZE,
+  PaginatedRequest,
   readInboxEntries,
   receive,
   send,
@@ -74,11 +69,8 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
-import {
-  firewallDecisionsRequestSchema,
-  firewallDecisionsSchema,
-  readDecisions,
-} from "./decisions.js";
+import { packageVersion } from "./settings.js";
+import { readDecisions } from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 
@@ -96,55 +88,6 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
     }),
   );
   yield* http.serve(app);
-});
-
-/**
- * Sends the server agent's message to the client its address names. An
- * address that names no agent, or the server agent, refuses the send.
- */
-export const sendToAddress = Effect.fn("sendToAddress")(function* (
-  daemon: Daemon,
-  agent: HostedAgent,
-  { to, ...message }: SendRequest,
-) {
-  const recipient = yield* addressedAgent(to);
-  if (recipient === undefined) {
-    return yield* new SendError({
-      reason: "unknown-agent",
-      detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
-    });
-  }
-  if (recipient.agentKey === agent.agentKey) {
-    return yield* new SendError({ reason: "membership-invalid" });
-  }
-  const id = yield* send(daemon, { ...message, author: agent, recipient });
-  return { id, address: to };
-});
-
-/** A page of the server agent's conversation with the client an address names. */
-export const readConversation = Effect.fn("readConversation")(function* (
-  agent: HostedAgent,
-  request: { readonly address: AgentAddress; readonly cursor?: string },
-) {
-  const other = yield* addressedAgent(request.address);
-  if (other === undefined) {
-    return yield* new HistoryError({ reason: "unknown-agent" });
-  }
-  if (other.agentKey === agent.agentKey) {
-    return yield* new HistoryError({ reason: "invalid-address" });
-  }
-  return yield* historyRecords(agent, other, request.cursor);
-});
-
-/** Sends a client's message to the server agent. */
-export const sendToServerAgent = Effect.fn("sendToServerAgent")(function* (
-  daemon: Daemon,
-  agent: HostedAgent,
-  message: Omit<SendRequest, "to">,
-) {
-  const recipient = daemon.serverAgent;
-  const id = yield* send(daemon, { ...message, author: agent, recipient });
-  return { id, address: addressOfAgent(recipient) };
 });
 
 /** The issuer's metadata could not be read, names another issuer or names no key set. */
@@ -340,15 +283,15 @@ const ACT_SYNTAX =
 /** The MCP server for one request, with the inbox event and the tools of `agent`'s role. */
 function requestServer(
   daemon: Daemon,
-  agent: HostedAgent,
+  agent: AgentCard,
   events: EventsExtension,
 ) {
   const mcp = new McpServer(
     { name: "sharnessd", version: packageVersion },
     { extensions: [events] },
   );
-  const { card } = agent;
-  const isServerAgent = agent.agentKey === daemon.serverAgent.agentKey;
+  const card = agent;
+  const isServerAgent = agent.agentId === daemon.serverAgent.agentId;
   register(
     mcp,
     "status",
@@ -427,11 +370,60 @@ function requestServer(
   return mcp;
 }
 
+/**
+ * Sends the server agent's message to the client its address names. An
+ * address that names no agent, or the server agent, refuses the send.
+ */
+const sendToAddress = Effect.fn("sendToAddress")(function* (
+  daemon: Daemon,
+  agent: AgentCard,
+  { to, ...message }: SendRequest,
+) {
+  const recipient = yield* addressedAgent(to);
+  if (recipient === undefined) {
+    return yield* new SendError({
+      reason: "unknown-agent",
+      detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
+    });
+  }
+  if (recipient.agentId === agent.agentId) {
+    return yield* new SendError({ reason: "membership-invalid" });
+  }
+  const id = yield* send(daemon, { ...message, author: agent, recipient });
+  return { id, address: to };
+});
+
+/** A page of the server agent's conversation with the client an address names. */
+const readConversation = Effect.fn("readConversation")(function* (
+  agent: AgentCard,
+  request: { readonly address: AgentAddress; readonly cursor?: string },
+) {
+  const other = yield* addressedAgent(request.address);
+  if (other === undefined) {
+    return yield* new HistoryError({ reason: "unknown-agent" });
+  }
+  if (other.agentId === agent.agentId) {
+    return yield* new HistoryError({ reason: "invalid-address" });
+  }
+  return yield* historyRecords(agent, other, request.cursor);
+});
+
+/** Sends a client's message to the server agent. */
+const sendToServerAgent = Effect.fn("sendToServerAgent")(function* (
+  daemon: Daemon,
+  agent: AgentCard,
+  message: Omit<SendRequest, "to">,
+) {
+  const recipient = daemon.serverAgent;
+  const id = yield* send(daemon, { ...message, author: agent, recipient });
+  return { id, address: addressOfAgent(recipient.agentName) };
+});
+
 /** The tools only the server agent has: it addresses any client and reads its firewall's decisions. */
 function registerServerAgentTools(
   mcp: McpServer,
   daemon: Daemon,
-  agent: HostedAgent,
+  agent: AgentCard,
 ) {
   register(
     mcp,
@@ -484,20 +476,31 @@ function registerServerAgentTools(
     {
       description:
         "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
-      input: firewallDecisionsRequestSchema,
-      output: firewallDecisionsSchema,
+      input: exactStruct({ since: Schema.optional(Schema.NonNegativeInt) }),
+      output: exactStruct({
+        decisions: Schema.Array(
+          exactStruct({
+            ...Struct.omit(checkRecordSchema.fields, "peers"),
+            peer: AgentCard,
+          }),
+        ),
+      }),
       readOnly: true,
     },
-    (request) => readDecisions(agent.agentKey, request),
+    ({ since }) =>
+      Effect.map(readDecisions(since ?? 0), (records) => ({
+        decisions: records.flatMap((record) =>
+          record.peers.map((peer) => ({
+            ...Struct.omit(record, "peers"),
+            peer,
+          })),
+        ),
+      })),
   );
 }
 
 /** The tools of a client, which name no recipient and no conversation: both are the server agent. */
-function registerClientTools(
-  mcp: McpServer,
-  daemon: Daemon,
-  agent: HostedAgent,
-) {
+function registerClientTools(mcp: McpServer, daemon: Daemon, agent: AgentCard) {
   const { serverAgent } = daemon;
   register(
     mcp,
@@ -664,7 +667,7 @@ function makeInboxEvents() {
     const events = new EventsExtension({
       getPrincipal: ({ http }) =>
         inRequest(
-          Effect.map(admittedAgent(http?.authInfo), ({ agentKey }) => agentKey),
+          Effect.map(admittedAgent(http?.authInfo), ({ agentId }) => agentId),
         ),
       checkIntervalMs: INBOX_CHECK_MILLISECONDS,
       webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
@@ -683,15 +686,15 @@ function makeInboxEvents() {
 
 /**
  * One check of the inbox event: at most `maxEvents` of the entries after
- * `cursor` in the inbox of the agent stored under `agentKey`, as occurrences.
+ * `cursor` in the inbox of the agent `agentId` names, as occurrences.
  */
 function inboxOccurrences(
-  agentKey: string | null,
+  agentId: string | null,
   cursor: string | null,
   maxEvents?: number,
 ) {
   return Effect.gen(function* () {
-    const page = yield* readInboxEntries(yield* Effect.fromNullable(agentKey), {
+    const page = yield* readInboxEntries(yield* Effect.fromNullable(agentId), {
       limit: Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
       ...(cursor === null
         ? {}

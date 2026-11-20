@@ -36,8 +36,7 @@
         "src/communication"
       ],
       "entrypoints": [
-        "src/communication/index.ts",
-        "src/communication/service.ts"
+        "src/communication/index.ts"
       ],
       "reason": "Messages, requests and ordered history"
     },
@@ -71,26 +70,6 @@
         "src/daemon/index.ts"
       ],
       "reason": "What sharnessd serves: its settings, its agents with their inboxes, and the MCP tools served to their hosts"
-    },
-    {
-      "name": "version",
-      "roots": [
-        "src/version.ts"
-      ],
-      "entrypoints": [
-        "src/version.ts"
-      ],
-      "reason": "Package version"
-    },
-    {
-      "name": "database",
-      "roots": [
-        "src/database.ts"
-      ],
-      "entrypoints": [
-        "src/database.ts"
-      ],
-      "reason": "SQL connections, typed query compilation, transaction context and migrations shared by daemon domains"
     }
   ],
   "layers": [

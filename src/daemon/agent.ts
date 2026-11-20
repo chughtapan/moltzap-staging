@@ -84,8 +84,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
     yield* saveAgent(owner, {
       agentId: AgentId.make(minted("agt_")),
       agentName:
-        agentName ??
-        AgentName.make(`agent-${randomBytes(12).toString("hex")}`),
+        agentName ?? AgentName.make(`agent-${randomBytes(12).toString("hex")}`),
       principalId: PrincipalId.make(minted("prn_")),
     });
     const saved = yield* agentOwnedBy(owner);
@@ -292,11 +291,10 @@ export const readInboxEntries = Effect.fn("readInboxEntries")(function* (
 });
 
 /** The address of every conversation of `self`, in order. */
-export const conversationsOf = Effect.fn("conversationsOf")(
-  (self: AgentCard) =>
-    Effect.map(conversationPeers(self.agentId), (peers) => ({
-      addresses: peers.map(addressOfAgent).sort(compareAscii),
-    })),
+export const conversationsOf = Effect.fn("conversationsOf")((self: AgentCard) =>
+  Effect.map(conversationPeers(self.agentId), (peers) => ({
+    addresses: peers.map(addressOfAgent).sort(compareAscii),
+  })),
 );
 
 /** The inbox entry of a message its recipient may read, with the guidance stored for it. */
