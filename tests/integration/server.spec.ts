@@ -12,7 +12,7 @@ import { Effect, identity, Redacted, Schedule, Stream } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { callTool, send, type SignedIn } from "../../src/__tests__/daemon.js";
+import { callTool, send, type SignedIn } from "../../src/__tests__/server.js";
 import { issuerFixture } from "../../src/__tests__/test.js";
 import {
   inboxStream,
@@ -21,7 +21,7 @@ import {
   SERVER_AGENT_OWNER,
   sharedServer,
   stopProcess,
-} from "./daemon-fixture.js";
+} from "./server-fixture.js";
 
 const BINARY = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";

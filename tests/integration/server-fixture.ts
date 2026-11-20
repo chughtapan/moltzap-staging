@@ -15,7 +15,7 @@
  *   agent's, and any other is a client's.
  *
  * A suite drives the signed-in agents as their hosts do, through the official
- * MCP client and the tool helpers of `src/__tests__/daemon.ts`. `received`
+ * MCP client and the tool helpers of `src/__tests__/server.ts`. `received`
  * reads what the inbox event delivers to an agent. `processTrace` makes a
  * trace a vitest test whose children stop with it.
  */
@@ -47,7 +47,7 @@ import {
   callTool,
   decodeInboxEntry,
   type SignedIn,
-} from "../../src/__tests__/daemon.js";
+} from "../../src/__tests__/server.js";
 import {
   issuerFixture,
   openTestDatabase,

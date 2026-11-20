@@ -55,7 +55,7 @@ const check = Effect.gen(function* () {
   yield* fs.writeFileString(
     join(consumer, "package.json"),
     JSON.stringify({
-      name: "sharness-daemon-packed-consumer",
+      name: "sharness-packed-consumer",
       private: true,
       packageManager,
       dependencies: { [name]: `file:${join(scratch, tarball ?? "")}` },

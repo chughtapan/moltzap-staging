@@ -25,7 +25,7 @@ import {
   inProcessServer,
   send,
   type SignedIn,
-} from "./__tests__/daemon.js";
+} from "./__tests__/server.js";
 import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
 import { openTestDatabase } from "./__tests__/test.js";
 import { AgentName } from "./messages.js";
