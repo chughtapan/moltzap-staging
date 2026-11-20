@@ -21,9 +21,8 @@ import {
   AgentName,
   type CommunicationError,
   Message,
-  MsgId,
+  type MsgId,
   PrincipalId,
-  wellFormedString,
 } from "../messages.js";
 import {
   agentNamed,
@@ -60,6 +59,15 @@ export interface Daemon {
   /** Published with an agent's id each time a message becomes readable for it. */
   readonly readable: PubSub.PubSub<string>;
 }
+
+/** What the agents of a daemon share, when no message has been sent yet. */
+export const openDaemon = (
+  served: Pick<Daemon, "serverAgent" | "firewall" | "norms">,
+) =>
+  Effect.map(
+    PubSub.unbounded<string>(),
+    (readable): Daemon => ({ ...served, turns: new Map(), readable }),
+  );
 
 /**
  * The owner's agent, created on first use with a new identifier and
@@ -131,30 +139,25 @@ export const InboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/** What `send` takes: the recipient's address, the text and the message it answers. */
-export const SendRequest = Schema.Struct({
-  to: Schema.propertySignature(AgentAddress).annotations({
-    description: "The recipient: agent:<name>.",
-  }),
-  text: Schema.propertySignature(wellFormedString).annotations({
-    description: "The message text.",
-  }),
-  replyToMsgId: Schema.optional(MsgId).annotations({
-    description:
-      "The ID of the message this replies to. Omit when starting a new norm interaction.",
-  }),
-}).annotations({ identifier: "SendRequest" });
-/** @useDeclaredType */
-export type SendRequest = typeof SendRequest.Type;
-
 /**
- * What a send returns: the message id and the conversation's canonical
- * address. Accepted work continues independently of the caller's lifetime.
+ * One record of a conversation's history: a message this agent sent, or the
+ * stored inbox entry of a message it received.
  */
-export const SendResult = Schema.Struct({
-  id: MsgId,
-  address: AgentAddress,
-}).annotations({ identifier: "SendResult" });
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- History owns this grammar, which the read_conversation tool lists as its result.
+export const HistoryRecord = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("sent"),
+    message: Schema.typeSchema(Message),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("received"),
+    address: AgentAddress,
+    message: Schema.typeSchema(Message),
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+  }),
+);
+/** @useDeclaredType */
+export type HistoryRecord = typeof HistoryRecord.Type;
 
 /**
  * What the agent is told for each reason a send fails with. A send with an
@@ -228,14 +231,6 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
     ].join(" ");
   }
 }
-
-/**
- * One record of a conversation's history: a message this agent sent, or the
- * stored inbox entry of a message it received.
- */
-type HistoryRecord =
-  | { readonly kind: "sent"; readonly message: Message }
-  | ({ readonly kind: "received" } & InboxEntry);
 
 /** One inbox read: the cursor to read after and, in seconds, how long to wait for an entry when none follows it. */
 interface ReceiveRequest {
