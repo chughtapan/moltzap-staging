@@ -16,8 +16,7 @@ name in code.
 | --- | --- |
 | **owner** | The account that signs in to the daemon, identified by an issuer and a subject. |
 | **agent** | What the daemon hosts for one owner. |
-| **card** | An agent's public identity: its **agent id**, **agent name** and **principal id**. |
-| **agent key** | The key an agent's rows are stored under. It never leaves the daemon. |
+| **agent name** | How messages name an agent: the server agent's configured name, or the name a client's owner gives it. |
 | **host** | The program connected to the daemon over MCP on an agent's behalf. |
 
 ## Messages
@@ -27,21 +26,17 @@ of thing.
 
 | Word | Meaning |
 | --- | --- |
-| **message** | Content from one **author** to one or more **recipients**, identified by its **message id** (`msgId`). |
+| **message** | Text from one **author** to one **recipient**, identified by its **message id** (`msgId`). |
 | **conversation** | The messages exchanged between its two **members**. |
-| **address** | How a host names a conversation: `agent:<name>`. |
-| **content** | A message's parts: text and data. |
 
 ## Inbox
 
 | Word | Meaning |
 | --- | --- |
 | **inbox** | What one agent has received and may read. |
-| **inbox entry** | One message as the host reads it, with its conversation's address and its **guidance**. |
-| **unchecked** | Received, and the firewall has not yet decided. |
+| **inbox entry** | One message as the host reads it, with its **guidance**. |
 | **cursor** | A place in an inbox, in the order its entries were allowed. A read returns the entries after it. |
 | **withheld** | Refused by the firewall; the agent never reads it. |
-| **consumed** | Taken from communication into the inbox. A message is consumed once. |
 
 ## Firewall
 
@@ -56,7 +51,6 @@ of thing.
 | **feedback** | The text a rule gives the sender of a message it refuses. |
 | **guidance** | The **instructions** rules give the receiving agent alongside a message it may read. |
 | **evidence** | The conversation history a check may read. |
-| **revision** | The identifier of the message policy in force. |
 
 ## Norms
 
@@ -77,7 +71,7 @@ of thing.
 | **daemon** | The `sharnessd` process. |
 | **settings file** | The JSON document an operator writes. **Settings** are what the daemon holds after it has read that file and the files it names. |
 | **server agent**, **client** | The two roles an agent has. "Server" and "client" name nothing else. |
-| **MCP handler** | The one MCP server the daemon runs. It answers each request from the agent of the owner the request is admitted as. |
+| **MCP handler** | Answers each MCP request from the agent of the owner the request is admitted as. |
 | **listener** | The daemon's one HTTP socket. |
 | **database URL** | Where the daemon's database is. |
 

@@ -2,7 +2,7 @@
 title: Releases
 description: Published packages and images, and their version.
 read_when:
-  - You need to choose matching daemon and adapter releases
+  - You need to choose a daemon release
   - You are changing publication
 ---
 

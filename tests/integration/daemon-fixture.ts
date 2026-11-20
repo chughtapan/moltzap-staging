@@ -1,31 +1,23 @@
 /**
  * @file One `sharnessd` process that hosts every agent of a test.
  *
- * `sharedDaemon(options)` prepares a daemon's settings, database and OAuth
- * issuer and returns it without starting it:
+ * `sharedDaemon()` prepares a daemon's settings, database and OAuth issuer
+ * and returns it without starting it:
  *
- * - `endpoint`, `directory`, `environment`: where the daemon listens, the
- *   directory holding its settings file, and the
- *   environment its process reads.
- * - `start(environment?)`: runs the process until its scope closes or
- *   `stopProcess` stops it. Starting again serves the same database.
- * - `startupFailure(environment?)`: runs a process that must exit before it
- *   listens, and returns its exit code and output.
+ * - `directory`: the directory holding its settings file.
+ * - `start()`: runs the process until its scope closes or `stopProcess` stops
+ *   it. Starting again serves the same database.
+ * - `startupFailure()`: runs a process that must exit before it listens, and
+ *   returns its exit code and output.
  * - `configure(changes)`: changes the settings the next start reads.
- * - `bearer(owner)`: what the host of a named owner presents. The owner
- *   `SERVER_AGENT_OWNER` is the server agent's, and any other is a client's.
  * - `signInAs(owner)`: an MCP connection as the owner's agent, and the agent
- *   `status` reports for it.
- *
- * The options are settings that replace the fixture's. `managedProcess`,
- * `awaitReady` and `daemonListening` start and await a daemon that runs some
- * other way, such as in a container.
+ *   `status` reports for it. The owner `SERVER_AGENT_OWNER` is the server
+ *   agent's, and any other is a client's.
  *
  * A suite drives the signed-in agents as their hosts do, through the official
- * MCP client: `callTool` calls one tool, `send` sends a message,
- * and `joinParticipants` signs owners in and queues what each agent
- * receives, through the Events extension, for `nextItem` and `receivedOrder`.
- * `processTrace` makes a trace a vitest test whose children stop with it.
+ * MCP client and the tool helpers of `src/__tests__/daemon.ts`. `received`
+ * reads what the inbox event delivers to an agent. `processTrace` makes a
+ * trace a vitest test whose children stop with it.
  */
 
 import type { TestContext } from "vitest";
@@ -37,34 +29,13 @@ import {
 } from "@modelcontextprotocol/client";
 import { EventsClientExtension } from "@modelcontextprotocol/client/ext/events";
 import {
-  AgentAddress,
-  type AgentId,
-  type AgentName,
-  INBOX_EVENT,
-  InboxEntry,
-  SendRequest,
-  toolDefinitions,
-  type ToolName,
-  type ToolRequest,
-  type ToolResult,
-} from "@social-harness/social-harness";
-import {
-  issuerFixture,
-  openTestDatabase,
-  requiredScope,
-  restrictedLogin,
-} from "@social-harness/social-harness/test";
-import {
   Console,
   Data,
   Duration,
   Effect,
   Exit,
   Fiber,
-  Queue,
   Redacted,
-  Ref,
-  Schema,
   type Scope,
   Stream,
 } from "effect";
@@ -72,6 +43,23 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  callTool,
+  decodeInboxEntry,
+  type SignedIn,
+} from "../../src/__tests__/daemon.js";
+import {
+  issuerFixture,
+  openTestDatabase,
+  requiredScope,
+  restrictedLogin,
+} from "../../src/__tests__/test.js";
+import { makeFirewall } from "../../src/firewall.js";
+import { AgentName } from "../../src/messages.js";
+import { openDaemon } from "../../src/server.js";
+
+/** The name of the event whose occurrences are an agent's inbox entries. */
+export const INBOX_EVENT = "org.social-harness/inbox.pending";
 
 /** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
@@ -91,48 +79,9 @@ export interface RunningProcess {
   readonly logs: () => string;
 }
 
-/** What `sharedDaemon` prepares differently from its defaults. */
-export interface DaemonOptions {
-  /** Settings that replace the fixture's: a message policy, norms. */
-  readonly settings?: Readonly<Record<string, unknown>>;
-}
-
-/** A signed-in owner: its agent and an MCP connection as that agent. */
-export interface SignedIn {
-  /** The agent as `status` reports it and as messages name it. */
-  readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
-  /** How the server agent addresses this one. */
-  readonly address: AgentAddress;
-  readonly connection: {
-    readonly mcp: Client;
-    readonly events: EventsClientExtension;
-  };
-}
-
-/** A prepared daemon. The file comment lists what each member is for. */
-export interface Daemon {
-  readonly endpoint: URL;
-  readonly directory: string;
-  readonly environment: Readonly<Record<string, string>>;
-  readonly start: (
-    environment?: Readonly<Record<string, string>>,
-  ) => Effect.Effect<RunningProcess, ProcessTestError, Scope.Scope>;
-  readonly startupFailure: (
-    environment?: Readonly<Record<string, string>>,
-  ) => Effect.Effect<
-    { readonly exitCode: number | null; readonly logs: string },
-    ProcessTestError,
-    Scope.Scope
-  >;
-  readonly configure: (
-    changes: Readonly<Record<string, unknown>>,
-  ) => Effect.Effect<void, ProcessTestError>;
-  readonly bearer: (
-    owner: string,
-  ) => Effect.Effect<Redacted.Redacted, ProcessTestError>;
-  readonly signInAs: (
-    owner: string,
-  ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
+/** A signed-in owner, with the Events extension of its connection. */
+export interface Subscriber extends SignedIn {
+  readonly events: EventsClientExtension;
 }
 
 /** Disposable children listen only on loopback. */
@@ -232,7 +181,7 @@ export const stopProcess = Effect.fn("stopProcess")(function* (
 const managedProcess = Effect.fn("managedProcess")(function* (
   executable: string,
   processArguments: readonly string[],
-  environment: Readonly<Record<string, string>> = {},
+  environment: Readonly<Record<string, string>>,
 ) {
   const child = spawn(executable, processArguments, {
     cwd: WORKSPACE_ROOT,
@@ -266,63 +215,45 @@ const daemonListening = (running: RunningProcess, endpoint: URL) =>
     running.logs().includes(`sharnessd listening on ${endpoint.href} (`),
   );
 
-/**
- * Polls `probe` until it reads true, and fails with the child's output when
- * the child exits first or `timeout` passes. `phase` names what the child had
- * yet to do.
- */
-const awaitReady = Effect.fn("awaitReady")(
-  (
-    running: RunningProcess,
-    probe: Effect.Effect<boolean>,
-    phase: string,
-    timeout: Duration.DurationInput = READINESS_TIMEOUT,
-  ) =>
+/** Waits until the daemon has printed its listening line, and fails with its output when it exits first or thirty seconds pass. */
+const awaitListening = Effect.fn("awaitListening")(
+  (running: RunningProcess, endpoint: URL) =>
     Effect.gen(function* () {
       while (!hasExited(running.child)) {
-        if ((yield* probe) && !hasExited(running.child)) {
+        if (yield* daemonListening(running, endpoint)) {
           return;
         }
         yield* Effect.sleep(POLL_INTERVAL);
       }
       return yield* new ProcessTestError({
-        message: `process exited before ${phase}\n${running.logs()}`,
+        message: `process exited before listening\n${running.logs()}`,
       });
     }).pipe(
       Effect.timeoutFail({
-        duration: timeout,
+        duration: READINESS_TIMEOUT,
         onTimeout: () =>
           new ProcessTestError({
-            message: `process timed out before ${phase}\n${running.logs()}`,
+            message: `process timed out before listening\n${running.logs()}`,
           }),
       }),
     ),
 );
 
-/** Runs a daemon that must exit before it listens on `endpoint`. */
+/** Runs a daemon that must exit instead of serving, and gives its exit code and output. */
 const startupFailure = (
   spawned: Effect.Effect<RunningProcess, never, Scope.Scope>,
-  endpoint: URL,
 ) =>
   Effect.gen(function* () {
     const running = yield* spawned;
-    const listened = yield* awaitReady(
-      running,
-      daemonListening(running, endpoint),
-      "listening",
-    ).pipe(
-      Effect.as(true),
-      Effect.catchIf(
-        () => hasExited(running.child),
-        () => Effect.succeed(false),
-      ),
+    yield* waitForExit(running).pipe(
+      Effect.timeoutFail({
+        duration: READINESS_TIMEOUT,
+        onTimeout: () =>
+          new ProcessTestError({
+            message: `daemon did not exit\n${running.logs()}`,
+          }),
+      }),
     );
-    if (listened) {
-      return yield* new ProcessTestError({
-        message: `daemon listened unexpectedly\n${running.logs()}`,
-      });
-    }
-    yield* waitForExit(running);
     return { exitCode: running.child.exitCode, logs: running.logs() };
   }).pipe(Effect.withSpan("startupFailure"));
 
@@ -336,23 +267,17 @@ const settingsDocument = (
 ) =>
   Effect.gen(function* () {
     const filesystem = yield* FileSystem.FileSystem;
-    const write = (document: Readonly<Record<string, unknown>>) =>
-      filesystem
-        .writeFileString(file, JSON.stringify(document))
-        .pipe(Effect.mapError(failed("could not write the daemon settings")));
-    const document = yield* Ref.make(initial);
-    yield* write(initial);
-    return (changes: Readonly<Record<string, unknown>>) =>
-      Ref.updateAndGet(document, (current) => ({
-        ...current,
-        ...changes,
-      })).pipe(Effect.flatMap(write));
+    let document = initial;
+    const configure = (changes: Readonly<Record<string, unknown>>) =>
+      Effect.suspend(() => {
+        document = { ...document, ...changes };
+        return filesystem.writeFileString(file, JSON.stringify(document));
+      }).pipe(Effect.mapError(failed("could not write the daemon settings")));
+    yield* configure({});
+    return configure;
   });
 
-/**
- * Connects to the daemon at `endpoint` as the holder of `bearer`, reads its
- * agent from `status`.
- */
+/** Connects to the daemon at `endpoint` as the holder of `bearer` and reads its agent from `status`. */
 const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   Effect.gen(function* () {
     const events = new EventsClientExtension();
@@ -372,19 +297,31 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
       ),
       () => Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore),
     );
-    const connection = { mcp, events };
-    const status = yield* callTool(connection.mcp, {
-      name: "status",
-      arguments: {},
-    });
-    return {
-      agent: { agentId: status.agentId, agentName: status.agentName },
-      address: AgentAddress.make(`agent:${status.agentName}`),
-      connection,
-    };
+    const { agentName } = yield* callTool({ mcp }, "status");
+    const subscriber: Subscriber = { name: agentName, mcp, events };
+    return subscriber;
   }).pipe(
     Effect.mapError(failed("could not sign in to the daemon")),
     Effect.withSpan("signIn"),
+  );
+
+/**
+ * Creates the daemon's tables as the login of `url`,
+ * which may create tables, so the daemon serves them through a login that
+ * may not.
+ */
+const preparedBy = (url: Redacted.Redacted, issuer: string) =>
+  openDaemon(url, {
+    issuer,
+    subject: SERVER_AGENT_OWNER,
+    name: AgentName.make(SERVER_AGENT_NAME),
+    firewall: makeFirewall({
+      me: AgentName.make(SERVER_AGENT_NAME),
+      historyLimit: 1,
+    }),
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError(failed("could not prepare the daemon's database")),
   );
 
 /**
@@ -392,9 +329,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
  * with tokens from its own test issuer. The scope removes its directory and
  * stops its issuer and every process and connection it started.
  */
-export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
-  options: DaemonOptions = {},
-) {
+export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
   const filesystem = yield* FileSystem.FileSystem;
   const directory = yield* filesystem
     .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
@@ -406,6 +341,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
   const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
   const database = yield* openTestDatabase();
+  yield* preparedBy(database.url, issuer.issuer);
   const restrictedUrl = yield* restrictedLogin(database);
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
@@ -420,10 +356,8 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
       scope: requiredScope,
     },
     serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
-    ...options.settings,
   });
-  const spawned = (changes: Readonly<Record<string, string>>) =>
-    managedProcess(...DAEMON_COMMAND, { ...environment, ...changes });
+  const spawned = managedProcess(...DAEMON_COMMAND, environment);
   const bearer = (owner: string) =>
     issuer
       .token(owner, resource)
@@ -431,139 +365,19 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
         Effect.map(Redacted.make),
         Effect.mapError(failed(`could not issue a token for ${owner}`)),
       );
-  const daemon: Daemon = {
-    endpoint,
+  return {
     directory,
-    environment,
-    start: (changes = {}) =>
-      spawned(changes).pipe(
-        Effect.tap((running) =>
-          awaitReady(running, daemonListening(running, endpoint), "listening"),
-        ),
+    start: () =>
+      spawned.pipe(
+        Effect.tap((running) => awaitListening(running, endpoint)),
         Effect.withSpan("start"),
       ),
-    startupFailure: (changes = {}) =>
-      startupFailure(spawned(changes), endpoint),
+    startupFailure: () => startupFailure(spawned),
     configure,
-    bearer,
-    signInAs: (owner) =>
+    signInAs: (owner: string) =>
       Effect.flatMap(bearer(owner), (presented) => signIn(endpoint, presented)),
   };
-  return daemon;
 }, Effect.provide(NodeFileSystem.layer));
-
-const fields = Schema.decodeUnknownSync(
-  Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-);
-
-/**
- * A tool's arguments as the server agent or a client passes them: a client
- * names no recipient and no conversation.
- */
-type Arguments<Name extends ToolName> =
-  ToolRequest<Name>["arguments"] extends infer Named
-    ? Omit<Named, "to" | "address"> & Partial<Named>
-    : never;
-
-export function callTool<Name extends ToolName>(
-  mcp: Pick<Client, "callTool">,
-  request: { readonly name: Name; readonly arguments: Arguments<Name> },
-): Effect.Effect<ToolResult<Name>, Readonly<Record<string, unknown>>>;
-/**
- * Calls the named tool once. A result is decoded with the tool's published
- * output schema, so a result that drifts from the contract fails the test. A
- * call the daemon answers as failed fails with the result's structured fields
- * and, as `message`, the text a model reads.
- */
-export function callTool(
-  mcp: Pick<Client, "callTool">,
-  request: { readonly name: ToolName; readonly arguments: object },
-): Effect.Effect<unknown, Readonly<Record<string, unknown>>> {
-  const output: Schema.Schema.AnyNoContext =
-    toolDefinitions[request.name].output;
-  return Effect.tryPromise((signal) =>
-    mcp.callTool(
-      { name: request.name, arguments: { ...request.arguments } },
-      { signal },
-    ),
-  ).pipe(
-    Effect.orDie,
-    Effect.flatMap((result) =>
-      result.isError === true
-        ? Effect.fail({
-            ...fields(result.structuredContent ?? {}),
-            message: result.content
-              .flatMap((part) => (part.type === "text" ? [part.text] : []))
-              .join("\n"),
-          })
-        : Schema.decodeUnknown(output)(result.structuredContent).pipe(
-            Effect.map((decoded): unknown => decoded),
-            Effect.orDie,
-          ),
-    ),
-  );
-}
-
-/** A host's send input. The server agent names its recipient in `to`, and a client names none. */
-const SendInput = Schema.Struct({
-  ...SendRequest.fields,
-  to: Schema.optional(AgentAddress),
-});
-
-/** Sends `input`, decoded as a host's send input, from `sender`. */
-export const send = (sender: Pick<SignedIn, "connection">, input: unknown) =>
-  callTool(sender.connection.mcp, {
-    name: "send_message",
-    arguments: Schema.decodeUnknownSync(SendInput)(input),
-  });
-
-/** A signed-in owner and the items its agent has received, in order. */
-export interface Participant extends SignedIn {
-  readonly inbox: Queue.Queue<InboxEntry>;
-}
-
-/**
- * Signs in one owner per name on a running `daemon` and queues every inbox
- * entry of each agent, from its first.
- * @param daemon The daemon the owners sign in to.
- * @param owners The owner of each participant: `SERVER_AGENT_OWNER` for the
- *   server agent, any other name for a client.
- * @returns The participants, in `owners` order.
- */
-export const joinParticipants = Effect.fn("joinParticipants")(
-  (daemon: Daemon, owners: readonly string[]) =>
-    Effect.forEach(
-      owners,
-      (owner) =>
-        Effect.gen(function* () {
-          const signedIn = yield* daemon.signInAs(owner);
-          const inbox = yield* Queue.unbounded<InboxEntry>();
-          yield* inboxStream(signedIn.connection, "0").pipe(
-            Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
-            Effect.forkScoped,
-          );
-          return { ...signedIn, inbox };
-        }),
-      { concurrency: 1 },
-    ),
-);
-
-/** Takes the message of the participant's next inbox entry. */
-export const nextItem = (participant: Participant) =>
-  Queue.take(participant.inbox).pipe(
-    Effect.map((delivery) => delivery.message),
-  );
-
-/** The identifiers of the next `count` messages the participant receives, in order. */
-export const receivedOrder = (participant: Participant, count: number) =>
-  Effect.forEach(
-    Array.from({ length: count }),
-    () => nextItem(participant).pipe(Effect.map((message) => message.msgId)),
-    { concurrency: 1 },
-  );
-
-/** The content of a message that is one text part. */
-export const textContent = (text: string) => [{ type: "text", text }];
 
 /** Teardown waits for every scoped child after a test is interrupted. */
 const TEARDOWN_TIMEOUT_MS = 60_000;
@@ -597,7 +411,7 @@ export function processTrace<E>(
  * event delivers them in `delivery` mode, or in the mode the client prefers.
  */
 export function inboxStream(
-  { events }: SignedIn["connection"],
+  { events }: Pick<Subscriber, "events">,
   cursor: string,
   delivery?: "poll" | "push",
 ) {
@@ -612,7 +426,15 @@ export function inboxStream(
   ).pipe(
     Stream.orDie,
     Stream.mapEffect((event) =>
-      Schema.decodeUnknown(InboxEntry)(event.data).pipe(Effect.orDie),
+      decodeInboxEntry(event.data).pipe(Effect.orDie),
     ),
   );
 }
+
+/** The first `count` messages the inbox event delivers to the agent, from its first entry. */
+export const received = (agent: Pick<Subscriber, "events">, count: number) =>
+  inboxStream(agent, "0").pipe(
+    Stream.take(count),
+    Stream.runCollect,
+    Effect.map((entries) => [...entries].map((entry) => entry.message)),
+  );

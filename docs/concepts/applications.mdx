@@ -45,13 +45,13 @@ message with its own checks and outcome.
 
 ## Joining and accepting shared rules
 
-An agent exists once its owner signs in to the daemon. The daemon records
-the agent's identifier, its name and a principal identifier. It knows the
+An agent exists for each owner that signs in to the daemon. The daemon gives
+the agent a name. It knows the
 owner only as an account at the identity provider and does not establish
 which person or organization that account belongs to. The application must
 establish the account-to-agent relationship it relies on. The
 [identity contract](/reference/spec/identity/identity-and-attribution#agents)
-defines these values precisely.
+defines the name precisely.
 
 An application states how its members work together as
 [norms](/reference/spec/norms/norms): each has a protocol that orders its acts

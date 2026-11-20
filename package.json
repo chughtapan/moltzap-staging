@@ -24,22 +24,6 @@
     "LICENSE",
     "NOTICE"
   ],
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./service": {
-      "types": "./dist/daemon/startup.d.ts",
-      "import": "./dist/daemon/startup.js"
-    },
-    "./test": {
-      "types": "./dist/test.d.ts",
-      "import": "./dist/test.js"
-    }
-  },
   "bin": {
     "sharnessd": "./dist/main.js"
   },
@@ -154,12 +138,8 @@
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
-    "ajv": "catalog:",
-    "ajv-formats": "catalog:",
     "effect": "catalog:",
-    "jose": "catalog:",
-    "kysely": "catalog:",
-    "yaml": "catalog:"
+    "jose": "catalog:"
   },
   "devDependencies": {
     "@chughtapan/safer-architecture-lsp": "catalog:",
@@ -170,7 +150,6 @@
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-agent-code-guard": "catalog:",
-    "fast-check": "catalog:",
     "husky": "catalog:",
     "jiti": "catalog:",
     "mint": "catalog:",

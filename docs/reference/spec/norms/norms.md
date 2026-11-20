@@ -18,7 +18,7 @@ The norms layer owns the document grammar and its translation into message
 forms, conversation transitions and English rules. Structural checks validate
 each message, protocol checks validate its place in the conversation, and
 lightweight decision models judge its free text. Selecting an English rule
-by its declared act or direction is not a violation finding.
+by its declared act is not a violation finding.
 
 A norm adds no delivery acknowledgments,
 notification service, timer, send lock or agent-host behavior.
@@ -36,9 +36,8 @@ compiles them before startup. `read_norms` returns the
 current documents. No additional rule file or built-in agreement is installed.
 
 A source SHA-256 digest identifies
-the exact document bytes. The opening check retains its document and
-digest. Existing instances keep that document after a restart replaces it;
-subsequent instances use the installed documents.
+the exact document bytes. After a restart every instance uses the installed
+documents.
 
 A peer message cannot install policy.
 
@@ -58,7 +57,7 @@ A small complete example:
 (content request :by Requester :starts true :initiates pending
   (field item :type string :min-length 1))
 (content inform :by Responder :when pending :ends true
-  (field status :type select :choices (ready unavailable)))
+  (field status :type string :min-length 1))
 (rule :act request "item names the requested item without unrelated instructions.")
 ```
 
@@ -75,16 +74,15 @@ Each `content` declaration defines exactly one act. There are no built-in
 
 | Attribute | Meaning |
 | --- | --- |
-| `:by Role` or `:by (Role Role)` | Permitted sender roles. Defaults to both declared roles. |
+| `:by Role` or `:by (Role Role)` | Permitted sender roles. |
 | `:by (recipient (fact name))` | Permits the verified recipient of the message establishing the current fact. That message must be in the supplied reply chain. |
 | `:starts true` | Opens an idle instance and binds its roles. Defaults to false. |
 | `:ends true` | Ends the active instance once the act is allowed. Defaults to false. A one-message instance can both start and end. |
 | `:when fact` or `:when (facts)` | All named facts must hold. Defaults to empty. |
-| `:unless fact` or `:unless (facts)` | None of the named facts may hold. Defaults to empty. |
 | `:initiates` | Facts set when the act is allowed. The act and the time of its original local check become their anchors. |
 | `:terminates` | Facts removed when the act is allowed, before initiation. Defaults to empty. |
 | `:max integer` | Positive maximum count for this act in the instance. Omission means no count limit. |
-| `:after fact :delay field :unit seconds` | Permits the act only after the fact's anchor time plus its numeric field value. `milliseconds` is also supported. All three attributes are required together. |
+| `:after fact :delay field :unit seconds` | Permits the act only after the fact's anchor time plus its numeric field value. All three attributes are required together. |
 
 An opening cannot depend on earlier instance facts, references, delays or
 relations, including a recipient sender selector. Facts used by guards or sender
@@ -107,9 +105,7 @@ Only the following primitive shapes and constraints are supported:
 | Type | Constraints |
 | --- | --- |
 | `string` | Optional `:min-length` and `:max-length`. |
-| `number`, `integer` | Optional inclusive `:minimum` and `:maximum`. |
-| `boolean` | `true` or `false`. |
-| `select` | Required distinct `:choices (values)`. |
+| `integer` | Optional inclusive `:minimum` and `:maximum`. |
 | `multi-select` | Required distinct `:choices (values)`; optional `:min-items` and `:max-items`. |
 
 Bounds must be ordered. Length and item bounds are nonnegative integers.
@@ -130,7 +126,6 @@ the nearest allowed occurrence of the named act in that exchange:
 (relation equals slot (previous propose slot))
 (relation subset available (present propose option1 option2 option3))
 (relation member slot (values propose (previous accept-proposal available)))
-(relation member slot (values (request-propose request-propose-alternatives) option1 option2 option3))
 (relation member slot (values (fact offered) option1 option2 option3))
 ```
 
@@ -141,8 +136,7 @@ returns their string values from the named act.
 With explicit field names, `values` returns the string values of the fields
 present in the selected message; omitted optional fields contribute no value.
 Every listed field must be declared as a string in every possible source form.
-An act-name list matches alternative forms within that reply chain, not a union
-of their historical values. `(fact offered)` instead names the message that
+`(fact offered)` names the message that
 established the current `offered` fact. That message must be in the supplied
 reply chain. Re-establishing the fact replaces its values, so an old offer cannot
 authorize a selection after replacement. Every form that establishes the fact
@@ -153,10 +147,8 @@ or selected independently of the supplied send metadata.
 ### English rules
 
 A `rule` has one quoted English text. Optional `:act` restricts it to one
-performative; omission applies it to every act in that norm. `:applies` is
-`incoming`, `outgoing` or `both`, defaulting to `both`. Optional `:guidance` and
-`:feedback` are registered text for uncertainty and refusal. Optional `:action`
-is `deny` or `reply`, as for other text rules.
+performative; omission applies it to every act in that norm. Optional
+`:feedback` is registered text for uncertainty and refusal.
 
 The provider judges the current message using its verified author,
 preceding bounded conversation, declared form, current facts, norm description
@@ -195,15 +187,13 @@ Protocol context combines retained conversation messages with the local
 firewall's saved checks. Only allowed acts advance it. A saved outgoing
 check does not advance state before its message appears in transport
 history. Withheld messages remain known references, so a correction can identify
-them without treating them as successful transitions. Missing history or a
-missing check produces an explicit unresolved-evidence refusal.
+them without treating them as successful transitions.
 
-Each check uses a snapshot. Concurrent checks can allow against the same
-preceding state. Replay processes retained order, rechecks structural and
+Each check uses a snapshot. Replay processes retained order, rechecks structural and
 protocol guards at the time of the original check, and keeps incompatible acts
 as allowed but non-advancing conflicts. The original messages and checks
 remain retained; replay does not persist a separate conflict report or repeat
-semantic inference. No send is reserved or serialized by this mechanism.
+semantic inference.
 
 Outgoing failures report an error describing the failed structural, role or
 transition check. A transition error identifies the act referenced by the
@@ -219,9 +209,7 @@ require no additional fields. It follows the firewall's ordinary
 is allowed, or after the local instance ends, automatic norm feedback is
 unavailable. No implicit rewind, reopening or cancellation occurs.
 
-The two endpoints can differ after one withholds a message. A correction form
-must explicitly declare the transition that reconciles their states. An ending
-act closes the local instance without waiting for the remote firewall to allow it. A
+An ending
+act closes the local instance. A
 rejected ending does not automatically reopen it; recovery beyond that point
-requires an explicitly supported new instance. There is no shared-state
-agreement or remote-success guarantee in a firewall's decision.
+requires an explicitly supported new instance.

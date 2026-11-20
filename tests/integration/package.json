@@ -35,12 +35,9 @@
     }
   },
   "devDependencies": {
-    "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
-    "@effect/sql": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
-    "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:",
     "eslint": "catalog:",
     "vitest": "catalog:"

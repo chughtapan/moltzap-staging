@@ -9,9 +9,6 @@ catalogs:
     '@chughtapan/safer-architecture-lsp':
       specifier: 0.3.2
       version: 0.3.2
-    '@effect/experimental':
-      specifier: ^0.61.0
-      version: 0.61.0
     '@effect/language-service':
       specifier: ^0.87.1
       version: 0.87.1
@@ -72,21 +69,12 @@ catalogs:
     '@typescript/native':
       specifier: npm:typescript@7.0.2
       version: 7.0.2
-    ajv:
-      specifier: 8.18.0
-      version: 8.18.0
-    ajv-formats:
-      specifier: 3.0.1
-      version: 3.0.1
     eslint:
       specifier: ^9
       version: 9.39.4
     eslint-plugin-agent-code-guard:
       specifier: 0.0.24
       version: 0.0.24
-    fast-check:
-      specifier: 3.23.2
-      version: 3.23.2
     husky:
       specifier: ^9.0.0
       version: 9.1.7
@@ -96,9 +84,6 @@ catalogs:
     jose:
       specifier: 6.2.5
       version: 6.2.5
-    kysely:
-      specifier: 0.29.6
-      version: 0.29.6
     mint:
       specifier: 4.2.749
       version: 4.2.749
@@ -114,9 +99,6 @@ catalogs:
     vitest:
       specifier: 3.2.4
       version: 3.2.4
-    yaml:
-      specifier: 2.9.1
-      version: 2.9.1
 
 overrides:
   effect: 3.22.1
@@ -175,24 +157,12 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: 'catalog:'
         version: 1.41.1
-      ajv:
-        specifier: 'catalog:'
-        version: 8.18.0
-      ajv-formats:
-        specifier: 'catalog:'
-        version: 3.0.1(ajv@8.18.0)
       effect:
         specifier: 3.22.1
         version: 3.22.1
       jose:
         specifier: 'catalog:'
         version: 6.2.5
-      kysely:
-        specifier: 'catalog:'
-        version: 0.29.6
-      yaml:
-        specifier: 'catalog:'
-        version: 2.9.1
     devDependencies:
       '@chughtapan/safer-architecture-lsp':
         specifier: 'catalog:'
@@ -218,9 +188,6 @@ importers:
       eslint-plugin-agent-code-guard:
         specifier: 'catalog:'
         version: 0.0.24(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/typescript6@6.0.2)(eslint@9.39.4(jiti@2.7.0))
-      fast-check:
-        specifier: 'catalog:'
-        version: 3.23.2
       husky:
         specifier: 'catalog:'
         version: 9.1.7
@@ -257,24 +224,15 @@ importers:
 
   tests/integration:
     devDependencies:
-      '@effect/experimental':
-        specifier: 'catalog:'
-        version: 0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
       '@effect/platform':
         specifier: 'catalog:'
         version: 0.97.1(effect@3.22.1)
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 0.108.0(@effect/cluster@0.60.0(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/workflow@0.19.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
-      '@effect/sql':
-        specifier: 'catalog:'
-        version: 0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
         version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)
-      '@social-harness/social-harness':
-        specifier: workspace:*
-        version: link:../..
       effect:
         specifier: 3.22.1
         version: 3.22.1
@@ -4453,10 +4411,6 @@ packages:
 
   kubernetes-types@1.30.0:
     resolution: {integrity: sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==}
-
-  kysely@0.29.6:
-    resolution: {integrity: sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==}
-    engines: {node: '>=22.0.0'}
 
   lcm@0.0.3:
     resolution: {integrity: sha512-TB+ZjoillV6B26Vspf9l2L/vKaRY/4ep3hahcyVkCGFgsTNRUQdc24bQeNFiZeoxH0vr5+7SfNRMQuPHv/1IrQ==}
@@ -10877,8 +10831,6 @@ snapshots:
       - '@emnapi/runtime'
 
   kubernetes-types@1.30.0: {}
-
-  kysely@0.29.6: {}
 
   lcm@0.0.3:
     dependencies:

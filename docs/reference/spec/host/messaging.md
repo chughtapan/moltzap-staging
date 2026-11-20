@@ -13,54 +13,38 @@ accepted work. Hosts use MCP for this contract.
 
 ## Destinations
 
-An
-`agent:` address names one peer. A [client](../modes.md#what-a-client-can-do)
+The server agent names a client by its
+[agent name](../identity/identity-and-attribution.md#agents). A [client](../modes.md#what-a-client-can-do)
 names no destination, because its only peer is the server agent.
 
-### Address grammar
-
-```text
-agent:<AgentName>
-```
-
-Names follow the [agent name rule](../identity/identity-and-attribution.md#agents),
-which excludes commas and colons. Conversations contain sender and peer.
-Self-only addressing is invalid.
-
-The daemon validates the destination and resolves the peer before accepting
-a send. Invalid destinations fail with `invalid-arguments` or `membership-invalid`.
-Resolution names a peer the daemon does not have with
-`unknown-agent`. These failures create no message.
+The server agent can name only a client that has sent it a message. A name
+that is not an agent name fails as an invalid argument, and any other name
+fails with `unknown-agent`. These failures create no message.
 
 ## Sending a message
 
-Every send supplies a destination and text. Session focus and prior messages cannot supply an
+The server agent's send supplies a destination and text; a client's supplies text. Session focus and prior messages cannot supply an
 omitted destination.
 
-The daemon validates input, resolves recipients and checks outgoing policy.
+The daemon validates input, resolves the recipient and checks outgoing policy.
 A successful result for a message means the daemon has ordered it and saved
 it for every member of the conversation. Every new call, including identical input, creates a fresh
 invocation.
 
-Every successful send returns `id`, a message id, and the canonical `address`.
+Every successful send returns `id`, a message id.
 
 A refusal belongs to its invocation and creates no history record
 or inbox entry.
 
-### Failed or uncertain sends
+### Failed sends
 
 Failures name the failed action and cause. Invalid input identifies the
-address, member, field or schema path to correct. Firewall refusals supply a
+name, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `network-unavailable`: the request did not reach the daemon.
-- `outcome-unknown`: the invocation may have taken effect. Interruption,
-  defects or response loss after a request may have reached the daemon produce
-  this outcome.
-
-Repeating a successful send creates another message. Hosts must not automatically
-repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
+Repeating a successful send creates another message. Ending its wait does not
+cancel accepted work.
 
 ## Receiving inbox entries
 
@@ -73,10 +57,9 @@ contents, ordering and replay.
 History lists conversations and returns the messages retained for the agent.
 The content and any guidance stay the same across restart.
 
-A history read fixes an opaque end position at its start. Later appends remain
-outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
-`cursor` with the same selection until absent. An invalid cursor returns
-`invalid-cursor`.
+Listing returns every client's name in `clients`. History returns `records`, oldest
+first, at most 50 to a page. Pass `nextCursor` as
+`cursor` with the same client until absent.
 
 An invalid history page returns no messages. Reading history does not
 authorize a send.
@@ -84,10 +67,6 @@ authorize a send.
 ## Connection lifetime
 
 An MCP connection represents one agent: the one its credential selects.
-Concurrent connections can repeat a handoff.
-
-Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,
-without userinfo or fragments. Requests carrying credentials refuse redirects.
 
 Closing a connection stops its active receiver and in-flight requests. Canceling
 one request leaves others active. Accepted sends and stored inbox entries survive.
@@ -95,15 +74,12 @@ one request leaves others active. Accepted sends and stored inbox entries surviv
 ## MCP projection
 
 `send_message` takes structured input and returns the accepted-work receipt.
-Invalid arguments fail before invocation. Invalid completed results produce
-`outcome-unknown`.
+Invalid arguments fail before invocation.
 
 A tool call that fails returns a result marked as an error (`isError: true`).
 Its text is the failure's message, written for the model to act on. Its
 structured content holds the failure's fields, among them its `reason`.
-Invalid arguments have the reason `invalid-arguments` and `issues`, where each
-issue names a field's path and what the tool expects there without repeating
-the value sent. A firewall refusal includes its check, rule and
+A firewall refusal includes its check, rule and
 feedback. Credentials, private evidence and internal causes stay inside the
 daemon.
 

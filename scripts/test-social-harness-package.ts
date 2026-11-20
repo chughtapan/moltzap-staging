@@ -1,133 +1,86 @@
-/** @file Verifies packed service entries, the installed `sharnessd` command and explicit firewall assets in an isolated consumer. */
-import { Effect } from "effect";
+/** @file Packs the package, installs the tarball in a scratch project, and checks that the installed `sharnessd` prints its usage and that the shipped message policy is the repository's. */
+import { Command, FileSystem } from "@effect/platform";
+import { NodeContext, NodeRuntime } from "@effect/platform-node";
+import { Console, Data, Effect, Schema } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  installPackedConsumer,
-  packProductClosure,
-  readConsumerPins,
-  requireCondition,
-  runCommand,
-  runGate,
-  workspacePackages,
-} from "./packed-workspace.ts";
 
-const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const policy = join("config", "firewall", "message-policy.json");
 
-/** A host that imports the main entry for its tool contracts and client loads no database driver. */
-const hostEntryScript = `
-import { registerHooks } from "node:module";
+/** A check of the packed package that did not hold. */
+class PackCheckError extends Data.TaggedError("PackCheckError")<{
+  readonly message: string;
+}> {}
 
-const loaded = [];
-registerHooks({
-  resolve(specifier, context, next) {
-    const found = next(specifier, context);
-    loaded.push(found.url);
-    return found;
-  },
-});
-await import("@social-harness/social-harness");
-const drivers = loaded.filter((url) =>
-  ["@effect/sql-pg", "kysely", "jose"].some((name) =>
-    url.includes("/node_modules/" + name + "/"),
-  ),
-);
-if (drivers.length > 0) throw new Error("the main entry loaded " + drivers.join(", "));
-`;
+/** Runs a command in `cwd` with its output shown, and fails unless it exits with zero. */
+const run = (cwd: string, command: string, ...args: readonly string[]) =>
+  Command.make(command, ...args).pipe(
+    Command.workingDirectory(cwd),
+    Command.stdout("inherit"),
+    Command.stderr("inherit"),
+    Command.exitCode,
+    Effect.filterOrFail(
+      (code) => code === 0,
+      (code) =>
+        new PackCheckError({
+          message: `${[command, ...args].join(" ")} exited with ${code}`,
+        }),
+    ),
+  );
 
-/** An installed consumer receives the selected preset and every shipped rule unchanged. */
-const policyAssetScript = `
-import { readFile, readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const sourceRoot = ${JSON.stringify(`${workspaceRoot}/config/firewall`)};
-const installedRoot = fileURLToPath(new URL("../config/firewall/", import.meta.resolve("@social-harness/social-harness")));
-const entries = await readdir(sourceRoot, { recursive: true, withFileTypes: true });
-const rules = entries.filter((entry) => entry.isFile() && entry.name === "BEHAVIOR.md");
-if (rules.length === 0) throw new Error("source policy assets contain no rules");
-const assets = ["message-policy.json", ...rules.map((rule) =>
-  relative(sourceRoot, join(rule.parentPath, rule.name)),
-)];
-for (const asset of assets) {
-  const expected = await readFile(join(sourceRoot, asset), "utf8");
-  const actual = await readFile(join(installedRoot, asset), "utf8");
-  if (actual !== expected) throw new Error("packed policy asset changed: " + asset);
-}
-`;
-
-runGate("sharness-social-harness-pack-", (temporaryRoot) =>
-  Effect.gen(function* () {
-    const { archives } = yield* packProductClosure(
-      workspaceRoot,
-      ".",
-      temporaryRoot,
-    );
-    const pins = yield* readConsumerPins(workspaceRoot);
-    const consumerRoot = yield* installPackedConsumer({
-      temporaryRoot,
-      name: "sharness-daemon-packed-consumer",
-      archives,
-      dependencies: { effect: pins.effect },
-    });
-    const imports = yield* publicImports();
-    yield* runCommand(
-      process.execPath,
-      ["--input-type=module", "-e", imports],
-      {
-        cwd: consumerRoot,
-        env: { NODE_PATH: "" },
-      },
-    );
-    yield* verifyCommand(consumerRoot);
-    yield* runCommand(
-      process.execPath,
-      ["--input-type=module", "-e", hostEntryScript],
-      { cwd: consumerRoot, env: { NODE_PATH: "" } },
-    );
-    yield* verifyPolicyAssets(consumerRoot);
-    return "social-harness package consumer check passed";
-  }),
-);
-
-/** Every entry the source manifest names, as a consumer imports it. */
-function publicImports() {
-  return workspacePackages(workspaceRoot).pipe(
-    Effect.map((packages) =>
-      packages
-        .filter(({ name }) => name === "@social-harness/social-harness")
-        .flatMap(({ name, exports }) =>
-          Object.keys(exports).map((subpath) =>
-            subpath === "." ? name : `${name}/${subpath.slice(2)}`,
+const check = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const scratch = yield* fs.makeTempDirectoryScoped({
+    prefix: "sharness-social-harness-pack-",
+  });
+  const { name, packageManager } = yield* fs
+    .readFileString(join(root, "package.json"))
+    .pipe(
+      Effect.flatMap(
+        Schema.decodeUnknown(
+          Schema.parseJson(
+            Schema.Struct({
+              name: Schema.String,
+              packageManager: Schema.String,
+            }),
           ),
-        )
-        .map((specifier) => `await import(${JSON.stringify(specifier)});`)
-        .join("\n"),
-    ),
-  );
-}
-
-/** The command the package installs runs from the consumer and prints its usage. */
-function verifyCommand(consumerRoot: string) {
-  return runCommand(
-    join(consumerRoot, "node_modules", ".bin", "sharnessd"),
-    ["--help"],
-    { cwd: consumerRoot, env: { NODE_PATH: "" } },
-  ).pipe(
-    Effect.flatMap((printed) =>
-      requireCondition(
-        printed.includes("Usage: sharnessd"),
-        `expected the installed sharnessd --help to print its usage, got:\n${printed}`,
+        ),
       ),
-    ),
+    );
+  yield* run(root, "pnpm", "pack", "--pack-destination", scratch);
+  const [tarball] = yield* fs.readDirectory(scratch);
+  const consumer = join(scratch, "consumer");
+  yield* fs.makeDirectory(consumer);
+  yield* fs.writeFileString(
+    join(consumer, "package.json"),
+    JSON.stringify({
+      name: "sharness-daemon-packed-consumer",
+      private: true,
+      packageManager,
+      dependencies: { [name]: `file:${join(scratch, tarball ?? "")}` },
+    }),
   );
-}
+  yield* run(consumer, "pnpm", "install", "--prefer-offline");
+  const usage = yield* Command.make(
+    join(consumer, "node_modules", ".bin", "sharnessd"),
+    "--help",
+  ).pipe(Command.workingDirectory(consumer), Command.string);
+  if (!usage.includes("Usage: sharnessd")) {
+    return yield* new PackCheckError({
+      message: `expected the installed sharnessd --help to print its usage, got:\n${usage}`,
+    });
+  }
+  const installed = join(consumer, "node_modules", name, policy);
+  if (
+    (yield* fs.readFileString(installed)) !==
+    (yield* fs.readFileString(join(root, policy)))
+  ) {
+    return yield* new PackCheckError({
+      message: "the packed message policy differs from the repository's",
+    });
+  }
+  yield* Console.log("social-harness package consumer check passed");
+}).pipe(Effect.scoped, Effect.withSpan("packedPackageCheck"));
 
-/** The installed package retains the preset and its shipped behavior documents. */
-function verifyPolicyAssets(consumerRoot: string) {
-  return runCommand(
-    process.execPath,
-    ["--input-type=module", "-e", policyAssetScript],
-    { cwd: consumerRoot, env: { NODE_PATH: "" } },
-  );
-}
+NodeRuntime.runMain(check.pipe(Effect.provide(NodeContext.layer)));

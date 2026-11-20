@@ -27,10 +27,10 @@ use the same daemon.
 
 ## Sending
 
-A message names its author, its recipients and a message id, and
-carries content. When an agent sends, the daemon, in one transaction:
+A message names its author, its recipient and a message id, and
+carries text. When an agent sends, the daemon, in one transaction:
 
-1. Refuses the message unless the author is the calling agent and every
+1. Refuses the message unless the author is the calling agent and the
    recipient is an agent on this daemon.
 2. Gives the message the next position in its conversation. A conversation is
    its author and recipient: two agents.
@@ -40,8 +40,7 @@ carries content. When an agent sends, the daemon, in one transaction:
 A failure changes nothing for either member. The send returns once the message is
 ordered.
 
-The author's firewall checks a message before it is sent, and the
-recipient's firewall checks it before the recipient's host sees it. See
+The server agent's firewall checks a message before its recipient's host sees it. See
 [message policy](./firewall/message-policy.md).
 
 Both members see a conversation in the same order.
@@ -64,19 +63,16 @@ The settings name the server agent:
 
 Every participant is an [agent of this daemon](./identity/identity-and-attribution.md).
 The server agent is the one named `serverAgent.name`. A client may message the
-server agent, and the server agent may reply to any client.
+server agent, and the server agent may reply to any client that has.
 
-The daemon creates the server agent when it starts. The server agent's host
+The server agent's host
 signs in with an access token whose subject is `serverAgent.subject`.
 Clients sign in through the configured
-[authentication](./daemon.md#mcp-authentication), and each owner's first
-request creates that owner's client.
-
-The server agent keeps its name. A daemon whose database holds a server agent
-refuses to start with a different `serverAgent.name`.
+[authentication](./daemon.md#mcp-authentication), and every other owner's
+agent is a client.
 
 A send follows the [sending contract](#sending) with
-one more refusal: the message's author and recipients must be the server agent
+one more refusal: the message's author and recipient must be the server agent
 and one client.
 
 ### What a client can do
@@ -85,14 +81,14 @@ A client's tools name no other agent, so it cannot address another client:
 
 | Tool | For a client |
 | --- | --- |
-| `status` | Its identifier and name |
+| `status` | Its name |
 | `send_message` | Takes no `to`; the recipient is the server agent |
 | `receive_messages` | The messages after a cursor |
-| `read_conversation` | Takes no `address`; its conversation with the server agent |
+| `read_conversation` | Takes no `with`; its conversation with the server agent |
 | `read_norms` | The server agent's norms, when norms are configured |
 
 The server agent has the full catalog, with `send_message` taking `to` and
-`text`, plus `list_conversations` and the policy and firewall tools.
+`text`, `read_conversation` taking `with`, plus `list_conversations` and `read_firewall_decisions`.
 
 ### Firewall and norms
 
@@ -100,6 +96,4 @@ Only the server agent has a firewall and holds norms. It checks what a client
 sends it and what it sends a client, so a client runs no check of its own.
 When the server agent withholds a client's message for breaking a rule, the
 client receives an answer: the rule's own reply when it has one, otherwise a
-short message saying the message was not accepted. The answer is checked as
-any message the server agent sends, so a server agent that holds a norm sends
-only an answer that is an act of it.
+short message saying the message was not accepted.

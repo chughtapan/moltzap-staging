@@ -1,68 +1,44 @@
 {
   "compositionRoots": [
     {
-      "path": "src/index.ts",
-      "reason": "Public value exports"
-    },
-    {
-      "path": "src/test.ts",
-      "reason": "Offline evaluation and database qualification for tests"
-    },
-    {
       "path": "package.json",
-      "reason": "Library entry resolution"
-    },
-    {
-      "path": "src/daemon/startup.ts",
-      "reason": "Process database and agent construction"
+      "reason": "Names the sharnessd command"
     },
     {
       "path": "src/main.ts",
-      "reason": "Where the sharnessd process starts"
+      "reason": "Where the sharnessd process starts: its settings, OAuth admission and listener around the server"
     }
   ],
   "domains": [
     {
-      "name": "encoding",
+      "name": "messages",
       "roots": [
-        "src/encoding.ts"
+        "src/messages.ts"
       ],
       "entrypoints": [
-        "src/encoding.ts"
+        "src/messages.ts"
       ],
-      "reason": "Shared encoding at external boundaries"
-    },
-    {
-      "name": "identity",
-      "roots": [
-        "src/identity.ts"
-      ],
-      "entrypoints": [
-        "src/identity.ts"
-      ],
-      "reason": "Agent identifiers and the agents of one daemon"
-    },
-    {
-      "name": "communication",
-      "roots": [
-        "src/communication"
-      ],
-      "entrypoints": [
-        "src/communication/index.ts",
-        "src/communication/service.ts"
-      ],
-      "reason": "Messages, requests and ordered history"
+      "reason": "Agents and the messages they send each other"
     },
     {
       "name": "firewall",
       "roots": [
-        "src/firewall"
+        "src/firewall.ts"
       ],
       "entrypoints": [
-        "src/firewall/index.ts",
-        "src/firewall/service.ts"
+        "src/firewall.ts"
       ],
       "reason": "Policy, assessment and permitted content"
+    },
+    {
+      "name": "server",
+      "roots": [
+        "src/server.ts"
+      ],
+      "entrypoints": [
+        "src/server.ts"
+      ],
+      "reason": "Agents, their messages, inboxes and history, the rows they live in, and the MCP tools that expose them"
     },
     {
       "name": "norms",
@@ -73,110 +49,19 @@
         "src/norms/index.ts"
       ],
       "reason": "Norm documents and the contracts they compile to for the firewall"
-    },
-    {
-      "name": "mcp",
-      "roots": [
-        "src/mcp"
-      ],
-      "entrypoints": [
-        "src/mcp/index.ts",
-        "src/mcp/tools.ts"
-      ],
-      "reason": "What crosses MCP between a host and the daemon: the tool contracts and a host's connection"
-    },
-    {
-      "name": "daemon",
-      "roots": [
-        "src/daemon"
-      ],
-      "entrypoints": [
-        "src/daemon/startup.ts"
-      ],
-      "reason": "The sharnessd process: agents, their inboxes and the MCP tools served to their hosts"
-    },
-    {
-      "name": "version",
-      "roots": [
-        "src/version.ts"
-      ],
-      "entrypoints": [
-        "src/version.ts"
-      ],
-      "reason": "Package version"
-    },
-    {
-      "name": "database",
-      "roots": [
-        "src/database.ts"
-      ],
-      "entrypoints": [
-        "src/database.ts"
-      ],
-      "reason": "SQL connections, typed query compilation, transaction context and migrations shared by daemon domains"
     }
   ],
   "layers": [
-    {
-      "name": "daemon",
-      "folders": [
-        "daemon"
-      ],
-      "reason": "Host calls coordinate lower services"
-    },
-    {
-      "name": "mcp",
-      "folders": [
-        "mcp"
-      ],
-      "reason": "The tool contracts name values of the services below and nothing of the daemon"
-    },
     {
       "name": "norms",
       "folders": [
         "norms"
       ],
       "reason": "Norms compile documents into contracts the firewall checks"
-    },
-    {
-      "name": "firewall",
-      "folders": [
-        "firewall"
-      ],
-      "reason": "Local policy uses semantic messages"
-    },
-    {
-      "name": "communication",
-      "folders": [
-        "communication"
-      ],
-      "reason": "Delivery names agents by their cards"
     }
   ],
-  "publicTypePackages": [
-    {
-      "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
-    },
-    {
-      "package": "effect",
-      "reason": "Foundational Effect runtime; intentionally part of the public contract"
-    },
-    {
-      "package": "@effect/platform",
-      "reason": "Effect platform abstractions used at boundaries"
-    },
-    {
-      "package": "node",
-      "reason": "URL is the platform-standard endpoint locator required by the public acquisition contract"
-    }
-  ],
-  "allowedTestPublicSubpaths": [
-    {
-      "subpath": "./test",
-      "reason": "Test databases and an OAuth issuer fixture for suites outside the package"
-    }
-  ],
+  "publicTypePackages": [],
+  "allowedTestPublicSubpaths": [],
   "maxFolderChildren": 12,
   "maxPublicExports": 25,
   "disabledRules": [
@@ -187,10 +72,6 @@
     {
       "rule": "shared-kernel-cohesion",
       "reason": "encoding.ts and identity.ts are each one module by choice, and a schema module's exports have different users by nature"
-    },
-    {
-      "rule": "require-curated-public-facade",
-      "reason": "The main entry re-exports the host contract from the five modules that define it"
     },
     {
       "rule": "no-package-mesh",

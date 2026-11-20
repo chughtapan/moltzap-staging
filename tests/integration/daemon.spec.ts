@@ -1,40 +1,38 @@
 /** @file How the `sharnessd` binary starts and refuses to start and what it keeps across a restart. */
 
-import { FileSystem, HttpClient } from "@effect/platform";
-import { NodeContext, NodeHttpClient } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
-import {
-  databaseConnection,
-  databaseUrl,
-} from "@social-harness/social-harness/test";
-import {
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Redacted,
-  Schedule,
-} from "effect";
+import { Command, FileSystem } from "@effect/platform";
+import { NodeContext } from "@effect/platform-node";
+import { Effect, Schedule, Stream } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { runProcess } from "../../scripts/packed-workspace.js";
+import { callTool, send, type SignedIn } from "../../src/__tests__/daemon.js";
 import {
-  callTool,
-  type Daemon,
   processTrace,
-  send,
   SERVER_AGENT_NAME,
   SERVER_AGENT_OWNER,
   sharedDaemon,
-  type SignedIn,
   stopProcess,
 } from "./daemon-fixture.js";
 
 const BINARY = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";
 const SECRET = "secret-path-value";
-const AGENT_UNAVAILABLE = 503;
+
+/** Runs a command to its end and gives both of its output streams and its exit code. */
+const runProcess = Effect.fn("runProcess")(function* (
+  command: string,
+  args: readonly string[],
+) {
+  const child = yield* Command.start(Command.make(command, ...args));
+  const text = <E>(stream: Stream.Stream<Uint8Array, E>) =>
+    stream.pipe(Stream.decodeText(), Stream.mkString);
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [text(child.stdout), text(child.stderr), child.exitCode],
+    { concurrency: 3 },
+  );
+  return { stdout, stderr, exitCode };
+}, Effect.scoped);
 
 /** Each trace starts one daemon, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 180_000;
@@ -109,14 +107,13 @@ it(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
       const original = yield* daemon.start();
-      const { agent } = yield* daemon.signInAs("carol");
+      const { name } = yield* daemon.signInAs("carol");
       yield* stopProcess(original);
       const fs = yield* FileSystem.FileSystem;
       const messagePolicyFile = join(daemon.directory, "invalid-policy.json");
       yield* fs.writeFileString(
         messagePolicyFile,
         JSON.stringify({
-          format: "org.social-harness/message-policy/v2",
           mode: "off",
         }),
       );
@@ -124,25 +121,7 @@ it(
       expect((yield* daemon.startupFailure()).exitCode).not.toBe(0);
       yield* daemon.configure({ messagePolicyFile: undefined });
       yield* daemon.start();
-      expect((yield* daemon.signInAs("carol")).agent).toEqual(agent);
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-it(
-  "refuses another server agent name on a database started with one, naming the setting",
-  processTrace(
-    Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* stopProcess(yield* daemon.start());
-
-      yield* daemon.configure({
-        serverAgent: { name: "back-office", subject: SERVER_AGENT_OWNER },
-      });
-      const renamed = yield* daemon.startupFailure();
-      expect(renamed.exitCode).not.toBe(0);
-      expect(renamed.logs).toContain("serverAgent.name");
+      expect((yield* daemon.signInAs("carol")).name).toBe(name);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
@@ -150,46 +129,15 @@ it(
 
 /** The agent's inbox entries after `cursor`, read again until there is one. Without a cursor the read starts from now. */
 const readInbox = (agent: SignedIn, cursor?: string) =>
-  callTool(agent.connection.mcp, {
-    name: "receive_messages",
-    arguments: { cursor },
-  }).pipe(
+  callTool(agent, "receive_messages", { cursor }).pipe(
     Effect.filterOrFail(
       (page) => cursor === undefined || page.entries.length > 0,
     ),
     Effect.retry(Schedule.spaced("50 millis")),
   );
 
-/** The daemon's database, opened as the daemon opens it. */
-function openDatabase(daemon: Daemon) {
-  return Effect.gen(function* () {
-    const url = yield* databaseUrl.pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(daemon.environment))),
-      ),
-    );
-    return Context.get(
-      yield* Layer.build(databaseConnection(url)),
-      SqlClient.SqlClient,
-    );
-  });
-}
-
-/** The status the daemon answers a request that presents `bearer`. */
-function requestStatus(daemon: Daemon, bearer: Redacted.Redacted) {
-  return HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) =>
-      client.post(daemon.endpoint.href, {
-        headers: { authorization: `Bearer ${Redacted.value(bearer)}` },
-      }),
-    ),
-    Effect.map((response) => response.status),
-    Effect.provide(NodeHttpClient.layer),
-  );
-}
-
 it(
-  "keeps each owner's agent, history and inbox across a restart, where a cursor from before it reads the same entries, and serves the server agent when a client's record is lost",
+  "keeps each owner's agent name, history and inbox across a restart, where a cursor from before it reads the same entries",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
@@ -198,13 +146,13 @@ it(
         Effect.gen(function* () {
           const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
           const client = yield* daemon.signInAs("bob");
-          expect(server.agent.agentId).not.toBe(client.agent.agentId);
-          expect(server.agent.agentName).toBe(SERVER_AGENT_NAME);
+          expect(server.name).toBe(SERVER_AGENT_NAME);
 
+          const opening = yield* send(client, { text: "opening" });
           const start = yield* readInbox(client);
           expect(start.entries).toEqual([]);
           const first = yield* send(server, {
-            to: client.address,
+            to: client.name,
             text: "read before the restart",
           });
           const read = yield* readInbox(client, start.nextCursor);
@@ -212,24 +160,24 @@ it(
             { message: { msgId: first.id } },
           ]);
           const unread = yield* send(server, {
-            to: client.address,
+            to: client.name,
             text: "unread across the restart",
           });
           return {
-            server: server.agent,
-            client: client.agent,
+            client: client.name,
+            opening: opening.id,
             ids: [first.id, unread.id],
             cursors: [start.nextCursor, read.nextCursor],
           };
         }),
       );
       yield* stopProcess(original);
-      const restarted = yield* daemon.start();
+      yield* daemon.start();
 
       const client = yield* daemon.signInAs("bob");
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
-      expect(client.agent).toEqual(sent.client);
-      expect(server.agent).toEqual(sent.server);
+      expect(client.name).toBe(sent.client);
+      expect(server.name).toBe(SERVER_AGENT_NAME);
       const [start, afterFirst] = sent.cursors;
       expect((yield* readInbox(client, afterFirst)).entries).toMatchObject([
         { message: { msgId: sent.ids[1] } },
@@ -239,25 +187,11 @@ it(
           (entry) => entry.message.msgId,
         ),
       ).toEqual(sent.ids);
-      const history = yield* callTool(client.connection.mcp, {
-        name: "read_conversation",
-        arguments: {},
-      });
-      expect(history.records.map((record) => record.message.msgId)).toEqual(
-        sent.ids,
-      );
-
-      const sql = yield* openDatabase(daemon);
-      yield* sql`DELETE FROM agent_cards WHERE agent_name = ${client.agent.agentName}`;
-      yield* stopProcess(restarted);
-      const serving = yield* daemon.start();
-      expect((yield* daemon.signInAs(SERVER_AGENT_OWNER)).agent).toEqual(
-        sent.server,
-      );
-      expect(yield* requestStatus(daemon, yield* daemon.bearer("bob"))).toBe(
-        AGENT_UNAVAILABLE,
-      );
-      expect(serving.child.exitCode).toBeNull();
+      const history = yield* callTool(client, "read_conversation");
+      expect(history.records.map((record) => record.message.msgId)).toEqual([
+        sent.opening,
+        ...sent.ids,
+      ]);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

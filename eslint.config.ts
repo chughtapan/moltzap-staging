@@ -241,34 +241,6 @@ export default [
   rootSection(),
   disableCommentRules,
   ...packageSections(),
-  {
-    files: ["src/firewall/rules.spec.ts"],
-    rules: {
-      "max-lines-per-function": [
-        "error",
-        { max: 350, skipBlankLines: true, skipComments: true },
-      ],
-    },
-  },
-  {
-    files: [
-      "src/daemon/inbox.ts",
-      "src/firewall/service.ts",
-      "src/firewall/store.ts",
-    ],
-    rules: {
-      "max-lines-per-function": [
-        "error",
-        { max: 420, skipBlankLines: true, skipComments: true },
-      ],
-      complexity: ["error", { max: 25 }],
-      "sonarjs/cognitive-complexity": ["error", 32],
-      "max-depth": ["error", 4],
-      "sonarjs/nested-control-flow": ["error", { maximumNestingLevel: 4 }],
-      "sonarjs/no-nested-functions": ["error", { threshold: 6 }],
-      "max-params": ["error", 7],
-    },
-  },
   ...at("tests/integration", integrationSections()),
   configModuleRules,
   specAssertionRules,
