@@ -6,14 +6,12 @@ import { Effect, Schedule, Stream } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { callTool, send, type SignedIn } from "../../src/__tests__/daemon.js";
 import {
-  callTool,
   processTrace,
-  send,
   SERVER_AGENT_NAME,
   SERVER_AGENT_OWNER,
   sharedDaemon,
-  type SignedIn,
   stopProcess,
 } from "./daemon-fixture.js";
 
@@ -151,10 +149,7 @@ it(
 
 /** The agent's inbox entries after `cursor`, read again until there is one. Without a cursor the read starts from now. */
 const readInbox = (agent: SignedIn, cursor?: string) =>
-  callTool(agent.connection.mcp, {
-    name: "receive_messages",
-    arguments: { cursor },
-  }).pipe(
+  callTool(agent, "receive_messages", { cursor }).pipe(
     Effect.filterOrFail(
       (page) => cursor === undefined || page.entries.length > 0,
     ),
@@ -212,10 +207,7 @@ it(
           (entry) => entry.message.msgId,
         ),
       ).toEqual(sent.ids);
-      const history = yield* callTool(client.connection.mcp, {
-        name: "read_conversation",
-        arguments: {},
-      });
+      const history = yield* callTool(client, "read_conversation");
       expect(history.records.map((record) => record.message.msgId)).toEqual(
         sent.ids,
       );

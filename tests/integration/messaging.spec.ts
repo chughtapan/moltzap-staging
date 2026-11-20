@@ -2,15 +2,12 @@
 
 import { Effect, Fiber, Stream } from "effect";
 import { expect, it } from "vitest";
+import { callTool, send } from "../../src/__tests__/daemon.js";
 import {
-  callTool,
   INBOX_EVENT,
   inboxStream,
-  joinParticipants,
-  nextItem,
   processTrace,
-  receivedOrder,
-  send,
+  received,
   SERVER_AGENT_OWNER,
   sharedDaemon,
 } from "./daemon-fixture.js";
@@ -22,13 +19,8 @@ const PROCESS_TEST_TIMEOUT_MS = 120_000;
 const serverAndClient = Effect.gen(function* () {
   const daemon = yield* sharedDaemon();
   yield* daemon.start();
-  const [server, client] = yield* joinParticipants(daemon, [
-    SERVER_AGENT_OWNER,
-    "bob",
-  ]);
-  if (server === undefined || client === undefined) {
-    return yield* Effect.dieMessage("Expected two participants");
-  }
+  const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+  const client = yield* daemon.signInAs("bob");
   return { server, client };
 });
 
@@ -43,28 +35,29 @@ it(
 
       const sent = yield* send(server, { to: client.address, text: greeting });
       expect(sent).toMatchObject({ address: client.address });
-      expect(yield* nextItem(client)).toMatchObject({
-        msgId: sent.id,
-        author: server.agent,
-        recipient: client.agent,
-        text: greeting,
-      });
+      expect(yield* received(client, 1)).toMatchObject([
+        {
+          msgId: sent.id,
+          author: server.agent,
+          recipient: client.agent,
+          text: greeting,
+        },
+      ]);
       const replied = yield* send(client, { text: reply });
-      expect(yield* nextItem(server)).toMatchObject({
-        msgId: replied.id,
-        author: client.agent,
-        recipient: server.agent,
-        text: reply,
-      });
+      expect(yield* received(server, 1)).toMatchObject([
+        {
+          msgId: replied.id,
+          author: client.agent,
+          recipient: server.agent,
+          text: reply,
+        },
+      ]);
 
-      const serverHistory = (yield* callTool(server.connection.mcp, {
-        name: "read_conversation",
-        arguments: { address: client.address },
+      const serverHistory = (yield* callTool(server, "read_conversation", {
+        address: client.address,
       })).records;
-      const clientHistory = (yield* callTool(client.connection.mcp, {
-        name: "read_conversation",
-        arguments: {},
-      })).records;
+      const clientHistory = (yield* callTool(client, "read_conversation"))
+        .records;
       expect(serverHistory.map(({ kind }) => kind)).toEqual([
         "sent",
         "received",
@@ -79,12 +72,9 @@ it(
           replied.id,
         ]);
       }
-      expect(
-        yield* callTool(server.connection.mcp, {
-          name: "list_conversations",
-          arguments: {},
-        }),
-      ).toEqual({ addresses: [client.address] });
+      expect(yield* callTool(server, "list_conversations")).toEqual({
+        addresses: [client.address],
+      });
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
@@ -98,15 +88,13 @@ it(
       yield* daemon.start();
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
       const client = yield* daemon.signInAs("bob");
-      const listed = yield* Effect.tryPromise(() =>
-        client.connection.events.list(),
-      );
+      const listed = yield* Effect.tryPromise(() => client.events.list());
       expect(listed.events).toMatchObject([
         { name: INBOX_EVENT, delivery: ["poll", "push", "webhook"] },
       ]);
       const first = yield* send(server, { to: client.address, text: greeting });
       const second = yield* send(server, { to: client.address, text: reply });
-      const polled = yield* inboxStream(client.connection, "0", "poll").pipe(
+      const polled = yield* inboxStream(client, "0", "poll").pipe(
         Stream.take(2),
         Stream.runCollect,
       );
@@ -125,14 +113,8 @@ it(
     Effect.gen(function* () {
       const { server, client } = yield* serverAndClient;
       const receive = (cursor: string, wait: number) =>
-        callTool(client.connection.mcp, {
-          name: "receive_messages",
-          arguments: { cursor, wait },
-        });
-      const start = yield* callTool(client.connection.mcp, {
-        name: "receive_messages",
-        arguments: {},
-      });
+        callTool(client, "receive_messages", { cursor, wait });
+      const start = yield* callTool(client, "receive_messages");
       const waiting = yield* Effect.fork(receive(start.nextCursor, 50));
       const sent = yield* send(server, { to: client.address, text: greeting });
       const woken = yield* Fiber.join(waiting);
@@ -165,18 +147,15 @@ it(
         });
       }
       for (const participant of [server, client]) {
-        expect(
-          new Set(yield* receivedOrder(participant, 2 * CROSSING_ROUNDS)).size,
-        ).toBe(2 * CROSSING_ROUNDS);
+        const delivered = yield* received(participant, 2 * CROSSING_ROUNDS);
+        expect(new Set(delivered.map((message) => message.msgId)).size).toBe(
+          2 * CROSSING_ROUNDS,
+        );
       }
-      const serverSaved = yield* callTool(server.connection.mcp, {
-        name: "read_conversation",
-        arguments: { address: client.address },
+      const serverSaved = yield* callTool(server, "read_conversation", {
+        address: client.address,
       });
-      const clientSaved = yield* callTool(client.connection.mcp, {
-        name: "read_conversation",
-        arguments: {},
-      });
+      const clientSaved = yield* callTool(client, "read_conversation");
       const order = serverSaved.records.map((record) => record.message.msgId);
       expect(order).toHaveLength(4 * CROSSING_ROUNDS);
       expect(clientSaved.records.map((record) => record.message.msgId)).toEqual(
