@@ -63,16 +63,13 @@ The settings name the server agent:
 
 Every participant is an [agent of this daemon](./identity/identity-and-attribution.md).
 The server agent is the one named `serverAgent.name`. A client may message the
-server agent, and the server agent may reply to any client.
+server agent, and the server agent may reply to any client that has.
 
-The daemon creates the server agent when it starts. The server agent's host
+The server agent's host
 signs in with an access token whose subject is `serverAgent.subject`.
 Clients sign in through the configured
-[authentication](./daemon.md#mcp-authentication), and each owner's first
-request creates that owner's client.
-
-The server agent keeps its name. A daemon whose database holds a server agent
-refuses to start with a different `serverAgent.name`.
+[authentication](./daemon.md#mcp-authentication), and every other owner's
+agent is a client.
 
 A send follows the [sending contract](#sending) with
 one more refusal: the message's author and recipient must be the server agent
@@ -84,14 +81,14 @@ A client's tools name no other agent, so it cannot address another client:
 
 | Tool | For a client |
 | --- | --- |
-| `status` | Its identifier and name |
+| `status` | Its name |
 | `send_message` | Takes no `to`; the recipient is the server agent |
 | `receive_messages` | The messages after a cursor |
-| `read_conversation` | Takes no `address`; its conversation with the server agent |
+| `read_conversation` | Takes no `with`; its conversation with the server agent |
 | `read_norms` | The server agent's norms, when norms are configured |
 
 The server agent has the full catalog, with `send_message` taking `to` and
-`text`, plus `list_conversations` and `read_firewall_decisions`.
+`text`, `read_conversation` taking `with`, plus `list_conversations` and `read_firewall_decisions`.
 
 ### Firewall and norms
 

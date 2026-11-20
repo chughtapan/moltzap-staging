@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect } from "vitest";
-import { type Answer, answersTo, peer } from "./__tests__/firewall-fixtures.js";
+import { type Answer, answersTo } from "./__tests__/firewall-fixtures.js";
 import {
   type DecisionProvider,
   DecisionProviderError,
@@ -35,7 +35,7 @@ import {
   type StructureCheck,
   TextRule,
 } from "./firewall.js";
-import { Message } from "./messages.js";
+import { AgentName, Message } from "./messages.js";
 
 type Direction = "incoming" | "outgoing";
 const directions = ["incoming", "outgoing"] as const;
@@ -142,8 +142,8 @@ describe("message-policy file", () => {
   );
 });
 
-const alice = peer("alice", 1);
-const bob = peer("bob", 2);
+const alice = AgentName.make("alice");
+const bob = AgentName.make("bob");
 const notice = "Your message was not accepted.";
 const repair = "Ask for acceptance of the chosen proposal.";
 const registeredGuidance = "Wait for every participant to accept a proposal.";

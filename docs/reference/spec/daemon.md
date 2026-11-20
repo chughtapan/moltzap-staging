@@ -73,7 +73,7 @@ norms, every agent uses `read_norms` through its own MCP context.
 
 ## Persistence
 
-A message belongs to its two agents; firewall decisions belong to the server agent. The record of owners and agents is shared by every agent. The database
+A message belongs to its two agents; firewall decisions belong to the server agent. The database
 stores everything as it was written. The daemon's operator administers the database and can
 read what it stores, so protect it as you would the messages themselves.
 

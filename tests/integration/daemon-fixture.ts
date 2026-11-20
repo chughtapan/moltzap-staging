@@ -297,13 +297,8 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
       ),
       () => Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore),
     );
-    const agent = yield* callTool({ mcp }, "status");
-    const subscriber: Subscriber = {
-      agent,
-      address: `agent:${agent.agentName}`,
-      mcp,
-      events,
-    };
+    const { agentName } = yield* callTool({ mcp }, "status");
+    const subscriber: Subscriber = { name: agentName, mcp, events };
     return subscriber;
   }).pipe(
     Effect.mapError(failed("could not sign in to the daemon")),
@@ -311,15 +306,19 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   );
 
 /**
- * Creates the daemon's tables and its server agent as the login of `url`,
+ * Creates the daemon's tables as the login of `url`,
  * which may create tables, so the daemon serves them through a login that
  * may not.
  */
 const preparedBy = (url: Redacted.Redacted, issuer: string) =>
   openDaemon(url, {
-    owner: { issuer, subject: SERVER_AGENT_OWNER },
+    issuer,
+    subject: SERVER_AGENT_OWNER,
     name: AgentName.make(SERVER_AGENT_NAME),
-    firewall: (me) => makeFirewall({ me, historyLimit: 1 }),
+    firewall: makeFirewall({
+      me: AgentName.make(SERVER_AGENT_NAME),
+      historyLimit: 1,
+    }),
   }).pipe(
     Effect.scoped,
     Effect.mapError(failed("could not prepare the daemon's database")),

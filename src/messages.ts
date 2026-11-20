@@ -1,66 +1,9 @@
 /** @file The agents of a daemon and the messages they send each other, as validated values. */
 
-import { Array, Data, Effect, Encoding, Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 
-/**
- * An identifier of `prefix` and `byteLength` random bytes in canonical
- * base64url, with the same pattern in runtime validation and generated JSON
- * Schema, and the minting of a new one.
- */
-const identifier = <const Name extends string>(
-  name: Name,
-  prefix: string,
-  byteLength: number,
-) => {
-  const wholeCharacters = Math.floor((byteLength * 8) / 6);
-  const remainingBits = (byteLength * 8) % 6;
-  const finalCharacter =
-    remainingBits === 0
-      ? ""
-      : `[${Array.makeBy(2 ** remainingBits, (value) =>
-          Encoding.encodeBase64Url(
-            Uint8Array.of(value << (8 - remainingBits)),
-          ).charAt(0),
-        ).join("")}]`;
-  const characters = Math.ceil((byteLength * 8) / 6);
-  const schema = Schema.String.pipe(
-    Schema.length(prefix.length + characters),
-    Schema.pattern(
-      new RegExp(
-        `^${prefix}[A-Za-z0-9_-]{${wholeCharacters}}${finalCharacter}$`,
-        "u",
-      ),
-    ),
-    Schema.brand(name),
-    Schema.annotations({
-      identifier: name,
-      description: `${name}: ${prefix} then ${String(characters)} base64url characters`,
-    }),
-  );
-  return Object.assign(schema, {
-    mint: () =>
-      Schema.decodeSync(schema)(
-        `${prefix}${randomBytes(byteLength).toString("base64url")}`,
-      ),
-  });
-};
-
-/** Identifies one agent. The daemon mints it when it creates the agent. */
-export const AgentId = identifier("AgentId", "agt_", 16);
-/** Validated nominal value decoded by {@link AgentId}. */
-export type AgentId = typeof AgentId.Type;
-
-/** Opaque identity of the principal represented by an agent. */
-export const PrincipalId = identifier("PrincipalId", "prn_", 16);
-/** Validated nominal value decoded by {@link PrincipalId}. */
-export type PrincipalId = typeof PrincipalId.Type;
-
-/** The rule every agent name meets, as validation errors state it. */
-export const AGENT_NAME_RULE =
-  "3 to 32 lowercase letters, digits or single hyphens, starting and ending with a letter or digit";
-
-/** The name other agents address an agent by, unique on its daemon. */
+/** The name of an agent on its daemon: the server agent's configured name, or the name a client's owner gives it. */
 export const AgentName = Schema.String.pipe(
   Schema.minLength(3),
   Schema.maxLength(32),
@@ -68,26 +11,12 @@ export const AgentName = Schema.String.pipe(
   Schema.brand("AgentName"),
   Schema.annotations({
     identifier: "AgentName",
-    description: `an agent name: ${AGENT_NAME_RULE}`,
+    description:
+      "an agent name: 3 to 32 lowercase letters, digits or single hyphens, starting and ending with a letter or digit",
   }),
 );
 /** Validated nominal value decoded by {@link AgentName}. */
 export type AgentName = typeof AgentName.Type;
-
-/**
- * Identifies an agent and the principal it represents. Messages, results and
- * policy decisions name their agents with this value.
- */
-export const AgentCard = Schema.Struct({
-  agentId: AgentId,
-  agentName: AgentName,
-  principalId: PrincipalId,
-}).annotations({ identifier: "AgentCard" });
-/**
- * An agent's identifier, name and principal, as its daemon recorded them.
- * @useDeclaredType
- */
-export type AgentCard = typeof AgentCard.Type;
 
 /** A refused send names this reason. */
 export class CommunicationError extends Data.TaggedError("CommunicationError")<{
@@ -95,10 +24,17 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
 }> {}
 
 /**
- * One author-scoped message id. Retrying a persisted message reuses it; a new
- * message receives a fresh one.
+ * One message's id: `msg_` then 32 random bytes in canonical base64url, whose
+ * last character carries four bits.
  */
-export const MsgId = identifier("MsgId", "msg_", 32);
+export const MsgId = Schema.String.pipe(
+  Schema.pattern(/^msg_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u),
+  Schema.brand("MsgId"),
+  Schema.annotations({
+    identifier: "MsgId",
+    description: "MsgId: msg_ then 43 base64url characters",
+  }),
+);
 /**
  * A validated author-scoped message id.
  * @useDeclaredType
@@ -122,8 +58,8 @@ export const wellFormedString = Schema.String.pipe(
  * one.
  */
 const messageSchema = Schema.Struct({
-  author: AgentCard,
-  recipient: AgentCard,
+  author: AgentName,
+  recipient: AgentName,
   msgId: MsgId,
   replyToMsgId: Schema.optional(MsgId),
   text: wellFormedString.pipe(
@@ -132,11 +68,7 @@ const messageSchema = Schema.Struct({
     ),
   ),
 }).pipe(
-  Schema.filter(
-    ({ author, recipient }) =>
-      recipient.agentId !== author.agentId &&
-      recipient.agentName !== author.agentName,
-  ),
+  Schema.filter(({ author, recipient }) => recipient !== author),
   Schema.annotations({ identifier: "Message" }),
 );
 /** @useDeclaredType */
@@ -147,7 +79,10 @@ export const Message = Object.assign(messageSchema, {
   /** A new message with a fresh id, or the refusal of what cannot be one. */
   create: (input: Omit<Message, "msgId">) =>
     Effect.suspend(() =>
-      Schema.decode(messageSchema)({ ...input, msgId: MsgId.mint() }),
+      Schema.decode(messageSchema)({
+        ...input,
+        msgId: `msg_${randomBytes(32).toString("base64url")}`,
+      }),
     ).pipe(
       Effect.catchTag(
         "ParseError",

@@ -25,9 +25,8 @@ read order when its check is recorded.
 
 ## Messages
 
-Messages identify their author and recipient and carry text. Hosts use the
-enclosing entry's `address` to send back to the conversation. The author and the recipient each carry their
-identifier, name and principal.
+Messages identify their author and recipient and carry text. The author and the
+recipient are agent names. The server agent's host sends back to a message's author.
 
 Authors receive no self-copy. A recipient receives a conversation's messages
 in the order the daemon gave them, whether or not it was connected when they
@@ -50,7 +49,7 @@ Subscriptions do not survive a daemon restart.
 
 `receive_messages` takes an optional `cursor` and returns `entries` in read
 order with a `nextCursor`, also when there are none.
-Each entry contains its `address`, `message` and optional guidance.
+Each entry contains its `message` and optional guidance.
 Pages hold at most 50 entries.
 
 An optional `wait`, in seconds, lets a read that finds no entry after its cursor

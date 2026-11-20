@@ -25,7 +25,8 @@ const serverAndClient = Effect.gen(function* () {
 });
 
 const greeting = "hello from the server agent";
-const reply = "reply from the client";
+const reply = "reply from the server agent";
+const opening = "opening from the client";
 
 it(
   "delivers between the server agent and a client in both directions and saves one history for both",
@@ -33,47 +34,41 @@ it(
     Effect.gen(function* () {
       const { server, client } = yield* serverAndClient;
 
-      const sent = yield* send(server, { to: client.address, text: greeting });
-      expect(sent).toMatchObject({ address: client.address });
-      expect(yield* received(client, 1)).toMatchObject([
+      const opened = yield* send(client, { text: opening });
+      expect(yield* received(server, 1)).toEqual([
         {
-          msgId: sent.id,
-          author: server.agent,
-          recipient: client.agent,
+          msgId: opened.id,
+          author: client.name,
+          recipient: server.name,
+          text: opening,
+        },
+      ]);
+      const replied = yield* send(server, {
+        to: client.name,
+        text: greeting,
+        replyToMsgId: opened.id,
+      });
+      expect(yield* received(client, 1)).toEqual([
+        {
+          msgId: replied.id,
+          replyToMsgId: opened.id,
+          author: server.name,
+          recipient: client.name,
           text: greeting,
         },
       ]);
-      const replied = yield* send(client, { text: reply });
-      expect(yield* received(server, 1)).toMatchObject([
-        {
-          msgId: replied.id,
-          author: client.agent,
-          recipient: server.agent,
-          text: reply,
-        },
-      ]);
 
-      const serverHistory = (yield* callTool(server, "read_conversation", {
-        address: client.address,
-      })).records;
-      const clientHistory = (yield* callTool(client, "read_conversation"))
-        .records;
-      expect(serverHistory.map(({ kind }) => kind)).toEqual([
-        "sent",
-        "received",
-      ]);
-      expect(clientHistory.map(({ kind }) => kind)).toEqual([
-        "received",
-        "sent",
-      ]);
-      for (const history of [serverHistory, clientHistory]) {
-        expect(history.map((record) => record.message.msgId)).toEqual([
-          sent.id,
-          replied.id,
-        ]);
-      }
+      const serverHistory = yield* callTool(server, "read_conversation", {
+        with: client.name,
+      });
+      expect(serverHistory.records.map(({ message }) => message.msgId)).toEqual(
+        [opened.id, replied.id],
+      );
+      expect(yield* callTool(client, "read_conversation")).toEqual(
+        serverHistory,
+      );
       expect(yield* callTool(server, "list_conversations")).toEqual({
-        addresses: [client.address],
+        clients: [client.name],
       });
     }),
   ),
@@ -88,12 +83,13 @@ it(
       yield* daemon.start();
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
       const client = yield* daemon.signInAs("bob");
+      yield* send(client, { text: opening });
       const listed = yield* Effect.tryPromise(() => client.events.list());
       expect(listed.events).toMatchObject([
         { name: INBOX_EVENT, delivery: ["poll", "push", "webhook"] },
       ]);
-      const first = yield* send(server, { to: client.address, text: greeting });
-      const second = yield* send(server, { to: client.address, text: reply });
+      const first = yield* send(server, { to: client.name, text: greeting });
+      const second = yield* send(server, { to: client.name, text: reply });
       const polled = yield* inboxStream(client, "0", "poll").pipe(
         Stream.take(2),
         Stream.runCollect,
@@ -114,9 +110,10 @@ it(
       const { server, client } = yield* serverAndClient;
       const receive = (cursor: string, wait: number) =>
         callTool(client, "receive_messages", { cursor, wait });
+      yield* send(client, { text: opening });
       const start = yield* callTool(client, "receive_messages");
       const waiting = yield* Effect.fork(receive(start.nextCursor, 50));
-      const sent = yield* send(server, { to: client.address, text: greeting });
+      const sent = yield* send(server, { to: client.name, text: greeting });
       const woken = yield* Fiber.join(waiting);
       expect(woken.entries.map((entry) => entry.message.msgId)).toEqual([
         sent.id,
@@ -139,7 +136,8 @@ it(
     Effect.gen(function* () {
       const { server, client } = yield* serverAndClient;
       const text = "a crossing message";
-      const toClient = send(server, { to: client.address, text });
+      yield* send(client, { text: opening });
+      const toClient = send(server, { to: client.name, text });
       const toServer = send(client, { text });
       for (let round = 0; round < CROSSING_ROUNDS; round += 1) {
         yield* Effect.all([toClient, toServer, toClient, toServer], {
@@ -153,11 +151,11 @@ it(
         );
       }
       const serverSaved = yield* callTool(server, "read_conversation", {
-        address: client.address,
+        with: client.name,
       });
       const clientSaved = yield* callTool(client, "read_conversation");
       const order = serverSaved.records.map((record) => record.message.msgId);
-      expect(order).toHaveLength(4 * CROSSING_ROUNDS);
+      expect(order).toHaveLength(4 * CROSSING_ROUNDS + 1);
       expect(clientSaved.records.map((record) => record.message.msgId)).toEqual(
         order,
       );

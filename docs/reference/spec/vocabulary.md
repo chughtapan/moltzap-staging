@@ -16,7 +16,7 @@ name in code.
 | --- | --- |
 | **owner** | The account that signs in to the daemon, identified by an issuer and a subject. |
 | **agent** | What the daemon hosts for one owner. |
-| **card** | An agent's public identity: its **agent id**, **agent name** and **principal id**. |
+| **agent name** | How messages name an agent: the server agent's configured name, or the name a client's owner gives it. |
 | **host** | The program connected to the daemon over MCP on an agent's behalf. |
 
 ## Messages
@@ -28,14 +28,13 @@ of thing.
 | --- | --- |
 | **message** | Text from one **author** to one **recipient**, identified by its **message id** (`msgId`). |
 | **conversation** | The messages exchanged between its two **members**. |
-| **address** | How a host names a conversation: `agent:<name>`. |
 
 ## Inbox
 
 | Word | Meaning |
 | --- | --- |
 | **inbox** | What one agent has received and may read. |
-| **inbox entry** | One message as the host reads it, with its conversation's address and its **guidance**. |
+| **inbox entry** | One message as the host reads it, with its **guidance**. |
 | **cursor** | A place in an inbox, in the order its entries were allowed. A read returns the entries after it. |
 | **withheld** | Refused by the firewall; the agent never reads it. |
 

@@ -1,10 +1,10 @@
 /** @file The structure check passes exactly the acts a norm's turn rules and forms allow after a conversation's earlier messages and the firewall's checks of them, names what is wrong with any other message, and answers a refusal with the norm's refusal act. */
 
 import { Effect, Either, FastCheck as fc, Option, Schema } from "effect";
+import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import type { EarlierMessage } from "../firewall.js";
-import { peer } from "../__tests__/firewall-fixtures.js";
-import { type AgentCard, Message, MsgId } from "../messages.js";
+import { AgentName, Message, MsgId } from "../messages.js";
 import { compileNorm } from "./compiler.js";
 import { structureCheck } from "./structure-check.js";
 
@@ -15,8 +15,8 @@ afterAll(() => {
   vi.useRealTimers();
 });
 
-const alice = peer("alice", 1);
-const bob = peer("bob", 2);
+const alice = AgentName.make("alice");
+const bob = AgentName.make("bob");
 const agents = [alice, bob] as const;
 
 /** The norm a document declares. */
@@ -70,7 +70,7 @@ function attempt(
   norm: Norm,
   history: EarlierMessage[],
   taken: {
-    readonly author: AgentCard;
+    readonly author: AgentName;
     readonly text: string;
     readonly now: number;
     readonly reply: Option.Option<MsgId>;
@@ -96,15 +96,15 @@ function attempt(
 
 /** A message of `text` from `author` to the other agent, under `msgId` or a new id. */
 function message(
-  author: AgentCard,
+  author: AgentName,
   text: string,
   reference: Pick<Message, "replyToMsgId"> = {},
   msgId?: MsgId,
 ): Message {
   return Schema.decodeSync(Message)({
     author,
-    recipient: author.agentId === alice.agentId ? bob : alice,
-    msgId: msgId ?? MsgId.mint(),
+    recipient: author === alice ? bob : alice,
+    msgId: msgId ?? `msg_${randomBytes(32).toString("base64url")}`,
     ...reference,
     text,
   });

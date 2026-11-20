@@ -24,6 +24,7 @@ import {
   inboxOf,
   inProcessDaemon,
   send,
+  type SignedIn,
 } from "./__tests__/daemon.js";
 import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
 import { openTestDatabase } from "./__tests__/test.js";
@@ -49,10 +50,7 @@ it("gives the server agent its tools, and a status result that names the agent",
     const reply = yield* Effect.tryPromise(() =>
       alice.mcp.callTool({ name: "status", arguments: {} }),
     );
-    expect(reply.structuredContent).toEqual({
-      agentId: alice.agent.agentId,
-      agentName: "alice",
-    });
+    expect(reply.structuredContent).toEqual({ agentName: "alice" });
     expect(reply.content).toEqual([
       { type: "text", text: JSON.stringify(reply.structuredContent) },
     ]);
@@ -77,13 +75,15 @@ it("gives a client tools that name no recipient and no conversation", () =>
           .properties ?? {},
       ),
     ).toEqual(["text", "replyToMsgId"]);
-    expect(yield* send(bob, { text: "hello" })).toMatchObject({
-      address: "agent:alice",
-    });
-    expect((yield* callTool(bob, "read_conversation")).records).toMatchObject([
+    const { id } = yield* send(bob, { text: "hello" });
+    expect((yield* callTool(bob, "read_conversation")).records).toEqual([
       {
-        kind: "sent",
-        message: { recipient: { agentName: "alice" }, text: "hello" },
+        message: {
+          author: bob.name,
+          recipient: "alice",
+          msgId: id,
+          text: "hello",
+        },
       },
     ]);
   }));
@@ -94,7 +94,7 @@ it("refuses a call with a wrong or an unknown argument without running the tool"
     const alice = yield* daemon.signInAs("alice");
     for (const wrong of [{ text: 1 }, { extra_field: "x" }]) {
       const failure = yield* callTool(alice, "send_message", {
-        to: "agent:bob",
+        to: "bob",
         text: "hello",
         ...wrong,
       }).pipe(Effect.flip);
@@ -132,6 +132,7 @@ it("answers a failed call with the failure's message and its fields", () =>
     });
     const alice = yield* daemon.signInAs("alice");
     const bob = yield* daemon.signInAs("bob");
+    yield* send(bob, { text: "hi" });
     const said: Readonly<Record<string, string>> = {
       chk_1:
         "Error: Send a greeting first. Check: chk_1, rule shape; rule-violation.",
@@ -140,26 +141,23 @@ it("answers a failed call with the failure's message and its fields", () =>
     };
     for (const fields of refusals) {
       expect(
-        yield* send(alice, { to: bob.address, text: "hello" }).pipe(
-          Effect.flip,
-        ),
+        yield* send(alice, { to: bob.name, text: "hello" }).pipe(Effect.flip),
       ).toEqual({ ...fields, message: said[fields.checkId] });
     }
-    for (const [name, input] of [
-      ["send_message", { to: "agent:nobody", text: "hello" }],
-      ["send_message", { to: "agent:alice", text: "hello" }],
-      ["read_conversation", { address: "agent:nobody" }],
-      ["read_conversation", { address: "agent:alice" }],
-    ] as const) {
-      const address = "to" in input ? input.to : input.address;
-      const unknown = address === "agent:nobody";
-      expect(yield* callTool(alice, name, input).pipe(Effect.flip)).toEqual({
-        reason: unknown ? "unknown-agent" : "invalid-address",
-        address,
-        message: unknown
-          ? "This daemon has no agent named agent:nobody. Check the name with its owner."
-          : "The address agent:alice names you, not another agent.",
-      });
+    for (const name of ["nobody", "alice"]) {
+      const refusal = {
+        reason: "unknown-agent",
+        name,
+        message: `No client named ${name} has written to this agent. Use list_conversations to see the clients that have.`,
+      };
+      expect(
+        yield* Effect.flip(send(alice, { to: name, text: "hello" })),
+      ).toEqual(refusal);
+      expect(
+        yield* Effect.flip(
+          callTool(alice, "read_conversation", { with: name }),
+        ),
+      ).toEqual(refusal);
     }
   }));
 
@@ -173,8 +171,9 @@ it("answers a call that dies without the defect's text, and a send that dies as 
     });
     const alice = yield* daemon.signInAs("alice");
     const bob = yield* daemon.signInAs("bob");
+    yield* send(bob, { text: "hi" });
     expect(
-      yield* send(alice, { to: bob.address, text: "hello" }).pipe(Effect.flip),
+      yield* send(alice, { to: bob.name, text: "hello" }).pipe(Effect.flip),
     ).toEqual({
       reason: "outcome-unknown",
       message:
@@ -212,14 +211,15 @@ it("interrupts only the aborted call, whose conversation the next send then uses
     });
     const alice = yield* daemon.signInAs("alice");
     const bob = yield* daemon.signInAs("bob");
-    const hello = { to: bob.address, text: "hello" };
+    yield* send(bob, { text: "hi" });
+    const hello = { to: bob.name, text: "hello" };
 
     const waiting = yield* Effect.fork(send(alice, hello));
     yield* Deferred.await(entered);
     yield* Fiber.interrupt(waiting);
     yield* Deferred.await(interrupted);
 
-    expect(yield* send(alice, hello)).toMatchObject({ address: bob.address });
+    expect(yield* send(alice, hello)).toHaveProperty("id");
   }));
 
 /** A daemon opened on `database`, with Alice as its server agent behind a firewall that allows everything. */
@@ -227,12 +227,13 @@ const openOn = (
   database: Effect.Effect.Success<ReturnType<typeof openTestDatabase>>,
 ) =>
   openDaemon(database.url, {
-    owner: { issuer: "urn:social-harness:test", subject: "alice" },
+    issuer: "urn:social-harness:test",
+    subject: "alice",
     name: AgentName.make("alice"),
-    firewall: () => ({
+    firewall: {
       checkIncoming: () => Effect.succeed({ kind: "allowed" }),
       checkOutgoing: () => Effect.succeed({ kind: "allowed" }),
-    }),
+    },
   });
 
 /** The one rule of every policy here. */
@@ -285,27 +286,30 @@ const aliceAndBob = (options?: Parameters<typeof inProcessDaemon>[0]) =>
     return { daemon, alice, bob };
   });
 
-/** The kind of each record on the first page of the agent's history with the agent at `address`, or with the server agent. */
-const historyOf = (agent: Parameters<typeof callTool>[0], address?: string) =>
+/** Whether `agent` sent or received each message on the first page of its history with `client`, or with the server agent. */
+const historyOf = (agent: SignedIn, client?: string) =>
   Effect.map(
-    callTool(agent, "read_conversation", address ? { address } : {}),
-    ({ records }) => records.map((record) => record.kind),
+    callTool(agent, "read_conversation", client ? { with: client } : {}),
+    ({ records }) =>
+      records.map((record) =>
+        record.message.author === agent.name ? "sent" : "received",
+      ),
   );
 
 it("stores each send as a new message to the agent it names, with the reply reference it gives", () =>
   Effect.gen(function* () {
     const { alice, bob } = yield* aliceAndBob();
 
-    const first = yield* send(alice, { to: bob.address, text: "Hello" });
+    yield* send(bob, { text: "Hello" });
+    const first = yield* send(alice, { to: bob.name, text: "Hello" });
     const second = yield* send(alice, {
-      to: bob.address,
+      to: bob.name,
       text: "Hello",
       replyToMsgId: first.id,
     });
 
-    expect(first.address).toBe(bob.address);
     const [stored, reply] = yield* inboxOf(bob);
-    expect(stored).toMatchObject({ msgId: first.id, recipient: bob.agent });
+    expect(stored).toMatchObject({ msgId: first.id, recipient: bob.name });
     expect(stored).not.toHaveProperty("replyToMsgId");
     expect(reply).toMatchObject({ msgId: second.id, replyToMsgId: first.id });
   }));
@@ -330,9 +334,8 @@ it("checks the messages of one conversation in order while another conversation 
       }),
     });
     const carol = yield* daemon.signInAs("carol");
-    const addresses = Effect.map(
-      callTool(alice, "receive_messages", { cursor: "0" }),
-      (page) => page.entries.map((entry) => entry.address),
+    const authors = Effect.map(inboxOf(alice), (messages) =>
+      messages.map((message) => message.author),
     );
 
     const first = yield* Effect.forkScoped(send(bob, { text: "First" }));
@@ -340,11 +343,11 @@ it("checks the messages of one conversation in order while another conversation 
     const second = yield* Effect.forkScoped(send(bob, { text: "Second" }));
     yield* send(carol, { text: "Independent" });
 
-    expect(yield* addresses).toEqual([carol.address]);
+    expect(yield* authors).toEqual([carol.name]);
     expect(assessed).toEqual(["First", "Independent"]);
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.joinAll([first, second]);
-    expect(yield* addresses).toEqual([carol.address, bob.address, bob.address]);
+    expect(yield* authors).toEqual([carol.name, bob.name, bob.name]);
     expect(assessed).toEqual(["First", "Independent", "Second"]);
   }));
 
@@ -389,7 +392,7 @@ it("stores a withheld message for its sender, whose send succeeds, and keeps it 
       (yield* callTool(alice, "read_firewall_decisions")).decisions,
     ).toMatchObject([{ reason: "rule-violation", decision: "withheld" }]);
     expect(yield* inboxOf(alice)).toEqual([]);
-    expect(yield* historyOf(alice, bob.address)).toEqual([]);
+    expect(yield* historyOf(alice, bob.name)).toEqual([]);
     expect(yield* historyOf(bob)).toEqual(["sent"]);
     expect(yield* inboxOf(bob)).toEqual([]);
   }));
@@ -426,8 +429,8 @@ it.each([
 
       expect(yield* inboxOf(bob)).toMatchObject([
         {
-          author: alice.agent,
-          recipient: bob.agent,
+          author: alice.name,
+          recipient: bob.name,
           replyToMsgId: withheld.id,
           text,
         },
@@ -476,11 +479,9 @@ it("checks each act of a norm against the whole conversation, though the provide
     });
 
     for (let instance = 0; instance < 3; instance += 1) {
-      const opened = yield* send(alice, {
-        to: bob.address,
-        text: "(open :ontology exchange)",
-      });
-      yield* send(bob, {
+      const opened = yield* send(bob, { text: "(open :ontology exchange)" });
+      yield* send(alice, {
+        to: bob.name,
         text: "(close :ontology exchange)",
         replyToMsgId: opened.id,
       });
@@ -492,17 +493,17 @@ it("checks each act of a norm against the whole conversation, though the provide
 it("continues a conversation's history from the cursor a page returned, with what was sent since", () =>
   Effect.gen(function* () {
     const { alice, bob } = yield* aliceAndBob();
-    const say = (text: string) => send(alice, { to: bob.address, text });
+    const say = (text: string) => send(bob, { text });
     for (let index = 0; index < 51; index += 1) {
       yield* say(`Message ${index}`);
     }
 
     const first = yield* callTool(alice, "read_conversation", {
-      address: bob.address,
+      with: bob.name,
     });
     yield* say("Later message");
     const rest = yield* callTool(alice, "read_conversation", {
-      address: bob.address,
+      with: bob.name,
       cursor: first.nextCursor,
     });
 
@@ -514,29 +515,32 @@ it("continues a conversation's history from the cursor a page returned, with wha
     expect(rest.nextCursor).toBeUndefined();
   }));
 
-it("lists every conversation once, in address order", () =>
+it("lists every conversation once, in name order", () =>
   Effect.gen(function* () {
     const daemon = yield* inProcessDaemon();
     const alice = yield* daemon.signInAs("alice");
-    const addresses: string[] = [];
+    const clients: string[] = [];
     for (const owner of ["one", "two", "three", "two"]) {
       const client = yield* daemon.signInAs(owner);
       yield* send(client, { text: "Hello" });
-      addresses.push(client.address);
+      clients.push(client.name);
     }
 
     expect(yield* callTool(alice, "list_conversations")).toEqual({
-      addresses: [...new Set(addresses)].sort(Order.string),
+      clients: [...new Set(clients)].sort(Order.string),
     });
   }));
 
 it("prepares an empty database and leaves a prepared one as it is", () =>
   Effect.gen(function* () {
     const database = yield* openTestDatabase();
-    const first = yield* openOn(database);
-    const again = yield* openOn(database);
-    expect(again.serverAgent).toEqual(first.serverAgent);
-    expect(yield* database.sql`SELECT * FROM agent_cards`).toHaveLength(1);
+    yield* openOn(database);
+    yield* database.sql`INSERT INTO firewall_checks (decided_at, record) VALUES (1, 'kept')`;
+    yield* openOn(database);
+    expect(yield* database.sql`SELECT record FROM firewall_checks`).toEqual([
+      { record: "kept" },
+    ]);
+    expect(yield* database.sql`SELECT * FROM messages`).toEqual([]);
   }));
 
 it("rejects a database that holds other tables without changing their records", () =>
@@ -564,30 +568,27 @@ const accounts = fc.array(
 );
 
 it.prop(
-  "binds each issuer and subject pair to one agent of its own, however many sign in at once or again",
+  "gives each issuer and subject pair one name of its own, however many sign in at once or again",
   [accounts],
   ([owners]) =>
     Effect.gen(function* () {
       const daemon = yield* inProcessDaemon();
-      const distinct = new Set(
-        owners.map((owner) => `${owner.issuer} ${owner.subject}`),
-      ).size;
-      const agentOf = (owner: (typeof owners)[number]) =>
-        Effect.map(daemon.signInAs(owner), (signedIn) => signedIn.agent);
-      const agents = yield* Effect.forEach(owners, agentOf, {
+      const nameOf = (owner: (typeof owners)[number]) =>
+        Effect.map(daemon.signInAs(owner), (signedIn) => signedIn.name);
+      const names = yield* Effect.forEach(owners, nameOf, {
         concurrency: owners.length,
       });
-      const again = yield* Effect.forEach(owners, agentOf, { concurrency: 1 });
-      expect(again).toEqual(agents);
+      expect(yield* Effect.forEach(owners, nameOf, { concurrency: 1 })).toEqual(
+        names,
+      );
       expect(
         new Set(
           owners.map(
             (owner, index) =>
-              `${owner.issuer} ${owner.subject} ${agents[index]?.agentId ?? ""}`,
+              `${owner.issuer} ${owner.subject} ${names[index] ?? ""}`,
           ),
         ).size,
-      ).toBe(distinct);
-      expect(new Set(agents.map((agent) => agent.agentId)).size).toBe(distinct);
+      ).toBe(new Set(names).size);
     }),
   { fastCheck: { numRuns: 10 } },
 );

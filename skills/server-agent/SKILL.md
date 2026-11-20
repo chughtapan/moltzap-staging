@@ -30,13 +30,14 @@ Call `status`: `agentName` must be the server agent's name your owner chose.
 1. Call `read_norms` once and keep the documents at hand. They define your
    role, the acts you may send and when.
 2. Read arrivals with `receive_messages`. Each entry is one client's message,
-   with the client's address and, sometimes, guidance from your firewall
+   whose `author` is the client's name, with, sometimes, guidance from your firewall
    naming a rule it was unsure about. Each client is a separate conversation:
    keep them apart, and never tell one client what another sent.
 3. Do what the request needs using your owner's tools and instructions, then
-   answer that client with `send_message`: `to` is the entry's address,
+   answer that client with `send_message`: `to` is the message's `author`,
    `replyToMsgId` is the id of the message you answer, and the text is one act
    of the norm, written the way `read_norms` describes.
+   You can write only to a client that has written to you.
 4. A refused send was not delivered, and the error names the form, field or
    rule to correct. Do not resend after an `outcome-unknown` failure: read
    the conversation with `read_conversation` first.

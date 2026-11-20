@@ -107,7 +107,7 @@ it(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
       const original = yield* daemon.start();
-      const { agent } = yield* daemon.signInAs("carol");
+      const { name } = yield* daemon.signInAs("carol");
       yield* stopProcess(original);
       const fs = yield* FileSystem.FileSystem;
       const messagePolicyFile = join(daemon.directory, "invalid-policy.json");
@@ -121,25 +121,7 @@ it(
       expect((yield* daemon.startupFailure()).exitCode).not.toBe(0);
       yield* daemon.configure({ messagePolicyFile: undefined });
       yield* daemon.start();
-      expect((yield* daemon.signInAs("carol")).agent).toEqual(agent);
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-it(
-  "refuses another server agent name on a database started with one, naming the setting",
-  processTrace(
-    Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* stopProcess(yield* daemon.start());
-
-      yield* daemon.configure({
-        serverAgent: { name: "back-office", subject: SERVER_AGENT_OWNER },
-      });
-      const renamed = yield* daemon.startupFailure();
-      expect(renamed.exitCode).not.toBe(0);
-      expect(renamed.logs).toContain("serverAgent.name");
+      expect((yield* daemon.signInAs("carol")).name).toBe(name);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
@@ -155,7 +137,7 @@ const readInbox = (agent: SignedIn, cursor?: string) =>
   );
 
 it(
-  "keeps each owner's agent, history and inbox across a restart, where a cursor from before it reads the same entries",
+  "keeps each owner's agent name, history and inbox across a restart, where a cursor from before it reads the same entries",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
@@ -164,13 +146,13 @@ it(
         Effect.gen(function* () {
           const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
           const client = yield* daemon.signInAs("bob");
-          expect(server.agent.agentId).not.toBe(client.agent.agentId);
-          expect(server.agent.agentName).toBe(SERVER_AGENT_NAME);
+          expect(server.name).toBe(SERVER_AGENT_NAME);
 
+          const opening = yield* send(client, { text: "opening" });
           const start = yield* readInbox(client);
           expect(start.entries).toEqual([]);
           const first = yield* send(server, {
-            to: client.address,
+            to: client.name,
             text: "read before the restart",
           });
           const read = yield* readInbox(client, start.nextCursor);
@@ -178,12 +160,12 @@ it(
             { message: { msgId: first.id } },
           ]);
           const unread = yield* send(server, {
-            to: client.address,
+            to: client.name,
             text: "unread across the restart",
           });
           return {
-            server: server.agent,
-            client: client.agent,
+            client: client.name,
+            opening: opening.id,
             ids: [first.id, unread.id],
             cursors: [start.nextCursor, read.nextCursor],
           };
@@ -194,8 +176,8 @@ it(
 
       const client = yield* daemon.signInAs("bob");
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
-      expect(client.agent).toEqual(sent.client);
-      expect(server.agent).toEqual(sent.server);
+      expect(client.name).toBe(sent.client);
+      expect(server.name).toBe(SERVER_AGENT_NAME);
       const [start, afterFirst] = sent.cursors;
       expect((yield* readInbox(client, afterFirst)).entries).toMatchObject([
         { message: { msgId: sent.ids[1] } },
@@ -206,9 +188,10 @@ it(
         ),
       ).toEqual(sent.ids);
       const history = yield* callTool(client, "read_conversation");
-      expect(history.records.map((record) => record.message.msgId)).toEqual(
-        sent.ids,
-      );
+      expect(history.records.map((record) => record.message.msgId)).toEqual([
+        sent.opening,
+        ...sent.ids,
+      ]);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

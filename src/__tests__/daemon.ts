@@ -12,9 +12,9 @@ import {
 import { Effect, Schema } from "effect";
 import type { TestPolicy } from "./firewall-fixtures.js";
 import { checkRecordSchema, type Firewall, makeFirewall } from "../firewall.js";
-import { AgentId, AgentName, Message, MsgId } from "../messages.js";
+import { AgentName, Message, MsgId } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
-import { makeMcpHandler, openDaemon, type Owner } from "../server.js";
+import { openDaemon } from "../server.js";
 import { openTestDatabase } from "./test.js";
 
 /** The issuer of every owner a test signs in by name. */
@@ -35,10 +35,9 @@ export const decisionState = Schema.decodeUnknownSync(
   ),
 );
 
-/** A signed-in owner: its agent, how the server agent addresses it, and an MCP connection as it. */
+/** A signed-in owner: its agent's name and an MCP connection as it. */
 export interface SignedIn {
-  readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
-  readonly address: string;
+  readonly name: AgentName;
   readonly mcp: Client;
 }
 
@@ -60,13 +59,14 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
 ) {
   const database = yield* openTestDatabase();
   const { norms } = options;
-  const daemon = yield* openDaemon(database.url, {
-    owner: { issuer, subject: "alice" },
+  const answerAs = yield* openDaemon(database.url, {
+    issuer,
+    subject: "alice",
     name: AgentName.make("alice"),
-    firewall: (me) => ({
+    firewall: {
       ...makeFirewall({
         ...(options.policy ?? {}),
-        me,
+        me: AgentName.make("alice"),
         historyLimit: options.historyLimit ?? 256,
         ...(options.notice === undefined ? {} : { notice: options.notice }),
         ...(norms === undefined
@@ -74,7 +74,7 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
           : { structureCheck: structureCheck(norms) }),
       }),
       ...options.firewall,
-    }),
+    },
     ...(norms === undefined
       ? {}
       : {
@@ -85,11 +85,11 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
           })),
         }),
   }).pipe(Effect.orDie);
-  const answerAs = yield* makeMcpHandler(daemon);
   return {
     sql: database.sql,
-    daemon,
-    signInAs: (owner: string | Owner) =>
+    signInAs: (
+      owner: string | { readonly issuer: string; readonly subject: string },
+    ) =>
       Effect.gen(function* () {
         const answer = yield* answerAs({
           token: "",
@@ -101,12 +101,10 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
               : { ...owner },
         });
         const mcp = yield* connect(answer);
-        const agent = yield* callTool({ mcp }, "status").pipe(Effect.orDie);
-        const signedIn: SignedIn = {
-          agent,
-          address: `agent:${agent.agentName}`,
-          mcp,
-        };
+        const { agentName } = yield* callTool({ mcp }, "status").pipe(
+          Effect.orDie,
+        );
+        const signedIn: SignedIn = { name: agentName, mcp };
         return signedIn;
       }),
   };
@@ -118,7 +116,6 @@ const fields = Schema.decodeUnknownSync(
 
 /** An inbox entry as a host reads it. */
 const inboxEntry = Schema.Struct({
-  address: Schema.String,
   message: Message,
   guidance: Schema.optional(Schema.Unknown),
 });
@@ -128,22 +125,15 @@ export const decodeInboxEntry = Schema.decodeUnknown(inboxEntry);
 
 /** What tests read of the result of each tool they call. */
 const results = {
-  status: Schema.Struct({ agentId: AgentId, agentName: AgentName }),
-  send_message: Schema.Struct({ id: MsgId, address: Schema.String }),
+  status: Schema.Struct({ agentName: AgentName }),
+  send_message: Schema.Struct({ id: MsgId }),
   receive_messages: Schema.Struct({
     entries: Schema.Array(inboxEntry),
     nextCursor: Schema.String,
   }),
-  list_conversations: Schema.Struct({
-    addresses: Schema.Array(Schema.String),
-  }),
+  list_conversations: Schema.Struct({ clients: Schema.Array(Schema.String) }),
   read_conversation: Schema.Struct({
-    records: Schema.Array(
-      Schema.Struct({
-        kind: Schema.Literal("sent", "received"),
-        message: Message,
-      }),
-    ),
+    records: Schema.Array(inboxEntry),
     nextCursor: Schema.optional(Schema.String),
   }),
   read_firewall_decisions: Schema.Struct({
