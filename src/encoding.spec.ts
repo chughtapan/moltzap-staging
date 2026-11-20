@@ -1,4 +1,4 @@
-/** @file JSON text round trips through a schema, and comparison of two texts. */
+/** @file JSON text round trips through a schema. */
 
 import { Effect, Either, Schema } from "effect";
 import * as fc from "fast-check";
@@ -8,7 +8,6 @@ import {
   encodeJson,
   plainUrl,
   readSExpressions,
-  sameJson,
   type SExpression,
   writeSExpression,
 } from "./encoding.js";
@@ -45,23 +44,6 @@ describe("JSON text of schema values", () => {
         { onLeft: () => false, onRight: () => true },
       ),
     ).toBe(false);
-  });
-});
-
-describe("comparing two JSON texts", () => {
-  it("ignores member order and number spelling", () => {
-    expect(
-      sameJson('{"a":1,"b":[true,null]}', '{"b":[true,null],"a":1.0}'),
-    ).toBe(true);
-  });
-
-  it.each([
-    { left: '{"a":1}', right: '{"a":2}' },
-    { left: "[1,2]", right: "[2,1]" },
-    { left: '{"a":1}', right: '{"a":1,"b":null}' },
-    { left: "not JSON", right: "not JSON" },
-  ])("tells $left from $right", ({ left, right }) => {
-    expect(sameJson(left, right)).toBe(false);
   });
 });
 

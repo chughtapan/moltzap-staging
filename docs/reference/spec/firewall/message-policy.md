@@ -122,8 +122,8 @@ private context are excluded. `earlierHistoryOmitted` alone causes no hold.
 Exceeding the
 history window's separate 2 MiB budget creates an evidence gap. Required
 missing evidence holds. Installed structured
-contracts separately receive complete preceding protocol history and exact
-local check records, outside the bounded history window.
+contracts separately receive the complete preceding history with the time and
+decision of each local check, outside the bounded history window.
 
 The firewall may use earlier messages it withheld or blocked when checking a
 new message. Their content remains private, as though the agent had not seen

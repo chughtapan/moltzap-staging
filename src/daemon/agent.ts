@@ -9,6 +9,7 @@ import { SqlClient } from "@effect/sql";
 import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Firewall, IncomingDecision } from "../firewall/service.js";
+import type { InstalledNorms } from "../norms/index.js";
 import {
   type CommunicationError,
   Message,
@@ -68,8 +69,8 @@ export interface Daemon {
   readonly serverAgent: HostedAgent;
   /** The server agent's firewall. */
   readonly firewall: typeof Firewall.Service;
-  /** Whether the server agent holds norms, which every agent then reads with `read_norms`. */
-  readonly hasNorms: boolean;
+  /** The norms the server agent holds, which every agent then reads with `read_norms`. */
+  readonly norms?: InstalledNorms;
   /** The most messages of a conversation a check reads as its recent history. */
   readonly historyLimit: number;
   /**

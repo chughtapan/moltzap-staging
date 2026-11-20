@@ -1,5 +1,5 @@
 /**
- * @file Compiles declarative norms into the firewall's immutable contract
+ * @file Compiles declarative norms into the immutable contract
  * grammar: reads a document's declarations, builds the contract they state
  * and checks that its names and protocol predicates refer to declared things.
  */
@@ -11,8 +11,8 @@ import {
   type CompiledContract,
   compiledContractSchema,
   type MessageForm,
-  RequestedSchema,
-} from "../firewall/index.js";
+} from "./contract.js";
+import { RequestedSchema } from "./forms.js";
 
 /** Source diagnostics identify a declaration without echoing private document text. */
 class NormDocumentError extends Data.TaggedError("NormDocumentError")<{
@@ -225,7 +225,6 @@ function compileRule(form: Declaration, id: string) {
     return {
       id,
       text: text.value,
-      applies: "both",
       ...(act === undefined ? {} : { act }),
       ...(feedback === undefined ? {} : { feedback }),
     };

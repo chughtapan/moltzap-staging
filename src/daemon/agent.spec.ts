@@ -15,16 +15,16 @@ import { digest } from "../__tests__/agents.js";
 import { MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
-  contractOf,
-  form,
-  noFields,
-} from "../firewall/__tests__/firewall-fixtures.js";
-import {
   type DecisionProvider,
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
+import {
+  contractOf,
+  form,
+  noFields,
+} from "../norms/__tests__/norms-fixtures.js";
 import { openTestDatabase } from "../test.js";
 import {
   composedPolicy,

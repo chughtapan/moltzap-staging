@@ -94,9 +94,6 @@ export const firewallDecisionsSchema = exactStruct({
 const policyReasonText: Readonly<
   Record<FirewallPolicyError["reason"], string>
 > = {
-  "not-configured":
-    "the daemon has no message policy, or its policy has no decisionProvider to judge text rules",
-  "build-failed": "the rules could not be installed",
   "persistence-failed": "the decisions could not be stored",
 };
 
@@ -104,11 +101,7 @@ const policyReasonText: Readonly<
 export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>()(
   "FirewallPolicyError",
   {
-    reason: Schema.Literal(
-      "not-configured",
-      "build-failed",
-      "persistence-failed",
-    ),
+    reason: Schema.Literal("persistence-failed"),
   },
 ) {
   override get message(): string {
@@ -191,7 +184,7 @@ export interface LoadedMessagePolicy {
  * Resolves the configured policy during setup, returning none when unset. A
  * policy that names a `decisionProvider` reads its key from the environment
  * variable `SHARNESS_DECISION_PROVIDER_KEY`, even without text rules of its
- * own: the norms an agent holds can add rules for it to judge. A file that
+ * own: a structure check can add rules for it to judge. A file that
  * cannot be read or decoded fails with a message naming it.
  */
 export const loadMessagePolicy = Effect.fn("loadMessagePolicy")(function* (

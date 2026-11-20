@@ -2,7 +2,6 @@
 
 import { Context, Effect, Layer, PubSub, Schema } from "effect";
 import type {
-  CompiledContract,
   DecisionProvider,
   DecisionRequest,
   DecisionResponse,
@@ -12,6 +11,7 @@ import { createTestAgent } from "../../__tests__/agents.js";
 import { Message } from "../../communication/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentCard, Identity } from "../../identity.js";
+import { type InstalledNorms, structureCheck } from "../../norms/index.js";
 import { openTestDatabase } from "../../test.js";
 import {
   conversationsOf,
@@ -120,7 +120,6 @@ export const testDaemon = (
     (readable): Daemon => ({
       serverAgent,
       firewall,
-      hasNorms: false,
       historyLimit: 256,
       turns: new Map(),
       readable,
@@ -133,7 +132,7 @@ interface OpenOptions
   extends Partial<Pick<Daemon, "historyLimit" | "withheldReply">> {
   readonly policy?: TestPolicy;
   /** The contracts the agent starts with. */
-  readonly contracts?: readonly CompiledContract[];
+  readonly contracts?: InstalledNorms["contracts"];
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 
@@ -169,7 +168,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       Firewall.layer(
         alice.agentKey,
         policy?.source,
-        contracts,
+        contracts && structureCheck({ contracts }),
         policy?.provider,
       ).pipe(Layer.provide(Layer.succeed(Identity, { me: alice.card }))),
     ).pipe(Effect.map(Context.get(Firewall)));

@@ -320,7 +320,8 @@ function requestServer(
   } else {
     registerClientTools(mcp, daemon, agent);
   }
-  if (daemon.hasNorms) {
+  const { norms } = daemon;
+  if (norms !== undefined) {
     register(
       mcp,
       "read_norms",
@@ -343,13 +344,13 @@ function requestServer(
         readOnly: true,
       },
       () =>
-        Effect.map(daemon.firewall.readContracts(), (contracts) => ({
-          norms: contracts.map((norm) => ({
+        Effect.succeed({
+          norms: norms.contracts.map((norm) => ({
             name: norm.name,
             description: norm.description,
             document: norm.source,
           })),
-        })),
+        }),
     );
   }
   return mcp;

@@ -1,17 +1,26 @@
-/** @file A conversation's protocol as this firewall saw it: the instance its allowed acts leave running, and whether a further act may follow. */
+/** @file A conversation's protocol as its firewall saw it: the instance its allowed acts leave running, and whether a further act may follow. */
 
 import { Effect } from "effect";
+import type { Message } from "../communication/index.js";
+import type { EarlierMessage } from "../firewall/index.js";
 import {
   type Act,
-  type CheckedMessage,
   checkStructure,
   type CompiledContract,
   ContractProblem,
   type MessageForm,
+  readAct,
 } from "./contract.js";
 
+/** One act the firewall allowed that fits the protocol: its message, the time of that check and the act its text states. */
+interface CheckedMessage {
+  readonly message: Message;
+  readonly at: number;
+  readonly act: Act;
+}
+
 /**
- * What one firewall's saved checks say of a conversation. `referenceActs`
+ * What one firewall's checks say of a conversation. `referenceActs`
  * gives the performative of each message a reply may name. `instance` is the
  * instance in progress: its contract, who holds each role, the message that
  * set each current fact, how often each act was sent, and the reply reference
@@ -38,37 +47,7 @@ interface Candidate {
   readonly now: number;
 }
 
-/** Replays a conversation's checked messages in order, each at the time of its own check. Only an act that was allowed and still fits advances the instance. */
-export const projectProtocol = Effect.fn("projectProtocol")(function* (
-  history: readonly CheckedMessage[],
-) {
-  let view: ProtocolView = {};
-  const seen = new Set<string>();
-  const contracts = new Map<string, CompiledContract>();
-  for (const entry of history) {
-    const key = `${entry.message.author.agentId}/${entry.message.msgId}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    view = yield* replayRecord(view, contracts, entry);
-    view = retainInteractionReference(view, entry);
-    view = {
-      ...view,
-      referenceActs: new Map([
-        ...(view.referenceActs ?? []),
-        [
-          entry.message.msgId,
-          entry.protocol?.act.name ??
-            view.referenceActs?.get(entry.message.msgId),
-        ],
-      ]),
-    };
-  }
-  return view;
-});
-
-/** The protocol record of an act the view permits next, or why the act may not follow. It changes nothing. */
+/** Fails with why the view does not permit the act next. It changes nothing. */
 export const checkProtocol = Effect.fn("checkProtocol")(function* (
   view: ProtocolView,
   contract: CompiledContract,
@@ -80,11 +59,12 @@ export const checkProtocol = Effect.fn("checkProtocol")(function* (
   yield* checkReference(view, contract, form, candidate);
   const instance = view.instance;
   if (instance === undefined) {
-    return form.starts
-      ? { act, digest: contract.digest, opening: contract }
-      : yield* transitionError();
+    if (!form.starts) {
+      return yield* transitionError();
+    }
+    return;
   }
-  if (instance.contract.digest !== contract.digest || form.starts) {
+  if (form.starts) {
     return yield* transitionError();
   }
   const role = roleOf(instance, author);
@@ -119,7 +99,98 @@ export const checkProtocol = Effect.fn("checkProtocol")(function* (
       error.reason === "rule-violation" ? transitionError() : error,
     ),
   );
-  return { act, digest: contract.digest };
+});
+
+/**
+ * Reads `message` as an act of the instance in progress or, when none is, of
+ * the held contract it names.
+ */
+export const readHeldAct = Effect.fn("readHeldAct")(function* (
+  view: ProtocolView,
+  contracts: readonly CompiledContract[],
+  message: Message,
+) {
+  const act = yield* readAct(message);
+  const contract =
+    view.instance?.contract ?? contracts.find((held) => held.name === act.norm);
+  if (contract === undefined) {
+    return yield* new ContractProblem({
+      stage: "structural",
+      reason: "rule-violation",
+      detail: "ontology must name an installed norm.",
+      field: "ontology",
+    });
+  }
+  return { act, contract };
+});
+
+/** The form of an act of `message` whose structure fits its contract and that the view permits at `now`. */
+export const fitAct = Effect.fn("fitAct")(function* (
+  view: ProtocolView,
+  { act, contract }: Effect.Effect.Success<ReturnType<typeof readHeldAct>>,
+  message: Message,
+  now: number,
+) {
+  const form = yield* checkStructure(contract, act);
+  yield* checkProtocol(view, contract, form, {
+    ...(message.replyToMsgId === undefined
+      ? {}
+      : { replyToMsgId: message.replyToMsgId }),
+    act,
+    author: message.author.agentId,
+    now,
+  });
+  return form;
+});
+
+/**
+ * Replays a conversation's earlier messages in order under the held
+ * `contracts`. Only a message the firewall allowed that reads as an act and
+ * fits the protocol at the time of its check advances the instance.
+ */
+export const projectProtocol = Effect.fn("projectProtocol")(function* (
+  contracts: readonly CompiledContract[],
+  earlier: readonly EarlierMessage[],
+) {
+  let view: ProtocolView = {};
+  const seen = new Set<string>();
+  for (const { message, checkedAt, allowed } of earlier) {
+    const key = `${message.author.agentId}/${message.msgId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const current = view;
+    const fitted =
+      !allowed || checkedAt === undefined
+        ? undefined
+        : yield* readHeldAct(current, contracts, message).pipe(
+            Effect.flatMap((held) =>
+              Effect.map(fitAct(current, held, message, checkedAt), (form) => ({
+                ...held,
+                form,
+                message,
+                at: checkedAt,
+              })),
+            ),
+            Effect.orElseSucceed(() => undefined),
+          );
+    if (fitted !== undefined) {
+      view = advance(view, fitted.contract, fitted.form, fitted);
+    }
+    view = retainInteractionReference(view, message);
+    view = {
+      ...view,
+      referenceActs: new Map([
+        ...(view.referenceActs ?? []),
+        [
+          message.msgId,
+          fitted?.act.name ?? view.referenceActs?.get(message.msgId),
+        ],
+      ]),
+    };
+  }
+  return view;
 });
 
 function senderPermitted(
@@ -137,14 +208,14 @@ function senderPermitted(
 }
 
 /** A message that replies into the instance belongs to it, whether or not it was allowed, so a later reply may name it. */
-function retainInteractionReference(view: ProtocolView, entry: CheckedMessage) {
+function retainInteractionReference(view: ProtocolView, message: Message) {
   const instance = view.instance;
   if (instance === undefined) {
     return view;
   }
-  const reference = entry.message.replyToMsgId;
+  const reference = message.replyToMsgId;
   const belongs =
-    instance.acts[0]?.message.msgId === entry.message.msgId ||
+    instance.acts[0]?.message.msgId === message.msgId ||
     (reference !== undefined && instance.references.has(reference));
   return belongs
     ? {
@@ -153,7 +224,7 @@ function retainInteractionReference(view: ProtocolView, entry: CheckedMessage) {
           ...instance,
           references: new Map([
             ...instance.references,
-            [entry.message.msgId, reference],
+            [message.msgId, reference],
           ]),
         },
       }
@@ -174,49 +245,6 @@ function invalidTransition(
   return violation(
     `Error: ${candidate.act.name} is not valid${after} for ${contract.name}.`,
   );
-}
-
-function replayRecord(
-  view: ProtocolView,
-  contracts: Map<string, CompiledContract>,
-  entry: CheckedMessage,
-): Effect.Effect<ProtocolView, ContractProblem> {
-  return Effect.gen(function* () {
-    const protocol = entry.protocol;
-    if (protocol === undefined) {
-      return view;
-    }
-    if (protocol.opening !== undefined) {
-      contracts.set(protocol.opening.digest, protocol.opening);
-    }
-    const contract = contracts.get(protocol.digest);
-    const form = contract?.forms.find((item) => item.act === protocol.act.name);
-    if (
-      contract === undefined ||
-      form === undefined ||
-      (form.starts && protocol.opening === undefined)
-    ) {
-      return yield* unavailable(
-        "The retained interaction does not contain a consistent opening contract.",
-      );
-    }
-    return yield* checkStructure(contract, protocol.act).pipe(
-      Effect.flatMap((shape) =>
-        checkProtocol(view, contract, shape, {
-          act: protocol.act,
-          ...(entry.message.replyToMsgId === undefined
-            ? {}
-            : { replyToMsgId: entry.message.replyToMsgId }),
-          author: entry.message.author.agentId,
-          now: entry.at,
-        }),
-      ),
-      Effect.match({
-        onFailure: () => view,
-        onSuccess: () => advance(view, contract, form, entry),
-      }),
-    );
-  });
 }
 
 function checkReference(
@@ -379,10 +407,7 @@ function referencedAct(
   return [...instance.acts]
     .reverse()
     .find(
-      (entry) =>
-        entry.protocol !== undefined &&
-        ancestry.has(entry.message.msgId) &&
-        entry.protocol.act.name === act,
+      (entry) => ancestry.has(entry.message.msgId) && entry.act.name === act,
     );
 }
 
@@ -391,7 +416,7 @@ function permittedTime(
   delay: NonNullable<MessageForm["delay"]>,
 ) {
   const fact = instance.facts.get(delay.fact);
-  const duration = fact?.protocol?.act.fields[delay.field];
+  const duration = fact?.act.fields[delay.field];
   return fact !== undefined && typeof duration === "number"
     ? fact.at + duration * 1000
     : undefined;
@@ -428,8 +453,7 @@ function sourceValue(
   ancestry: ReadonlySet<string>,
 ): Effect.Effect<Act["fields"][string], ContractProblem> {
   return Effect.gen(function* () {
-    const fields = referencedAct(instance, source.act, ancestry)?.protocol?.act
-      .fields;
+    const fields = referencedAct(instance, source.act, ancestry)?.act.fields;
     if (fields === undefined) {
       return yield* violation(
         "The referenced exchange does not contain the declared source act.",
