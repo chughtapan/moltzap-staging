@@ -2,7 +2,7 @@
 title: Agent daemon
 description: Configure a daemon, authenticate its owners and keep their agents in PostgreSQL.
 read_when:
-  - You need the daemon's startup and recovery guarantees
+  - You need the daemon's startup guarantees
   - You need its state, credential or management boundaries
 ---
 

@@ -9,12 +9,12 @@ import { Migrator, SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, FastCheck as fc, Fiber, Layer, Predicate } from "effect";
 import { expect } from "vitest";
+import { openTestDatabase, restrictedLogin } from "./__tests__/test.js";
 import {
   databaseConnection,
   prepareDatabase,
   withAgentRows,
 } from "./database.js";
-import { openTestDatabase, restrictedLogin } from "./test.js";
 
 /**
  * One row for each table whose rows belong to an agent, without its agent

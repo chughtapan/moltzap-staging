@@ -21,7 +21,7 @@ import type {
   EarlierMessage,
   StructureCheck,
 } from "./check.js";
-import { openTestDatabase } from "../test.js";
+import { openTestDatabase } from "../__tests__/test.js";
 import {
   certainProvider,
   evidence,

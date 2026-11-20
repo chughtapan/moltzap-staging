@@ -4,7 +4,7 @@ import { Array as Arr, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import { createTestAgent } from "../__tests__/agents.js";
-import { openTestDatabase } from "../test.js";
+import { openTestDatabase } from "../__tests__/test.js";
 import { Message } from "./messages.js";
 import {
   listConversations,

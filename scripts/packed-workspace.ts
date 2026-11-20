@@ -166,9 +166,9 @@ export function runGate(
  * selects: the root, and each `package.json` directory that a `packages` glob
  * includes and no `!` glob excludes.
  * @param workspaceRoot Source workspace root.
- * @returns Each package's directory, name, dependencies and exports.
+ * @returns Each package's directory, name and dependencies.
  */
-export const workspacePackages = Effect.fn("packedWorkspace.workspacePackages")(
+const workspacePackages = Effect.fn("packedWorkspace.workspacePackages")(
   function* (workspaceRoot: string) {
     const stringKeyed = Schema.optionalWith(
       Schema.Record({ key: Schema.String, value: Schema.Unknown }),
@@ -205,7 +205,6 @@ export const workspacePackages = Effect.fn("packedWorkspace.workspacePackages")(
           Schema.Struct({
             name: Schema.optionalWith(Schema.String, { default: () => "" }),
             dependencies: stringKeyed,
-            exports: stringKeyed,
           }),
         ).pipe(Effect.map((manifest) => ({ dir, ...manifest }))),
       { concurrency: 8 },
