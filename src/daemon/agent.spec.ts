@@ -203,7 +203,9 @@ it("fails a client's send and stores nothing when the check of its message could
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
-      policy: composedPolicy({ decide: () => Effect.dieMessage("down") }),
+      policy: composedPolicy({
+        decide: () => Effect.succeed({ answers: {} }),
+      }),
     });
     expect(
       yield* subject.sendFrom({ text: "Hello" }).pipe(Effect.flip),

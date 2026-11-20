@@ -40,9 +40,12 @@ const wire = {
 };
 
 it.prop(
-  "reports an HTTP error by its status, without the credential its body echoes",
-  [fc.stringMatching(/^[A-Za-z0-9]{1,64}$/u)],
-  ([key]) =>
+  "reports an HTTP error as transient exactly when its status is 429 or a server failure, without the credential its body echoes",
+  [
+    fc.stringMatching(/^[A-Za-z0-9]{1,64}$/u),
+    fc.constantFrom(400, 401, 429, 500, 503),
+  ],
+  ([key, status]) =>
     Effect.gen(function* () {
       const credential = `key-${key}`;
       const decisionProvider = makeJevDecisionProvider({
@@ -51,13 +54,12 @@ it.prop(
       });
       const fetch: typeof globalThis.fetch = () =>
         Promise.resolve(
-          new Response(`Rejected Bearer ${credential}`, { status: 401 }),
+          new Response(`Rejected Bearer ${credential}`, { status }),
         );
       const error = yield* decisionProvider
         .decide(request)
         .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
-      expect(error.reason).toBe("http");
-      expect(error.status).toBe(401);
+      expect(error.transient).toBe(status === 429 || status >= 500);
       expect(JSON.stringify(error)).not.toContain(credential);
     }),
 );
@@ -142,18 +144,18 @@ it.each([
     const error = yield* provider
       .decide(request)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
-    expect(error.reason).toBe("invalid-response");
+    expect(error.transient).toBe(false);
   }),
 );
 
-it("retains transport failure separately from an HTTP or semantic answer", () =>
+it("reports a transport failure as transient", () =>
   Effect.gen(function* () {
     const fetch: typeof globalThis.fetch = () =>
       Promise.reject(new Error(`Network diagnostic with ${secret}`));
     const error = yield* provider
       .decide(request)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
-    expect(error.reason).toBe("transport");
+    expect(error.transient).toBe(true);
     expect(JSON.stringify(error)).not.toContain(secret);
   }));
 
@@ -171,6 +173,6 @@ it.each([200, 503])(
       const error = yield* provider
         .decide(request)
         .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
-      expect(error.reason).toBe("budget");
+      expect(error.transient).toBe(false);
     }),
 );

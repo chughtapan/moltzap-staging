@@ -142,9 +142,8 @@ export function policy(
           JSON.stringify({
             decisionProvider: { model: "test" },
             rules,
-            textSettings: {
+            settings: {
               minimumProbability: 0.5,
-              maximumRequestBytes: 60_000,
               timeoutMilliseconds: 5_000,
             },
           }),

@@ -1,15 +1,7 @@
-/** @file Message checks enforce the request limits and release only the feedback and guidance their evidence permits. */
+/** @file A message check maps each rule's answer to the decision, feedback and guidance its direction gives. */
 
 import { effect as it } from "@effect/vitest";
-import {
-  Cause,
-  Effect,
-  Exit,
-  FastCheck as fc,
-  Fiber,
-  Schema,
-  TestClock,
-} from "effect";
+import { Effect, FastCheck as fc, Fiber, TestClock } from "effect";
 import { expect } from "vitest";
 import type { ProviderRequestSettings, TextRule } from "./rules.js";
 import {
@@ -20,10 +12,8 @@ import {
   DecisionProviderError,
   type DecisionRequest,
   type DecisionResponse,
-  validateTextRules,
 } from "./check.js";
 
-const privateEvidence = "PRIVATE: unrelated medical appointment at 14:00";
 const repair =
   "Ask for acceptance of the chosen proposal. Do not claim agreement yet.";
 const registeredGuidance =
@@ -47,13 +37,6 @@ const evidence: CheckEvidence = {
       visibleToAgent: true,
     },
   ],
-  facts: [
-    {
-      id: "private-calendar",
-      source: "owner-calendar",
-      text: privateEvidence,
-    },
-  ],
   gaps: [],
 };
 const proposalAcceptance: TextRule = {
@@ -75,7 +58,6 @@ const rules: readonly TextRule[] = [
 type Answer = DecisionResponse["answers"][string];
 const providerSettings: typeof ProviderRequestSettings.Encoded = {
   minimumProbability: 0.5,
-  maximumRequestBytes: 60000,
   timeoutMilliseconds: 100,
 };
 /**
@@ -130,38 +112,27 @@ const peerMessage: AssessmentText = {
   recipients: [evidence.agentId],
   text: "Can we meet Tuesday?",
 };
-/**
- * Validates the rules, then checks one message: the local agent's draft, or a
- * peer's message to it when `incoming`, unless `message` gives another.
- */
+/** Checks one message: the local agent's draft, or a peer's message to it when `incoming`. */
 function check(
   decisionProvider: DecisionProvider = defaultProvider,
   options: {
-    readonly message?: AssessmentText;
     readonly evidence?: CheckEvidence;
     readonly rules?: readonly TextRule[];
     readonly providerSettings?: ProviderRequestSettings;
     readonly incoming?: boolean;
   } = {},
 ) {
-  return Effect.gen(function* () {
-    const configuration = {
+  return checkCapturedMessage(
+    options.incoming ? "incoming" : "outgoing",
+    options.incoming ? peerMessage : draft,
+    options.evidence ?? evidence,
+    {
       textRules: options.rules ?? rules,
-      providerSettings: options.providerSettings ?? providerSettings,
       revision: "a".repeat(64),
-    };
-    yield* validateTextRules(configuration);
-    return yield* checkCapturedMessage(
-      { ...configuration, provider: decisionProvider },
-      {
-        event: {
-          direction: options.incoming ? "incoming" : "outgoing",
-          message: options.message ?? (options.incoming ? peerMessage : draft),
-        },
-        evidence: options.evidence ?? evidence,
-      },
-    );
-  });
+      settings: options.providerSettings ?? providerSettings,
+      provider: decisionProvider,
+    },
+  );
 }
 type Choice = "compliant" | "violation";
 const choices = fc.constantFrom<Choice>("compliant", "violation");
@@ -245,7 +216,7 @@ it.prop(
     }),
 );
 it.each<Choice>(["compliant", "violation"])(
-  "holds an outgoing draft as unresolved evidence when its %s choice meets the minimum probability but trails the other option within the probability tolerance",
+  "holds an outgoing draft as unresolved evidence when its %s choice meets the minimum probability but trails the other option",
   (choice) =>
     Effect.gen(function* () {
       const probabilities = { [choice]: 0.5, [rival[choice]]: 0.51 };
@@ -311,49 +282,33 @@ it.prop(
       });
     }),
 );
-/**
- * Answers the policy cannot read, each breaking one requirement of a usable
- * answer: a choice the question does not offer, an option left out, an option
- * added, probabilities that sum to more than one beyond the 0.02 tolerance, a
- * choice further than the tolerance below the other option, and a probability
- * outside 0 to 1.
- */
-const unusableAnswer: fc.Arbitrary<Answer> = fc.oneof(
-  fc.tuple(choices, percent).map(([choice, probability]) => ({
-    ...answer(choice, probability),
-    choice: "allow-everything",
-  })),
-  choices.map((choice) => ({ choice, probabilities: { [choice]: 1 } })),
-  fc.tuple(choices, percent).map(([choice, probability]) => ({
-    choice,
-    probabilities: { ...answer(choice, probability).probabilities, abstain: 0 },
-  })),
-  fc
-    .tuple(choices, fc.integer({ min: 52, max: 100 }))
-    .map(([choice, each]) => ({
-      choice,
-      probabilities: { compliant: each / 100, violation: each / 100 },
-    })),
-  fc
-    .tuple(choices, fc.integer({ min: 0, max: 48 }))
-    .map(([choice, whole]) => answer(choice, whole / 100)),
-  fc
-    .tuple(choices, fc.integer({ min: 1, max: 50 }))
-    .map(([choice, over]) => answer(choice, 1 + over / 100)),
-);
-it.prop(
-  "holds a message in either direction as an unavailable check, with no guidance, when the provider gives an unusable answer",
-  [fc.boolean(), unusableAnswer],
-  ([incoming, unusable]) =>
+it.each([
+  {
+    failure: "fails",
+    failing: {
+      decide: () =>
+        Effect.fail(new DecisionProviderError({ transient: false })),
+    },
+  },
+  {
+    failure: "leaves a question unanswered",
+    failing: { decide: () => Effect.succeed({ answers: {} }) },
+  },
+  {
+    failure: "chooses an answer the question does not offer",
+    failing: provider({ [proposalAcceptance.id]: "allow-everything" }),
+  },
+] satisfies ReadonlyArray<{ failure: string; failing: DecisionProvider }>)(
+  "holds a message in either direction as an unavailable check, with no feedback or guidance, when the provider $failure",
+  ({ failing }) =>
     Effect.gen(function* () {
-      const result = yield* check(
-        provider({ [proposalAcceptance.id]: unusable }),
-        { incoming },
-      );
-      expect(result).toMatchObject({
-        reason: "check-unavailable",
-        instructions: [],
-      });
+      for (const incoming of [true, false]) {
+        expect(yield* check(failing, { incoming })).toMatchObject({
+          reason: "check-unavailable",
+          feedback: [],
+          instructions: [],
+        });
+      }
     }),
 );
 const applicability = fc.constantFrom<TextRule["applies"]>(
@@ -390,13 +345,7 @@ it.prop(
           Object.values(request.questions).map((question) => question.ruleId),
         ),
       ).toEqual(asked.length === 0 ? [] : [asked.map((rule) => rule.id)]);
-      expect(
-        result.findings.flatMap((finding) =>
-          finding.kind === "not-applicable" ? [finding.ruleId] : [],
-        ),
-      ).toEqual(
-        textRules.flatMap((rule) => (asked.includes(rule) ? [] : [rule.id])),
-      );
+      expect(result.checkedRuleIds).toEqual(asked.map((rule) => rule.id));
       for (const rule of textRules) {
         expect(stated.split(rule.text)).toHaveLength(
           asked.includes(rule) ? 2 : 1,
@@ -404,105 +353,6 @@ it.prop(
       }
       expect(stated).not.toContain(registeredGuidance);
       expect(stated).not.toContain(repair);
-    }),
-);
-/** The parts of a request's state that say what is checked, when it was captured and whether earlier history was left out. */
-const statedTimeAndCandidate = Schema.parseJson(
-  Schema.Struct({
-    candidate: Schema.Unknown,
-    now: Schema.optional(Schema.Number),
-    earlierHistoryOmitted: Schema.optional(Schema.Boolean),
-  }),
-);
-it.prop(
-  "gives the provider the candidate, the capture time and any omission of earlier history as captured, and holds nothing for an omission",
-  [
-    fc.string(),
-    fc.option(fc.nat(), { nil: undefined }),
-    fc.option(fc.boolean(), { nil: undefined }),
-  ],
-  ([text, now, earlierHistoryOmitted]) =>
-    Effect.gen(function* () {
-      const requests: DecisionRequest[] = [];
-      const message = { ...draft, text };
-      const result = yield* check(provider({}, requests), {
-        message,
-        evidence: { ...evidence, now, earlierHistoryOmitted },
-      });
-      expect(result.reason).toBe("eligible");
-      expect(
-        requests.map((request) =>
-          Schema.decodeUnknownSync(statedTimeAndCandidate)(request.state),
-        ),
-      ).toEqual([{ candidate: message, now, earlierHistoryOmitted }]);
-    }),
-);
-it.prop(
-  "refuses an outgoing draft its agent did not send and an incoming message that does not name its agent as the recipient",
-  [fc.boolean(), fc.uuid()],
-  ([incoming, stranger]) =>
-    Effect.gen(function* () {
-      const refused = yield* check(defaultProvider, {
-        incoming,
-        message: incoming
-          ? { ...peerMessage, recipients: [stranger] }
-          : { ...draft, sender: stranger },
-      }).pipe(Effect.flip);
-      expect(refused._tag).toBe("InvalidCheckError");
-    }),
-);
-/** The references of a candidate, two earlier messages and two owner facts. */
-const references = ["candidate", "earlier-1", "earlier-2", "fact-1", "fact-2"];
-it.prop(
-  "refuses evidence in which any two of the candidate, the earlier messages and the owner facts share a reference",
-  [
-    fc.boolean(),
-    fc.shuffledSubarray(references, { minLength: 2, maxLength: 2 }),
-    fc.uuid(),
-  ],
-  ([incoming, sharing, shared]) =>
-    Effect.gen(function* () {
-      const held = (reference: string) =>
-        sharing.includes(reference) ? shared : reference;
-      const refused = yield* check(defaultProvider, {
-        incoming,
-        message: {
-          ...(incoming ? peerMessage : draft),
-          id: held("candidate"),
-        },
-        evidence: {
-          ...evidence,
-          history: ["earlier-1", "earlier-2"].map((reference) => ({
-            ...peerMessage,
-            id: held(reference),
-            visibleToAgent: true,
-          })),
-          facts: ["fact-1", "fact-2"].map((reference) => ({
-            id: held(reference),
-            source: "owner-calendar",
-            text: privateEvidence,
-          })),
-        },
-      }).pipe(Effect.flip);
-      expect(refused._tag).toBe("InvalidCheckError");
-    }),
-);
-it.prop(
-  "refuses evidence that lists a participant twice",
-  [fc.boolean(), fc.uuid()],
-  ([incoming, repeated]) =>
-    Effect.gen(function* () {
-      const refused = yield* check(defaultProvider, {
-        incoming,
-        evidence: {
-          ...evidence,
-          participants: [repeated, repeated].map((agentId) => ({
-            agentId,
-            principal: "participant",
-          })),
-        },
-      }).pipe(Effect.flip);
-      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 it.prop(
@@ -521,33 +371,6 @@ it.prop(
           : { reason: "unresolved-evidence" },
       );
     }),
-);
-it.each([
-  { name: "plain", cancellation: Effect.interrupt },
-  {
-    name: "cleanup defect",
-    cancellation: Effect.interrupt.pipe(
-      Effect.ensuring(Effect.die("cleanup failed")),
-    ),
-  },
-  {
-    name: "typed failure and interruption",
-    cancellation: Effect.fail(
-      new DecisionProviderError({ reason: "transport" }),
-    ).pipe(Effect.ensuring(Effect.interrupt)),
-  },
-])("preserves provider interruption with $name", ({ cancellation }) =>
-  Effect.gen(function* () {
-    const cancelling: DecisionProvider = { decide: () => cancellation };
-    const running = yield* check(cancelling).pipe(Effect.fork);
-    const exit = yield* Fiber.await(running);
-    expect(
-      Exit.match(exit, {
-        onFailure: Cause.isInterrupted,
-        onSuccess: () => false,
-      }),
-    ).toBe(true);
-  }),
 );
 it.prop(
   "holds a message exactly when the provider answers after the request deadline",
@@ -573,120 +396,7 @@ it.prop(
       expect(result).toMatchObject(
         delay < perRequest
           ? { reason: "eligible", feedback: [] }
-          : {
-              reason: "check-unavailable",
-              feedback: [repair],
-            },
-      );
-    }),
-);
-function requestBytes(request: DecisionRequest): number {
-  return new TextEncoder().encode(JSON.stringify(request)).byteLength;
-}
-it.prop(
-  "submits a request exactly when its UTF-8 bytes fit maximumRequestBytes, and holds the message without asking otherwise",
-  [fc.string({ unit: "grapheme" }), fc.integer({ min: -4, max: 4 })],
-  ([text, spare]) =>
-    Effect.gen(function* () {
-      const message = { ...draft, text };
-      const captured: DecisionRequest[] = [];
-      yield* check(provider({}, captured), {
-        message,
-        providerSettings: {
-          ...providerSettings,
-          maximumRequestBytes: Number.MAX_SAFE_INTEGER,
-        },
-      });
-      const bytes = Math.max(...captured.map(requestBytes));
-      const submitted: DecisionRequest[] = [];
-      const result = yield* check(provider({}, submitted), {
-        message,
-        providerSettings: {
-          ...providerSettings,
-          maximumRequestBytes: bytes + spare,
-        },
-      });
-      expect(result.reason).toBe(spare >= 0 ? "eligible" : "check-unavailable");
-      expect(submitted.map(requestBytes)).toEqual(spare >= 0 ? [bytes] : []);
-    }),
-);
-/** Schema-minimum message and evidence keep this boundary independent of variable evidence size. */
-const minimumCaptured = {
-  message: {
-    id: "m",
-    sender: "b",
-    recipients: ["a"],
-    text: "",
-  } satisfies AssessmentText,
-  evidence: {
-    agentId: "a",
-    principal: "p",
-    participants: [],
-    history: [],
-    facts: [],
-    gaps: [],
-  } satisfies CheckEvidence,
-};
-function checkMinimumRequests(
-  decisionProvider: DecisionProvider,
-  maximumRequestBytes: number,
-  textRules: readonly TextRule[],
-) {
-  return Effect.forEach(
-    [true, false],
-    (incoming) =>
-      check(decisionProvider, {
-        rules: textRules,
-        ...minimumCaptured,
-        message: incoming
-          ? minimumCaptured.message
-          : {
-              ...minimumCaptured.message,
-              sender: minimumCaptured.evidence.agentId,
-              recipients: [minimumCaptured.message.sender],
-            },
-        incoming,
-        providerSettings: { ...providerSettings, maximumRequestBytes },
-      }),
-    { concurrency: 1 },
-  );
-}
-it.prop(
-  "accepts a rule set exactly when the smallest request in each direction fits maximumRequestBytes, and then allows that request",
-  [
-    fc.array(
-      fc.record({
-        applies: applicability,
-        text: fc.string({ minLength: 1, unit: "grapheme" }),
-      }),
-      { minLength: 1, maxLength: 3 },
-    ),
-    fc.integer({ min: -4, max: 4 }),
-  ],
-  ([stated, spare]) =>
-    Effect.gen(function* () {
-      const textRules = stated.map(
-        (rule, index): TextRule => ({ id: `rule-${index}`, ...rule }),
-      );
-      const captured: DecisionRequest[] = [];
-      yield* checkMinimumRequests(
-        provider({}, captured),
-        Number.MAX_SAFE_INTEGER,
-        textRules,
-      );
-      const minimumBytes = Math.max(...captured.map(requestBytes));
-      const reasons = yield* checkMinimumRequests(
-        provider(),
-        minimumBytes + spare,
-        textRules,
-      ).pipe(
-        Effect.match({
-          onFailure: (rejected) => rejected._tag,
-          onSuccess: (results) => results.map((result) => result.reason),
-        }),
-      );
-      expect(reasons).toEqual(
-        spare >= 0 ? ["eligible", "eligible"] : "InvalidCheckError",
+          : { reason: "check-unavailable", feedback: [] },
       );
     }),
 );

@@ -99,7 +99,6 @@ describe("Firewall.readDecisions", () => {
           decidedBy: [
             {
               ruleId: privacy.id,
-              from: "fixed",
               advice: privacy.feedback,
             },
           ],

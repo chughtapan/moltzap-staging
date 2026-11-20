@@ -93,7 +93,7 @@ export function contractRefusal(
             direction,
             peer,
             reason: problem.reason,
-            decidedBy: [{ ruleId, from: "contract" }],
+            decidedBy: [{ ruleId }],
             checkedRuleIds: [ruleId],
             activeRevision: revision,
           }),
