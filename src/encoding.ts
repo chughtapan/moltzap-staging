@@ -1,8 +1,7 @@
 /** @file JSON text, exact structs, identifier checks, validation issue text and parenthesized data shared by every layer that reads or writes external data. */
 
 import type { ParseOptions } from "effect/SchemaAST";
-import { Array, Data, Effect, Either, Encoding, Option, Schema } from "effect";
-import { isDeepStrictEqual } from "node:util";
+import { Array, Data, Effect, Either, Encoding, Schema } from "effect";
 
 /** Rejects missing required fields and unknown properties. */
 const exactParseOptions = {
@@ -44,20 +43,6 @@ export const decodeJson = Effect.fn("decodeJson")(
       exactParseOptions,
     )(text).pipe(Effect.mapError(representationFailure)),
 );
-
-const parseJson = Option.liftThrowable((text: string): unknown =>
-  JSON.parse(text),
-);
-
-/**
- * Whether two JSON texts hold the same value. The order of an object's members
- * and the spelling of a number do not matter; text that is not JSON equals
- * nothing.
- */
-export const sameJson = (left: string, right: string): boolean =>
-  Option.zipWith(parseJson(left), parseJson(right), isDeepStrictEqual).pipe(
-    Option.getOrElse(() => false),
-  );
 
 /**
  * Compares ASCII names in the order used by group addresses.

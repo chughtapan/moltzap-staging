@@ -1,7 +1,7 @@
 /** @file Shared fixtures for firewall service tests: an agent's firewall, messages, rules and a test provider. */
 
 import { SqlClient } from "@effect/sql";
-import { type Context, Effect, Encoding, Layer, Schema } from "effect";
+import { type Context, Effect, Encoding, Layer } from "effect";
 import type { DecisionProvider, FirewallEvidence } from "../check.js";
 import { openTestDatabase, type TestDatabase } from "../../__tests__/test.js";
 import { Message } from "../../communication/index.js";
@@ -12,7 +12,6 @@ import {
   Identity,
   PrincipalId,
 } from "../../identity.js";
-import { type CompiledContract, compiledContractSchema } from "../contract.js";
 import {
   decodeMessagePolicy,
   type LoadedMessagePolicy,
@@ -153,52 +152,12 @@ export function policy(
   };
 }
 
-/** The firewall of the agent `agentKey` names under `configured`, which holds `contracts`. */
-export function firewallLayer(
-  agentKey: string,
-  configured: TestPolicy,
-  contracts: readonly CompiledContract[] = [],
-) {
+/** The firewall of the agent `agentKey` names under `configured`. */
+export function firewallLayer(agentKey: string, configured: TestPolicy) {
   return Firewall.layer(
     agentKey,
     configured.source,
-    contracts,
+    undefined,
     configured.provider,
   );
-}
-
-/** A form of one string field, `value`. */
-export const valueField = {
-  type: "object",
-  properties: { value: { type: "string" } },
-  required: ["value"],
-};
-/** A form with no fields. */
-export const noFields = { type: "object", properties: {}, required: [] };
-/** What a form declares when its act neither starts nor ends an instance and has no guards. */
-export const form = {
-  starts: false,
-  ends: false,
-  when: [],
-  initiates: [],
-  terminates: [],
-  relations: [],
-};
-
-/** A contract named `name` with roles Sender and Receiver, the given forms and whatever `rest` adds. */
-export function contractOf(
-  name: string,
-  forms: readonly unknown[],
-  rest: Readonly<Record<string, unknown>> = {},
-) {
-  return Schema.decodeUnknownSync(compiledContractSchema)({
-    name,
-    digest: "0".repeat(64),
-    source: "",
-    description: "",
-    roles: { initiator: "Sender", participant: "Receiver" },
-    forms,
-    textRules: [],
-    ...rest,
-  });
 }

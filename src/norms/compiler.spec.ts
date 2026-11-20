@@ -110,7 +110,7 @@ vitestIt(
             .map((field) => field.name),
         );
         expect(contract.textRules).toMatchObject([
-          { id: "sample-rule-1", act: "open", applies: "both" },
+          { id: "sample-rule-1", act: "open" },
         ]);
       }),
     );

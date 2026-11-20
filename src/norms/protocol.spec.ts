@@ -1,19 +1,19 @@
-/** @file A conversation's protocol permits exactly the acts its contract's turn rules allow, from the checks saved of its history. */
+/** @file A conversation's protocol permits exactly the acts its contract's turn rules allow, from its earlier messages and the firewall's checks of them. */
 
 import { Effect, Either, FastCheck as fc, Option, Schema } from "effect";
 import { expect, it } from "vitest";
+import type { EarlierMessage } from "../firewall/index.js";
 import type { AgentCard } from "../identity.js";
 import { type Message, messageWithId, MsgId } from "../communication/index.js";
+import { peer } from "../firewall/__tests__/firewall-fixtures.js";
 import {
   contractOf,
   form,
   noFields,
-  peer,
   valueField,
-} from "./__tests__/firewall-fixtures.js";
+} from "./__tests__/norms-fixtures.js";
 import {
   type Act,
-  type CheckedMessage,
   checkStructure,
   type CompiledContract,
   formatAct,
@@ -76,11 +76,11 @@ const unknownId = Schema.decodeUnknownSync(MsgId)(`msg_${"A".repeat(43)}`);
 
 /**
  * Checks `act` from `author` against `history` at `now`, and adds its message
- * to the history with the protocol record of an act the protocol permits.
+ * to the history as one the firewall allowed when the protocol permits it.
  */
 function attempt(
   contract: CompiledContract,
-  history: CheckedMessage[],
+  history: EarlierMessage[],
   taken: {
     readonly author: AgentCard;
     readonly act: Act;
@@ -89,8 +89,8 @@ function attempt(
   },
 ) {
   const replyToMsgId = Option.getOrUndefined(taken.reply);
-  const view = Effect.runSync(projectProtocol(history));
-  const protocol = Effect.runSync(
+  const view = Effect.runSync(projectProtocol([contract], history));
+  const allowed = Effect.runSync(
     Effect.either(
       Effect.flatMap(checkStructure(contract, taken.act), (declared) =>
         checkProtocol(view, contract, declared, {
@@ -101,15 +101,15 @@ function attempt(
         }),
       ),
     ),
-  ).pipe(Either.getRight, Option.getOrUndefined);
+  ).pipe(Either.isRight);
   history.push({
     message: actMessage(taken.author, stepId(history.length), taken.act, {
       replyToMsgId,
     }),
-    at: taken.now,
-    ...(protocol === undefined ? {} : { protocol }),
+    checkedAt: taken.now,
+    allowed,
   });
-  return protocol !== undefined;
+  return allowed;
 }
 
 /** A direct message from `author` to the other agent that states `act`. */
@@ -178,7 +178,7 @@ interface Model {
 
 /** The message a step replies to: none, one no history holds, or an earlier step's. */
 function replyOf(
-  history: readonly CheckedMessage[],
+  history: readonly EarlierMessage[],
   taken: Step,
 ): Option.Option<MsgId> {
   if (taken.reply === "none") {
@@ -277,7 +277,7 @@ function advanceModel(
 it("permits exactly the acts the turn rules allow, whoever sends them and whichever message they reply to", () => {
   fc.assert(
     fc.property(fc.array(step, { maxLength: 12 }), (steps) => {
-      const history: CheckedMessage[] = [];
+      const history: EarlierMessage[] = [];
       const model: Model = {
         open: false,
         members: new Map(),
@@ -300,9 +300,9 @@ it("permits exactly the acts the turn rules allow, whoever sends them and whiche
         expect(permitted).toBe(expected);
         advanceModel(model, taken, { id, reply }, permitted);
       }
-      expect(Effect.runSync(projectProtocol([...history, ...history]))).toEqual(
-        Effect.runSync(projectProtocol(history)),
-      );
+      expect(
+        Effect.runSync(projectProtocol([turns], [...history, ...history])),
+      ).toEqual(Effect.runSync(projectProtocol([turns], history)));
     }),
     { numRuns: 500 },
   );
@@ -341,7 +341,7 @@ it("permits an act with a delay and a limit only once its fact is that old and w
             delay: { fact: "held", field: "wait" },
           },
         ]);
-        const history: CheckedMessage[] = [];
+        const history: EarlierMessage[] = [];
         const start = 1_000;
         const due = start + wait * 1000;
         attempt(timed, history, {

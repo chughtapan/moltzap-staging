@@ -1,6 +1,6 @@
 /** @file A contract: the forms, turn rules and text rules one norm compiles to, and the reading of a message as one act of it. */
 
-import { Data, Effect, Either, Schema } from "effect";
+import { Data, Effect, Either, Schema, Struct } from "effect";
 import type { Message } from "../communication/index.js";
 import {
   exactStruct,
@@ -8,30 +8,26 @@ import {
   type SExpression,
   writeSExpression,
 } from "../encoding.js";
+import { TextRule } from "../firewall/index.js";
 import { RequestedSchema, validateResponseContent } from "./forms.js";
-import { TextRule } from "./rules.js";
 
 const name = Schema.String.pipe(
   Schema.pattern(/^[a-zA-Z][a-zA-Z0-9-]{0,63}$/u),
 );
 const names = Schema.Array(name);
 const actReference = Schema.Union(name, exactStruct({ fact: name }));
-const fieldValue = Schema.Union(
-  Schema.String,
-  Schema.Number.pipe(Schema.finite()),
-  Schema.Array(Schema.String),
-);
-const actSchema = exactStruct({
-  name,
-  norm: name,
-  fields: Schema.Record({ key: name, value: fieldValue }),
-});
 
 /**
  * One act as a message states it: its performative in `name`, the norm its
  * `:ontology` names and its fields, each with the type its text gave it.
  */
-export type Act = typeof actSchema.Type;
+export interface Act {
+  readonly name: string;
+  readonly norm: string;
+  readonly fields: Readonly<
+    Record<string, string | number | readonly string[]>
+  >;
+}
 
 const fieldSource = exactStruct({
   kind: Schema.Literal("field"),
@@ -85,9 +81,9 @@ const formSchema = exactStruct({
 export type MessageForm = typeof formSchema.Type;
 
 /**
- * One norm as the firewall applies it. `digest` is the SHA-256 of `source`,
- * the norm document it was compiled from. A text rule's `act` names the one
- * performative it governs; a rule without it governs every act of the norm.
+ * One norm as compiled. `digest` is the SHA-256 of `source`, the norm document
+ * it was compiled from. A text rule's `act` names the one performative it
+ * governs; a rule without it governs every act of the norm.
  */
 export const compiledContractSchema = exactStruct({
   name,
@@ -97,38 +93,16 @@ export const compiledContractSchema = exactStruct({
   roles: exactStruct({ initiator: name, participant: name }),
   forms: Schema.Array(formSchema),
   textRules: Schema.Array(
-    exactStruct({ ...TextRule.fields, act: Schema.optional(name) }),
+    exactStruct({
+      ...Struct.pick(TextRule.fields, "id", "text", "feedback"),
+      act: Schema.optional(name),
+    }),
   ),
   onRefusal: Schema.optional(name),
 });
 
-/** A compiled norm: data the firewall checks messages against, with no code of its own. */
+/** A compiled norm: data messages are checked against, with no code of its own. */
 export type CompiledContract = typeof compiledContractSchema.Type;
-
-/**
- * What the check record of an allowed act saves: the act and its contract's
- * digest. The act that opens an instance also saves the whole contract, so
- * the instance is replayed under the document it began with.
- */
-export const protocolRecordSchema = exactStruct({
-  act: actSchema,
-  digest: compiledContractSchema.fields.digest,
-  opening: Schema.optional(compiledContractSchema),
-});
-
-/** @useDeclaredType */
-export type ProtocolRecord = typeof protocolRecordSchema.Type;
-
-/**
- * One message of a conversation's history with what this firewall saved when
- * it checked it: the time of that check and, for an act it allowed, its
- * protocol record.
- */
-export interface CheckedMessage {
-  readonly message: Message;
-  readonly at: number;
-  readonly protocol?: ProtocolRecord;
-}
 
 /** Why a message fails its contract: the stage that failed, and the text its sender reads. */
 export class ContractProblem extends Data.TaggedError("ContractProblem")<{

@@ -2,7 +2,6 @@
 
 import { Data, Effect, Schema } from "effect";
 import type { Message } from "../communication/index.js";
-import type { RequestedSchema } from "./forms.js";
 import type {
   Direction,
   FirewallRefusalReason,
@@ -19,7 +18,7 @@ export interface FirewallEvidence {
    */
   readonly references?: readonly Message[];
   /**
-   * Every message before the one under check, for a contract's protocol,
+   * Every message before the one under check, for the structure check,
    * apart from the bounded window the text rules read. `complete` is false
    * when some of it could not be read.
    */
@@ -89,20 +88,47 @@ export interface CheckEvidence {
   /** Epoch milliseconds when the caller captured the evidence. */
   readonly now?: number;
   readonly gaps: readonly string[];
-  /**
-   * For an act a contract governs: its norm and that norm's description, the
-   * digest of its norm document, the act's performative and form, and the
-   * facts that hold in the instance.
-   */
-  readonly protocol?: {
-    readonly norm: string;
-    readonly digest: string;
-    readonly act: string;
-    readonly description: string;
-    readonly state: readonly string[];
-    readonly form: typeof RequestedSchema.Type;
-  };
+  /** What the structure check tells the provider of the message's place in its conversation. */
+  readonly protocol?: unknown;
 }
+
+/** One earlier message of a conversation with this firewall's own check of it. */
+export interface EarlierMessage {
+  readonly message: Message;
+  /** Epoch milliseconds of the check. A message this firewall has no check of has none and counts as not allowed. */
+  readonly checkedAt?: number;
+  readonly allowed: boolean;
+}
+
+/**
+ * Judges whether a message may follow the earlier messages of its
+ * conversation, before the text rules do. A refusal gives its explanation as
+ * `feedback`, the rule the decision names, its diagnostics as `detail` and
+ * the `reply` the sender of a withheld message receives. A pass gives the
+ * text rules that also apply to this message, the `protocol` context the
+ * decision provider reads, the `detail` a refusal by a text rule carries, and
+ * `replyTo`, which phrases the reply that carries such a refusal's feedback.
+ */
+export type StructureCheck = (
+  message: Message,
+  earlier: readonly EarlierMessage[],
+) => Effect.Effect<
+  | {
+      readonly kind: "refused";
+      readonly reason: "rule-violation" | "unresolved-evidence";
+      readonly ruleId: string;
+      readonly feedback: string;
+      readonly detail?: unknown;
+      readonly reply?: string;
+    }
+  | {
+      readonly kind: "passed";
+      readonly textRules: readonly TextRule[];
+      readonly protocol?: unknown;
+      readonly detail?: unknown;
+      readonly replyTo?: (feedback: string) => string;
+    }
+>;
 
 /**
  * What one check of the text rules concludes. The host receives the feedback
@@ -398,9 +424,8 @@ const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
 
 /**
  * The sender can act on registered feedback without seeing the check's evidence.
- * `rule` names the contract stage that refused, and `detail` is a contract's
- * diagnostics: its norm, the digest of its norm document, the stage that
- * failed and the field at fault. The message states each deciding rule's
+ * `rule` and `detail` are those of a structure check that refused or passed
+ * the message. The message states each deciding rule's
  * registered feedback as an error, or the reason when there is none, then the
  * check.
  */

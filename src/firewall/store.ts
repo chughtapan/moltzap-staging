@@ -45,8 +45,6 @@ const messageCheck = Schema.Struct({
   messageKey: Schema.NonEmptyString,
   at: storedTime,
   decision,
-  result: Schema.NonEmptyString,
-  message: Schema.NonEmptyString,
 });
 const savedSummary = Schema.parseJson(
   Schema.Struct({ summaries: Schema.Array(firewallDecisionSummarySchema) }),
@@ -108,8 +106,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
   return {
     /**
      * The saved checks of the messages `messageKeys` name, oldest first: each
-     * with the message it checked, its result, its decision and when it was
-     * decided.
+     * with its decision and when it was decided.
      */
     readCheckRecords: (messageKeys: readonly string[]) =>
       run(
@@ -122,8 +119,6 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
                   "message_key as messageKey",
                   "decided_at as at",
                   "decision",
-                  "result",
-                  "message",
                 ])
                 .where("message_key", "in", keys)
                 .orderBy("sequence", "asc"),

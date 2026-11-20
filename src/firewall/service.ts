@@ -1,44 +1,33 @@
 /** @file Owns one agent's message policy: its checks, the content they permit and its saved decisions. */
 
 import { Clock, Context, Effect, Exit, Layer, Schedule, Struct } from "effect";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Message } from "../communication/index.js";
-import type { CompiledContract } from "./contract.js";
+import type {
+  Direction,
+  firewallDecisionsSchema,
+  firewallDecisionSummarySchema,
+  FirewallPolicyError,
+  FirewallRefusalReason,
+  LoadedMessagePolicy,
+  TextRule,
+} from "./rules.js";
 import { type AgentCard, Identity } from "../identity.js";
 import {
   type AssessmentText,
   checkCapturedMessage,
   type CheckEvidence,
   type DecisionProvider,
+  type EarlierMessage,
   type FirewallCheck,
   type FirewallEvidence,
   FirewallRefusal,
   type HistoryEntry,
   type LocalGuidance,
+  type StructureCheck,
   textQuestionEdition,
 } from "./check.js";
-import {
-  type ContractCheck,
-  contractReply,
-  messageKey,
-  prepareContract,
-} from "./contract-check.js";
-import {
-  type Candidate,
-  contractRefusal,
-  type Decision,
-  mintCheckId,
-} from "./decision.js";
 import { makeJevDecisionProvider } from "./jev.js";
-import {
-  type Direction,
-  type firewallDecisionsSchema,
-  type firewallDecisionSummarySchema,
-  FirewallPolicyError,
-  type FirewallRefusalReason,
-  type LoadedMessagePolicy,
-  TextRule,
-} from "./rules.js";
 import {
   type CheckRecord,
   type FirewallStore,
@@ -51,6 +40,32 @@ import {
  * an incoming message.
  */
 type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
+
+/** A refused or withheld message's reason, the rule that decided, and what its sender is told. */
+interface Refusal {
+  readonly reason: FirewallRefusalReason;
+  readonly ruleId?: string;
+  readonly feedback: readonly string[];
+  readonly detail?: unknown;
+  readonly reply?: string;
+}
+
+/**
+ * One message's decision and the check record that saves it. `refused`
+ * refuses a message the agent sends and withholds one it receives. Only a
+ * message of an agent without a message policy has no record.
+ */
+type Decision =
+  | {
+      readonly kind: "allowed";
+      readonly record?: CheckRecord;
+      readonly guidance?: LocalGuidance;
+    }
+  | {
+      readonly kind: "refused";
+      readonly record: CheckRecord;
+      readonly refusal: Refusal;
+    };
 
 /**
  * Run `save` before returning refusal or submitting this exact message.
@@ -85,7 +100,7 @@ export type IncomingDecision = {
 /**
  * Reads the evidence of one check. Only a check under a message policy runs
  * it. `protocolHistory` asks for every message before the one under check as
- * well, which the check of an agent that holds a contract needs.
+ * well, which a firewall with a structure check needs.
  */
 type ReadEvidence<E, R> = (
   protocolHistory: boolean,
@@ -107,8 +122,6 @@ interface FirewallService {
     message: Message,
     evidence: ReadEvidence<E, R>,
   ) => Effect.Effect<IncomingDecision, E, R>;
-  /** The contracts the agent holds. */
-  readonly readContracts: () => Effect.Effect<readonly CompiledContract[]>;
   readonly readDecisions: (request: {
     readonly since?: number;
   }) => Effect.Effect<typeof firewallDecisionsSchema.Type, FirewallPolicyError>;
@@ -121,15 +134,14 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
 >() {
   /**
    * Policy resources are fixed for this scope. Identity supplies this agent's
-   * card. The agent holds `contracts`; structure and protocol checks of a
-   * message's act apply before the text rules of `source`, and a
-   * contract's text rules join them. `provider` judges the text rules in
-   * place of the provider `source` names.
+   * card. `structureCheck` judges each message before the text rules of
+   * `source`, and the text rules it gives a message join them. `provider`
+   * judges the text rules in place of the provider `source` names.
    */
   static readonly layer = (
     agentKey: string,
     source?: LoadedMessagePolicy,
-    contracts: readonly CompiledContract[] = [],
+    structureCheck?: StructureCheck,
     provider?: DecisionProvider,
   ) =>
     Layer.effect(
@@ -140,14 +152,14 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         const policy =
           source === undefined
             ? undefined
-            : yield* buildPolicy(source, contracts, provider);
+            : yield* buildPolicy(source, provider);
         const installed: Installation = {
           store,
           ...(policy === undefined ? {} : { policy }),
+          ...(structureCheck === undefined ? {} : { structureCheck }),
           localAgent: identity.me,
         };
         return Firewall.of({
-          readContracts: () => Effect.sync(() => policy?.contracts ?? []),
           readDecisions: (request) => store.readDecisions(request),
           checkOutgoing: (message, evidence) =>
             Effect.gen(function* () {
@@ -210,22 +222,17 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
     );
 }
 
-/**
- * One candidate the text rules are to judge: the rules that apply to it, and
- * for an act a contract governs, the contract's check of it and what the
- * provider reads of its protocol.
- */
-interface TextCheckPlan {
-  readonly candidate: Candidate;
-  readonly textRules: readonly TextRule[];
-  readonly contract?: Extract<ContractCheck, { readonly kind: "ready" }>;
-  readonly protocol?: CheckEvidence["protocol"];
-}
+/** What a structure check gives of a message it passes. */
+type Passed = Extract<
+  Effect.Effect.Success<ReturnType<StructureCheck>>,
+  { readonly kind: "passed" }
+>;
 
 /** The message policy one firewall applies. */
 interface Installation {
   readonly store: FirewallStore;
   readonly policy?: InstalledPolicy;
+  readonly structureCheck?: StructureCheck;
   readonly localAgent: AgentCard;
 }
 
@@ -235,14 +242,14 @@ const defaultConcurrentChecks = 4;
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
 /**
- * Decides a message. A message of an agent that holds a contract
- * is first read as an act and checked for structure and protocol; a failure
- * refuses it. The text rules then judge the candidate: the owner's rules and
- * the rules its contract gives its act. The firewall's own reply to a
- * withheld message, which is checked with that message as its reference, is
- * not an act of a norm unless it reads as one: a reply that fails structure
- * is judged by the text rules alone. An agent without a message policy allows
- * every message without reading its evidence.
+ * Decides a message. The structure check judges it first, with the earlier
+ * messages and this firewall's checks of them; its refusal refuses the
+ * message, and a check that cannot read those checks is unavailable. The text
+ * rules then judge the message: the owner's rules and those the structure
+ * check gives it. The firewall's own reply to a withheld message, which is
+ * checked with that message as its reference, is judged by the owner's text
+ * rules alone. An agent without a message policy allows every message without
+ * reading its evidence.
  */
 function decide<E, R>(
   installed: Installation,
@@ -251,76 +258,115 @@ function decide<E, R>(
   direction: Direction,
 ) {
   return Effect.gen(function* () {
-    const policy = installed.policy;
+    const { policy, structureCheck } = installed;
     if (policy === undefined) {
       return { kind: "allowed" } satisfies Decision;
     }
-    const contractsUsed = policy.contracts.length !== 0;
-    const candidate: Candidate = {
-      message,
-      evidence: yield* readEvidence(contractsUsed),
-    };
-    const contract = contractsUsed
-      ? yield* prepareContract(
-          policy.contracts,
-          installed.store,
-          candidate.message,
-          candidate.evidence,
-        )
-      : undefined;
-    if (
-      contract?.kind === "refused" &&
-      !(
-        candidate.evidence.references !== undefined &&
-        contract.problem.stage === "structural"
-      )
-    ) {
-      return contractRefusal(policy.revision, candidate, direction, contract);
+    const evidence = yield* readEvidence(structureCheck !== undefined);
+    const structure =
+      structureCheck === undefined || evidence.references !== undefined
+        ? undefined
+        : yield* earlierMessages(installed.store, evidence).pipe(
+            Effect.flatMap((earlier) => structureCheck(message, earlier)),
+            Effect.map((result) =>
+              result.kind === "passed"
+                ? result
+                : { ...result, feedback: [result.feedback] },
+            ),
+            Effect.catchTag("FirewallPolicyError", () =>
+              Effect.succeed({
+                kind: "refused" as const,
+                reason: "check-unavailable" as const,
+                feedback: [],
+              }),
+            ),
+          );
+    if (structure?.kind === "refused") {
+      return refusal(
+        policy.revision,
+        message,
+        direction,
+        Struct.omit(structure, "kind"),
+      );
     }
     return yield* checkMessageText(
       policy,
       installed.localAgent,
-      textCheckPlan(policy, candidate, contract),
+      { message, evidence },
       direction,
+      structure,
     );
   });
 }
 
 /**
- * The text rules that judge a candidate: the owner's and those its contract
- * gives its act. The contract's come from the contract its instance began
- * under.
+ * Each message before the one under check with this firewall's saved check of
+ * it. A check that allowed it wins over one that did not, since a draft the
+ * firewall refused can share its id with the message later sent.
  */
-function textCheckPlan(
-  policy: InstalledPolicy,
-  candidate: Candidate,
-  contract?: ContractCheck,
-): TextCheckPlan {
-  const ready = contract?.kind === "ready" ? contract : undefined;
-  const ownerRules = policy.textRules.filter(
-    (rule) => !policy.contractRuleIds.has(rule.id),
+function earlierMessages(store: FirewallStore, evidence: FirewallEvidence) {
+  const messages =
+    evidence.protocolHistory?.messages ??
+    evidence.history.map((entry) => entry.message);
+  return Effect.map(
+    store.readCheckRecords(messages.map((message) => messageKey(message))),
+    (rows) =>
+      messages.map((message): EarlierMessage => {
+        const checks = rows.filter(
+          (row) => row.messageKey === messageKey(message),
+        );
+        const check =
+          checks.find((row) => row.decision === "allowed") ?? checks[0];
+        return {
+          message,
+          allowed: check?.decision === "allowed",
+          ...(check === undefined ? {} : { checkedAt: check.at }),
+        };
+      }),
   );
-  const act = ready?.record.act.name;
-  const contractRules = (ready?.contract.textRules ?? [])
-    .filter((rule) => rule.act === undefined || rule.act === act)
-    .map((rule) => new TextRule(Struct.omit(rule, "act")));
-  const form = ready?.contract.forms.find((declared) => declared.act === act);
+}
+
+/**
+ * The decision that refuses a message without a text check. A withheld
+ * message is answered with the refusal's reply when it has one.
+ */
+function refusal(
+  revision: string,
+  message: Message,
+  direction: Direction,
+  { reply, ...refused }: Refusal,
+): Decision {
+  const ruleIds = refused.ruleId === undefined ? [] : [refused.ruleId];
   return {
-    candidate,
-    textRules: [...ownerRules, ...contractRules],
-    ...(ready === undefined ? {} : { contract: ready }),
-    ...(ready === undefined || form === undefined
-      ? {}
-      : {
-          protocol: {
-            norm: ready.contract.name,
-            digest: ready.contract.digest,
-            act: ready.record.act.name,
-            description: ready.contract.description,
-            state: [...(ready.view.instance?.facts.keys() ?? [])],
-            form: form.fields,
-          },
-        }),
+    kind: "refused",
+    record: {
+      checkId: mintCheckId(),
+      messageKey: messageKey(message),
+      direction,
+      messageJson: JSON.stringify(message),
+      inputJson: JSON.stringify({ revision }),
+      resultJson: JSON.stringify({
+        ...(refused.detail === undefined ? {} : { detail: refused.detail }),
+        summaries: (direction === "outgoing"
+          ? message.recipients
+          : [message.author]
+        ).map(
+          (peer): DecisionSummary => ({
+            direction,
+            peer,
+            reason: refused.reason,
+            decidedBy: ruleIds.map((ruleId) => ({ ruleId })),
+            checkedRuleIds: ruleIds,
+            activeRevision: revision,
+          }),
+        ),
+      }),
+      allowed: false,
+    },
+    refusal: {
+      ...refused,
+      ...(reply === undefined || direction === "outgoing" ? {} : { reply }),
+    },
   };
 }
 
@@ -332,19 +378,22 @@ function saveRecords(store: FirewallStore, decision: Decision) {
 }
 
 /**
- * One check of the planned candidate against its text rules, with the history
- * before it. Its record carries the exact revision and evidence that delivery
- * commits. The record of an act a contract governs also carries the
- * contract's norm and digest, and for an allowed act its protocol record,
- * which later checks replay. A refusal of such an act carries the contract's
- * diagnostics, and a withheld one is answered with the `:on-refusal` act when
- * one is declared.
+ * One check of a message against its text rules, with the history before it.
+ * Its record carries the exact revision and evidence that delivery commits.
+ * A message the structure check passed is also judged by the text rules that
+ * check gives it, and the provider reads its protocol context. A refusal of
+ * such a message carries the structure check's detail, and a withheld one is
+ * answered as that check phrases the reply.
  */
 function checkMessageText(
   policy: InstalledPolicy,
   self: AgentCard,
-  { candidate, textRules, contract, protocol }: TextCheckPlan,
+  candidate: {
+    readonly message: Message;
+    readonly evidence: FirewallEvidence;
+  },
   direction: Direction,
+  structure?: Passed,
 ) {
   return Effect.gen(function* () {
     const { message } = candidate;
@@ -378,9 +427,13 @@ function checkMessageText(
       earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
       now,
       gaps: candidate.evidence.gaps,
-      ...(protocol === undefined ? {} : { protocol }),
+      ...(structure?.protocol === undefined
+        ? {}
+        : { protocol: structure.protocol }),
     };
     const text = assessmentText(message);
+    const textRules = [...policy.textRules, ...(structure?.textRules ?? [])];
+    const detail = structure?.detail;
     return yield* Effect.gen(function* () {
       const checkId = mintCheckId();
       const check = yield* checkCapturedMessage(direction, text, evidence, {
@@ -389,15 +442,6 @@ function checkMessageText(
         settings: policy.configured.settings,
         ...(policy.provider === undefined ? {} : { provider: policy.provider }),
       }).pipe(markCheckActivity(direction));
-      const detail =
-        contract === undefined
-          ? undefined
-          : {
-              norm: contract.contract.name,
-              digest: contract.contract.digest,
-              act: contract.record.act.name,
-              stage: "semantic",
-            };
       const record: CheckRecord = {
         checkId,
         messageKey: messageKey(message),
@@ -409,9 +453,6 @@ function checkMessageText(
           evidence,
           agents,
           message: text,
-          ...(detail === undefined
-            ? {}
-            : { norm: detail.norm, digest: detail.digest }),
         }),
         allowed: check.reason === "eligible",
         resultJson: JSON.stringify({
@@ -428,9 +469,6 @@ function checkMessageText(
             ),
           ),
           ...(detail === undefined ? {} : { detail }),
-          ...(contract === undefined || check.reason !== "eligible"
-            ? {}
-            : { protocol: contract.record }),
         }),
       };
       if (check.reason === "eligible") {
@@ -445,8 +483,10 @@ function checkMessageText(
       }
       const reply =
         direction === "incoming"
-          ? (contractRefusalReply(contract, check) ??
-            textReply(textRules, check))
+          ? (structure?.replyTo?.(
+              check.feedback.join(" ") ||
+                `The semantic policy check returned ${check.reason}.`,
+            ) ?? textReply(textRules, check))
           : "";
       const refused: Decision = {
         kind: "refused",
@@ -461,6 +501,16 @@ function checkMessageText(
       return refused;
     }).pipe(Effect.withSpan("assessMessage"), policy.permits.withPermits(1));
   });
+}
+
+/** The key a check record is saved under for its message: the author's agent id and the message id. */
+function messageKey(message: Message): string {
+  return `${message.author.agentId}/${message.msgId}`;
+}
+
+/** A check id correlates a check without granting lookup authority. */
+function mintCheckId() {
+  return `chk_${randomBytes(32).toString("hex")}`;
 }
 
 function assessmentText(message: Message): AssessmentText {
@@ -516,23 +566,6 @@ function textReply(
     .join("\n");
 }
 
-/**
- * The act that answers the sender of an act the text rules withheld, when its
- * contract declares one: it carries the refusal's feedback.
- */
-function contractRefusalReply(
-  contract: TextCheckPlan["contract"],
-  check: FirewallCheck,
-) {
-  return contract === undefined
-    ? undefined
-    : contractReply(
-        contract,
-        check.feedback.join(" ") ||
-          `The semantic policy check returned ${check.reason}.`,
-      );
-}
-
 /** The summary a host reads of one check for one peer, naming the same captured rules as the decision. */
 function decisionSummary(
   activeRevision: string,
@@ -551,16 +584,11 @@ function decisionSummary(
 }
 
 /**
- * Installs the message policy `source` gives with the held `contracts`: the
- * configured rules and the contracts' text rules. Its revision covers the
- * contracts, so a decision names the rules that applied. Without `provider`,
- * Jev judges the text rules of a policy that names it.
+ * Installs the message policy `source` gives. Its revision covers the
+ * configured rules, so a decision names the rules that applied. Without
+ * `provider`, Jev judges the text rules of a policy that names it.
  */
-function buildPolicy(
-  source: LoadedMessagePolicy,
-  contracts: readonly CompiledContract[],
-  injected?: DecisionProvider,
-) {
+function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
   return Effect.gen(function* () {
     const configured = source.policy;
     const provider =
@@ -568,19 +596,7 @@ function buildPolicy(
       (source.provider === undefined
         ? undefined
         : retryingTransientFailures(makeJevDecisionProvider(source.provider)));
-    if (
-      new Set(contracts.map((contract) => contract.name)).size !==
-      contracts.length
-    ) {
-      return yield* new FirewallPolicyError({ reason: "build-failed" });
-    }
-    const contractRules = contracts.flatMap((contract) =>
-      contract.textRules.map((rule) => new TextRule(Struct.omit(rule, "act"))),
-    );
-    const textRules = [...configured.rules, ...contractRules];
-    if (textRules.length > 0 && provider === undefined) {
-      return yield* new FirewallPolicyError({ reason: "not-configured" });
-    }
+    const textRules = configured.rules;
     const revisionContents = {
       configuration: {
         maximumConcurrentChecks:
@@ -588,7 +604,6 @@ function buildPolicy(
       },
       questionEdition: textQuestionEdition,
       textRules,
-      contracts: contracts.map((contract) => contract.digest),
       ...(provider === undefined
         ? {}
         : {
@@ -602,8 +617,6 @@ function buildPolicy(
       configured,
       provider,
       revisionContents,
-      contracts,
-      contractRuleIds: new Set(contractRules.map((rule) => rule.id)),
       revision,
       textRules,
       permits: yield* Effect.makeSemaphore(

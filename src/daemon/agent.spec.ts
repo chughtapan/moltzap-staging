@@ -22,16 +22,16 @@ import { openTestDatabase } from "../__tests__/test.js";
 import { MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
-  contractOf,
-  form,
-  noFields,
-} from "../firewall/__tests__/firewall-fixtures.js";
-import {
   type DecisionProvider,
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
+import {
+  contractOf,
+  form,
+  noFields,
+} from "../norms/__tests__/norms-fixtures.js";
 import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
 
 const bobAddress = AgentAddress.make("agent:bob");

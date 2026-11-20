@@ -36,9 +36,8 @@ compiles them before startup. `read_norms` returns the
 current documents. No additional rule file or built-in agreement is installed.
 
 A source SHA-256 digest identifies
-the exact document bytes. The opening check retains its document and
-digest. Existing instances keep that document after a restart replaces it;
-subsequent instances use the installed documents.
+the exact document bytes. After a restart every instance uses the installed
+documents.
 
 A peer message cannot install policy.
 
@@ -188,8 +187,7 @@ Protocol context combines retained conversation messages with the local
 firewall's saved checks. Only allowed acts advance it. A saved outgoing
 check does not advance state before its message appears in transport
 history. Withheld messages remain known references, so a correction can identify
-them without treating them as successful transitions. Missing history or a
-missing check produces an explicit unresolved-evidence refusal.
+them without treating them as successful transitions.
 
 Each check uses a snapshot. Concurrent checks can allow against the same
 preceding state. Replay processes retained order, rechecks structural and

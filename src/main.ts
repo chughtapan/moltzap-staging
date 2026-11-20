@@ -23,6 +23,7 @@ import {
 } from "./database.js";
 import { Firewall } from "./firewall/service.js";
 import { Identity } from "./identity.js";
+import { structureCheck } from "./norms/index.js";
 import { packageVersion } from "./version.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
@@ -74,19 +75,13 @@ const runDaemon = Effect.gen(function* () {
       Firewall.layer(
         serverAgent.agentKey,
         settings.messagePolicy,
-        norms?.contracts,
+        norms && structureCheck(norms),
       ).pipe(Layer.provide(Layer.succeed(Identity, { me: serverAgent.card }))),
-    ).pipe(
-      Effect.catchTag("FirewallPolicyError", () =>
-        refused(
-          "The message policy and the norms could not be installed together. Check messagePolicyFile and normsDirectory in the settings.",
-        ),
-      ),
     );
     const app = yield* makeMcpHttpApp(authentication, {
       serverAgent,
       firewall: Context.get(firewall, Firewall),
-      hasNorms: norms !== undefined,
+      ...(norms === undefined ? {} : { norms }),
       historyLimit: settings.maximumHistoryRecords ?? 256,
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       turns: new Map(),
