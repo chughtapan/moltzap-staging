@@ -76,7 +76,7 @@ import {
 import { AgentId, AgentName } from "./identity.js";
 import { packageVersion } from "./version.js";
 
-// safer-arch-ignore no-fat-orchestrator: The daemon's one serving file registers every tool.
+// safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
