@@ -99,7 +99,7 @@ credentials or raw provider output.
 A refused draft creates no send. A revised invocation gets a new
 check. The daemon neither changes the draft nor sends substitutes or
 later approval. Accepted sends follow the
-[send outcome contract](../host/messaging.md#failed-or-uncertain-sends).
+[send outcome contract](../host/messaging.md#failed-sends).
 
 An allowed send carries no
 guidance.

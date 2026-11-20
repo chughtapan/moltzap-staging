@@ -36,19 +36,15 @@ Every successful send returns `id`, a message id.
 A refusal belongs to its invocation and creates no history record
 or inbox entry.
 
-### Failed or uncertain sends
+### Failed sends
 
 Failures name the failed action and cause. Invalid input identifies the
 name, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `outcome-unknown`: the invocation may have taken effect. Interruption,
-  defects or response loss after a request may have reached the daemon produce
-  this outcome.
-
-Repeating a successful send creates another message. Hosts must not automatically
-repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
+Repeating a successful send creates another message. Ending its wait does not
+cancel accepted work.
 
 ## Receiving inbox entries
 
@@ -78,8 +74,7 @@ one request leaves others active. Accepted sends and stored inbox entries surviv
 ## MCP projection
 
 `send_message` takes structured input and returns the accepted-work receipt.
-Invalid arguments fail before invocation. Invalid completed results produce
-`outcome-unknown`.
+Invalid arguments fail before invocation.
 
 A tool call that fails returns a result marked as an error (`isError: true`).
 Its text is the failure's message, written for the model to act on. Its
