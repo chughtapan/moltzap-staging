@@ -1,4 +1,4 @@
-/** @file One daemon process delivers between its server agent and a client, in one order for both. */
+/** @file One server process delivers between its server agent and a client, in one order for both. */
 
 import { Effect, Fiber, Stream } from "effect";
 import { expect, it } from "vitest";
@@ -9,18 +9,18 @@ import {
   processTrace,
   received,
   SERVER_AGENT_OWNER,
-  sharedDaemon,
+  sharedServer,
 } from "./daemon-fixture.js";
 
-/** Each trace starts one daemon. */
+/** Each trace starts one server. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
 
-/** The server agent and one client of a running daemon. */
+/** The server agent and one client of a running server. */
 const serverAndClient = Effect.gen(function* () {
-  const daemon = yield* sharedDaemon();
-  yield* daemon.start();
-  const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
-  const client = yield* daemon.signInAs("bob");
+  const sharnessd = yield* sharedServer();
+  yield* sharnessd.start();
+  const server = yield* sharnessd.signInAs(SERVER_AGENT_OWNER);
+  const client = yield* sharnessd.signInAs("bob");
   return { server, client };
 });
 
@@ -79,10 +79,10 @@ it(
   "offers the inbox event by poll, push and webhook, and delivers a polling host the entries after its cursor",
   processTrace(
     Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* daemon.start();
-      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
-      const client = yield* daemon.signInAs("bob");
+      const sharnessd = yield* sharedServer();
+      yield* sharnessd.start();
+      const server = yield* sharnessd.signInAs(SERVER_AGENT_OWNER);
+      const client = yield* sharnessd.signInAs("bob");
       yield* send(client, { text: opening });
       const listed = yield* Effect.tryPromise(() => client.events.list());
       expect(listed.events).toMatchObject([

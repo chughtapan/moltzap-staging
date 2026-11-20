@@ -61,7 +61,7 @@ export class DatabaseUrlMissingError extends Data.TaggedError(
   "DatabaseUrlMissingError",
 ) {
   override get message(): string {
-    return "Set SHARNESS_DATABASE_URL to the database the daemon uses";
+    return "Set SHARNESS_DATABASE_URL to the database the server uses";
   }
 }
 
@@ -83,8 +83,8 @@ export class DatabasePreparationError extends Data.TaggedError(
 }> {
   override get message(): string {
     return this.reason === "schema"
-      ? "The database holds tables that are not this daemon's; give the daemon an empty database"
-      : "The daemon could not create its tables; check that SHARNESS_DATABASE_URL names a reachable database its login may create tables in";
+      ? "The database holds tables that are not this server's; give the server an empty database"
+      : "The server could not create its tables; check that SHARNESS_DATABASE_URL names a reachable database its login may create tables in";
   }
 }
 
@@ -744,7 +744,7 @@ export const serverFactory = Effect.fn("serverFactory")(function* (
                   content: [
                     {
                       type: "text" as const,
-                      text: "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+                      text: "The server could not complete this call. Try again; if it keeps failing, check the server's log.",
                     },
                   ],
                 }),

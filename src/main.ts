@@ -143,10 +143,10 @@ type Settings = Omit<
  * The paths the settings file names resolve against its own directory,
  * whatever the working directory.
  */
-const loadSettings = Effect.fn("loadDaemonSettings")(function* () {
+const loadSettings = Effect.fn("loadSettings")(function* () {
   const settingsPath = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
     Effect.mapError(() =>
-      refused("Set SHARNESS_CONFIG_FILE to the daemon settings file"),
+      refused("Set SHARNESS_CONFIG_FILE to the server settings file"),
     ),
   );
   const filesystem = yield* FileSystem.FileSystem;
@@ -157,7 +157,7 @@ const loadSettings = Effect.fn("loadDaemonSettings")(function* () {
       }),
     ),
     Effect.mapError(() =>
-      refused("The daemon settings file is unreadable or invalid"),
+      refused("The server settings file is unreadable or invalid"),
     ),
   );
   const settingsDirectory = dirname(resolve(settingsPath));
@@ -219,7 +219,7 @@ const listen = Effect.fn("listen")(function* (
   }).pipe(Effect.orElseSucceed(() => undefined));
   if (typeof metadata?.jwks_uri !== "string") {
     return yield* refused(
-      `The OAuth issuer ${issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
+      `The OAuth issuer ${issuer} did not answer with its configuration. Check authentication.issuer and that the server can reach it.`,
     );
   }
   const keys = createRemoteJWKSet(new URL(metadata.jwks_uri));
@@ -278,7 +278,7 @@ const listen = Effect.fn("listen")(function* (
     listener.once("error", () => {
       resume(
         refused(
-          `The daemon could not listen on ${host}:${port}. Stop the process that uses the port, or set another port.`,
+          `The server could not listen on ${host}:${port}. Stop the process that uses the port, or set another port.`,
         ),
       );
     });
@@ -292,7 +292,7 @@ const listen = Effect.fn("listen")(function* (
 const HELP_MESSAGE = [
   "Usage: sharnessd [--help]",
   "",
-  "SHARNESS_CONFIG_FILE: JSON daemon settings file",
+  "SHARNESS_CONFIG_FILE: JSON server settings file",
   "SHARNESS_DATABASE_URL: PostgreSQL connection URL",
   "SHARNESS_DECISION_PROVIDER_KEY: API key of the message policy's decision provider",
   "Standard OTEL_* variables configure telemetry.",
@@ -300,7 +300,7 @@ const HELP_MESSAGE = [
 
 /** Printed for a startup failure that names no setting of its own. */
 const UNEXPLAINED_FAILURE =
-  "The daemon could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL; run sharnessd --help for what each must hold.";
+  "The server could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL; run sharnessd --help for what each must hold.";
 
 /** Prints one line to standard error and makes the process exit unsuccessfully. */
 const exitUnsuccessfully = (line: string) =>
@@ -384,7 +384,7 @@ const serve = Effect.gen(function* () {
   return yield* Effect.never;
 }).pipe(
   Effect.scoped,
-  Effect.withSpan("runDaemon"),
+  Effect.withSpan("serve"),
   Effect.provide(Layer.merge(NodeFileSystem.layer, spanExport)),
 );
 

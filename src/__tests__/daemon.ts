@@ -205,7 +205,7 @@ export const inboxOf = (agent: Pick<SignedIn, "mcp">) =>
 function connect(answer: (request: Request) => ReturnType<typeof fetch>) {
   return Effect.gen(function* () {
     const mcp = new Client(
-      { name: "daemon-test", version: "1" },
+      { name: "server-test", version: "1" },
       { versionNegotiation: { mode: { pin: "2026-07-28" } } },
     );
     const transport = new StreamableHTTPClientTransport(endpoint, {
