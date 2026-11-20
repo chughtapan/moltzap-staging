@@ -28,7 +28,7 @@ which excludes commas and colons. Conversations contain sender and peer.
 Self-only addressing is invalid.
 
 The daemon validates the destination and resolves the peer before accepting
-a send. Invalid destinations fail as invalid arguments or with `membership-invalid`.
+a send. Invalid destinations fail as invalid arguments or with `invalid-address`.
 Resolution names a peer the daemon does not have with
 `unknown-agent`. These failures create no message.
 

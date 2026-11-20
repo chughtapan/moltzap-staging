@@ -357,23 +357,17 @@ const complianceQuestion = {
 const jevUrl = "https://api.typesafe.ai/v1/systemone";
 /** The most bytes of a response body that are read. */
 const maximumResponseBytes = 1_048_576;
+/** What is read of Jev's response: each answer's choice and probabilities. */
 const jevResponse = Schema.Struct({
-  model: Schema.NonEmptyTrimmedString,
   answers: Schema.Record({
     key: Schema.NonEmptyTrimmedString,
     value: Schema.Struct({
-      type: Schema.Literal("choice"),
       choice: Schema.NonEmptyTrimmedString,
       probabilities: Schema.Record({
         key: Schema.NonEmptyTrimmedString,
         value: Schema.Number.pipe(Schema.between(0, 1)),
       }),
-      confidence: Schema.optional(Schema.Number.pipe(Schema.between(0, 1))),
     }),
-  }),
-  usage: Schema.Record({
-    key: Schema.NonEmptyTrimmedString,
-    value: Schema.NonNegativeInt,
   }),
 });
 
@@ -950,7 +944,6 @@ function jevDecisionProvider(options: {
     }
     const { answers } = yield* Schema.decodeUnknown(
       Schema.parseJson(jevResponse),
-      { onExcessProperty: "error" },
     )(body).pipe(Effect.catchAll(failed(false)));
     return { answers };
   });

@@ -27,7 +27,12 @@ import {
   mcpFixture,
   mcpRequest,
 } from "../__tests__/mcp-fixtures.js";
-import { AgentAddress, FirewallRefusal, SendError } from "./agent.js";
+import {
+  AddressError,
+  AgentAddress,
+  FirewallRefusal,
+  SendError,
+} from "./agent.js";
 import { serveMcp } from "./server.js";
 
 const response = Schema.parseJson(
@@ -320,48 +325,23 @@ it("answers a failed call with the failure's message and its fields", () =>
         { numRuns: 25 },
       ),
     );
-    for (const [to, fields] of [
-      [
-        "agent:nobody",
-        {
-          reason: "unknown-agent",
-          detail:
-            "This daemon has no agent named agent:nobody. Check the name with its owner.",
-        },
-      ],
-      ["agent:alice", { reason: "membership-invalid" }],
+    for (const [name, address] of [
+      ["send_message", { to: "agent:nobody", text: "hello" }],
+      ["send_message", { to: "agent:alice", text: "hello" }],
+      ["read_conversation", { address: "agent:nobody" }],
+      ["read_conversation", { address: "agent:alice" }],
     ] as const) {
-      expect(
-        yield* toolCall(fixture, { ...send, arguments: { to, text: "hello" } }),
-      ).toEqual({
+      const named = "to" in address ? address.to : address.address;
+      const failure = new AddressError({
+        reason: named === "agent:alice" ? "invalid-address" : "unknown-agent",
+        address: named,
+      });
+      expect(yield* toolCall(fixture, { name, arguments: address })).toEqual({
         isError: true,
-        content: [{ text: new SendError(fields).message }],
-        structuredContent: fields,
+        content: [{ text: failure.message }],
+        structuredContent: { reason: failure.reason, address: named },
       });
     }
-    expect(
-      yield* toolCall(fixture, {
-        name: "read_conversation",
-        arguments: { address: "agent:nobody" },
-      }),
-    ).toEqual({
-      isError: true,
-      content: [
-        {
-          text: "reading failed: an agent the address names is not a known agent",
-        },
-      ],
-      structuredContent: { reason: "unknown-agent" },
-    });
-    expect(
-      yield* toolCall(fixture, {
-        name: "read_conversation",
-        arguments: { address: "agent:alice" },
-      }),
-    ).toMatchObject({
-      isError: true,
-      structuredContent: { reason: "invalid-address" },
-    });
   }));
 
 it("answers a call that dies without the defect's text, and a send that dies as one whose outcome is unknown", () =>
