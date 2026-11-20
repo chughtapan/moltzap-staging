@@ -1,153 +1,35 @@
 /**
- * @file The daemon admits owner-bound JWTs verified against a real issuer
- * key-set endpoint; MCP clients discover the tools of their agent's role and
- * read each call's result or failure; and agents observe sends and their
- * checks, the inbox, history and conversations through those tools.
+ * @file What agents observe of one daemon through their tools: the tools of
+ * their role, each call's result or failure, sends and their checks, the
+ * inbox, history and conversations; and what opening a daemon does to its
+ * database.
  */
 
-import {
-  HttpClient,
-  HttpClientError,
-  HttpClientResponse,
-  HttpServerResponse,
-} from "@effect/platform";
-import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import {
+  Array as Arr,
   Deferred,
   Effect,
   Either,
-  Exit,
   FastCheck as fc,
   Fiber,
-  Scope,
-  Stream,
+  Order,
   Struct,
 } from "effect";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
-import { createServer } from "node:http";
 import { expect } from "vitest";
-import type { DecisionProvider } from "../firewall.js";
+import type { DecisionProvider, Firewall } from "./firewall.js";
 import {
   callTool,
   decisionState,
   inboxOf,
   inProcessDaemon,
   send,
-} from "../__tests__/daemon.js";
-import { answersTo, type TestPolicy } from "../__tests__/firewall-fixtures.js";
-import { requiredScope } from "../__tests__/test.js";
-import { FirewallRefusal } from "../conversations.js";
-import { compileNorm } from "../norms/compiler.js";
-import { serveMcp } from "./server.js";
-
-/** The subject of every owner with an agent on `daemon`. */
-const ownersOf = (
-  daemon: Effect.Effect.Success<ReturnType<typeof inProcessDaemon>>,
-) =>
-  daemon.sql<{
-    subject: string;
-  }>`SELECT subject FROM agent_cards ORDER BY subject`.pipe(
-    Effect.map((rows) => rows.map((row) => row.subject)),
-    Effect.orDie,
-  );
-
-/** A scope that begins with the configured one and goes on past it. */
-const longerScope = fc
-  .stringMatching(/^[a-z:]{1,3}$/u)
-  .map((more) => `${requiredScope}${more}`);
-
-/** Claims the resource admits: any subject, and the configured scope anywhere among those granted. */
-const admissible = fc.record({
-  subject: fc.string({ minLength: 1 }),
-  granted: fc
-    .tuple(fc.array(longerScope), fc.array(longerScope))
-    .map(([before, after]) => [...before, requiredScope, ...after]),
-});
-
-/** One claim that puts a token outside the resource's authority. */
-const defect = fc.oneof(
-  fc.record({ subject: fc.constant("") }),
-  fc.record({
-    audience: fc
-      .webUrl()
-      .filter((url) => url !== "https://mcp.example.test/mcp"),
-  }),
-  fc.record({ granted: fc.array(longerScope) }),
-  fc.record({ secondsLeft: fc.integer({ min: -3600, max: 0 }) }),
-);
-
-/** Checks `rule` against generated claims. */
-const forAll = <Claims>(
-  claims: fc.Arbitrary<Claims>,
-  rule: (claims: Claims) => Effect.Effect<void>,
-) =>
-  Effect.tryPromise(() =>
-    fc.assert(
-      fc.asyncProperty(claims, (each) => Effect.runPromise(rule(each))),
-    ),
-  );
-
-it("answers a token granted the scope from the agent of its subject", () =>
-  Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon();
-    yield* forAll(admissible, ({ subject, granted }) =>
-      Effect.gen(function* () {
-        const response = yield* daemon.request(
-          yield* daemon.token(subject, { scope: granted.join(" ") }),
-          "server/discover",
-        );
-        expect(response.status).toBe(200);
-        expect(yield* ownersOf(daemon)).toContain(subject);
-      }),
-    );
-  }));
-
-it("refuses a token with an empty subject, another audience, no grant of the scope or no time left", () =>
-  Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon();
-    yield* forAll(defect, (claim) =>
-      Effect.gen(function* () {
-        const token = yield* daemon.issuer
-          .token(
-            "subject" in claim ? claim.subject : "owner",
-            "audience" in claim ? claim.audience : daemon.resource.href,
-            {
-              ...("granted" in claim ? { scope: claim.granted.join(" ") } : {}),
-              ...("secondsLeft" in claim
-                ? { secondsLeft: claim.secondsLeft }
-                : {}),
-            },
-          )
-          .pipe(Effect.orDie);
-        const response = yield* daemon.request(token, "server/discover");
-        expect(response.ok).toBe(false);
-        expect(yield* ownersOf(daemon)).toEqual(["alice"]);
-      }),
-    );
-  }));
-
-it(
-  "closes an admitted stream at token expiry without closing later requests",
-  () =>
-    Effect.gen(function* () {
-      const daemon = yield* inProcessDaemon();
-      const response = yield* daemon.request(
-        yield* daemon.token("alice", { secondsLeft: 2 }),
-        "subscriptions/listen",
-        { notifications: { toolsListChanged: true } },
-      );
-      expect(response.status).toBe(200);
-      const body = yield* Effect.tryPromise(() => response.text());
-      expect(body).toContain("notifications/subscriptions/acknowledged");
-      const later = yield* daemon.request(
-        yield* daemon.token("alice"),
-        "server/discover",
-      );
-      expect(later.status).toBe(200);
-    }),
-  15000,
-);
+} from "./__tests__/daemon.js";
+import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
+import { openTestDatabase } from "./__tests__/test.js";
+import { AgentName } from "./messages.js";
+import { compileNorm } from "./norms/compiler.js";
+import { openDaemon } from "./server.js";
 
 it("gives the server agent its tools, and a status result that names the agent", () =>
   Effect.gen(function* () {
@@ -250,12 +132,18 @@ it("answers a failed call with the failure's message and its fields", () =>
     });
     const alice = yield* daemon.signInAs("alice");
     const bob = yield* daemon.signInAs("bob");
+    const said: Readonly<Record<string, string>> = {
+      chk_1:
+        "Error: Send a greeting first. Check: chk_1, rule shape; rule-violation.",
+      chk_2:
+        "Error: The policy check could not settle whether the message is allowed. Check: chk_2; unresolved-evidence.",
+    };
     for (const fields of refusals) {
       expect(
         yield* send(alice, { to: bob.address, text: "hello" }).pipe(
           Effect.flip,
         ),
-      ).toEqual({ ...fields, message: new FirewallRefusal(fields).message });
+      ).toEqual({ ...fields, message: said[fields.checkId] });
     }
     for (const [name, input] of [
       ["send_message", { to: "agent:nobody", text: "hello" }],
@@ -334,56 +222,18 @@ it("interrupts only the aborted call, whose conversation the next send then uses
     expect(yield* send(alice, hello)).toMatchObject({ address: bob.address });
   }));
 
-const boundPort = Effect.gen(function* () {
-  const server = yield* NodeHttpServer.make(createServer, {
-    host: "127.0.0.1",
-    port: 0,
+/** A daemon opened on `database`, with Alice as its server agent behind a firewall that allows everything. */
+const openOn = (
+  database: Effect.Effect.Success<ReturnType<typeof openTestDatabase>>,
+) =>
+  openDaemon(database.url, {
+    owner: { issuer: "urn:social-harness:test", subject: "alice" },
+    name: AgentName.make("alice"),
+    firewall: () => ({
+      checkIncoming: () => Effect.succeed({ kind: "allowed" }),
+      checkOutgoing: () => Effect.succeed({ kind: "allowed" }),
+    }),
   });
-  if (server.address._tag !== "TcpAddress") {
-    return yield* Effect.dieMessage("Expected TCP listener");
-  }
-  return server.address.port;
-});
-
-it("reports an occupied port before declaring the listener ready", () =>
-  Effect.gen(function* () {
-    const port = yield* boundPort;
-    expect(
-      yield* serveMcp(
-        port,
-        Effect.succeed(HttpServerResponse.empty()),
-        "127.0.0.1",
-      ).pipe(Effect.flip),
-    ).toMatchObject({ _tag: "ServeError" });
-  }));
-
-it("closes an active event stream with the listener's scope", () =>
-  Effect.gen(function* () {
-    const port = yield* Effect.scoped(boundPort);
-    const scope = yield* Scope.make();
-    const app = Effect.succeed(
-      HttpServerResponse.stream(
-        Stream.concat(Stream.make("active"), Stream.never).pipe(
-          Stream.encodeText,
-        ),
-      ),
-    );
-    yield* serveMcp(port, app, "127.0.0.1").pipe(
-      Effect.provideService(Scope.Scope, scope),
-    );
-    const url = `http://127.0.0.1:${port}`;
-    yield* HttpClient.get(url).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.provide(NodeHttpClient.layer),
-    );
-    yield* Scope.close(scope, Exit.void).pipe(Effect.timeout("2 seconds"));
-    expect(
-      yield* HttpClient.get(url).pipe(
-        Effect.provide(NodeHttpClient.layer),
-        Effect.flip,
-      ),
-    ).toBeInstanceOf(HttpClientError.RequestError);
-  }));
 
 /** The one rule of every policy here. */
 const privacy = {
@@ -668,11 +518,173 @@ it("lists every conversation once, in address order", () =>
   Effect.gen(function* () {
     const daemon = yield* inProcessDaemon();
     const alice = yield* daemon.signInAs("alice");
-    for (const name of ["peer-2", "peer-10", "peer-1", "peer-10"]) {
-      yield* send(yield* daemon.signInAs(name), { text: "Hello" });
+    const addresses: string[] = [];
+    for (const owner of ["one", "two", "three", "two"]) {
+      const client = yield* daemon.signInAs(owner);
+      yield* send(client, { text: "Hello" });
+      addresses.push(client.address);
     }
 
     expect(yield* callTool(alice, "list_conversations")).toEqual({
-      addresses: ["agent:peer-1", "agent:peer-10", "agent:peer-2"],
+      addresses: [...new Set(addresses)].sort(Order.string),
     });
+  }));
+
+it("prepares an empty database and leaves a prepared one as it is", () =>
+  Effect.gen(function* () {
+    const database = yield* openTestDatabase();
+    const first = yield* openOn(database);
+    const again = yield* openOn(database);
+    expect(again.serverAgent).toEqual(first.serverAgent);
+    expect(yield* database.sql`SELECT * FROM agent_cards`).toHaveLength(1);
+  }));
+
+it("rejects a database that holds other tables without changing their records", () =>
+  Effect.gen(function* () {
+    const database = yield* openTestDatabase();
+    yield* database.sql`CREATE TABLE retained (value TEXT NOT NULL)`;
+    yield* database.sql`INSERT INTO retained VALUES ('prior installation')`;
+    expect(yield* openOn(database).pipe(Effect.flip)).toMatchObject({
+      reason: "schema",
+    });
+    expect(yield* database.sql`SELECT * FROM retained`).toEqual([
+      { value: "prior installation" },
+    ]);
+    expect(
+      yield* database.sql`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`,
+    ).toEqual([{ name: "retained" }]);
+  }));
+
+const accounts = fc.array(
+  fc.record({
+    issuer: fc.constantFrom("https://issuer.example", "https://other.example"),
+    subject: fc.constantFrom("owner", "another", "third"),
+  }),
+  { minLength: 1, maxLength: 6 },
+);
+
+it.prop(
+  "binds each issuer and subject pair to one agent of its own, however many sign in at once or again",
+  [accounts],
+  ([owners]) =>
+    Effect.gen(function* () {
+      const daemon = yield* inProcessDaemon();
+      const distinct = new Set(
+        owners.map((owner) => `${owner.issuer} ${owner.subject}`),
+      ).size;
+      const agentOf = (owner: (typeof owners)[number]) =>
+        Effect.map(daemon.signInAs(owner), (signedIn) => signedIn.agent);
+      const agents = yield* Effect.forEach(owners, agentOf, {
+        concurrency: owners.length,
+      });
+      const again = yield* Effect.forEach(owners, agentOf, { concurrency: 1 });
+      expect(again).toEqual(agents);
+      expect(
+        new Set(
+          owners.map(
+            (owner, index) =>
+              `${owner.issuer} ${owner.subject} ${agents[index]?.agentId ?? ""}`,
+          ),
+        ).size,
+      ).toBe(distinct);
+      expect(new Set(agents.map((agent) => agent.agentId)).size).toBe(distinct);
+    }),
+  { fastCheck: { numRuns: 10 } },
+);
+
+/** A daemon whose firewall withholds exactly the messages whose text is `withheld`, with Alice and two clients signed in. */
+const withholdingByText = Effect.gen(function* () {
+  const decide: Firewall["checkIncoming"] = (message) =>
+    Effect.succeed(
+      message.text === "withheld"
+        ? {
+            kind: "refused",
+            checkId: "chk_withheld",
+            reason: "rule-violation",
+            feedback: [],
+          }
+        : { kind: "allowed" },
+    );
+  const daemon = yield* inProcessDaemon({
+    firewall: { checkIncoming: decide },
+  });
+  const alice = yield* daemon.signInAs("alice");
+  const clients = {
+    bob: yield* daemon.signInAs("bob"),
+    carol: yield* daemon.signInAs("carol"),
+  };
+  /** The ids of the messages Alice may read after `cursor`, in read order, with the cursor to read on from. */
+  const inbox = (cursor?: string) =>
+    Effect.map(
+      callTool(alice, "receive_messages", cursor ? { cursor } : {}),
+      ({ entries, nextCursor }) => ({
+        ids: entries.map(({ message }) => message.msgId),
+        nextCursor,
+      }),
+    );
+  return { clients, inbox };
+});
+
+const steps = fc.array(
+  fc.oneof(
+    fc.record({
+      step: fc.constant("send" as const),
+      author: fc.constantFrom("bob" as const, "carol" as const),
+      readable: fc.boolean(),
+    }),
+    fc.record({
+      step: fc.constant("read" as const),
+      /** Which earlier read's cursor the read presents, counted back from the latest; none when absent. */
+      cursor: fc.option(fc.nat({ max: 5 }), { nil: undefined }),
+    }),
+  ),
+  { maxLength: 40 },
+);
+
+it("returns, for any cursor a read gave, every message that became readable since that read in the order it did, and none for a read without a cursor", () =>
+  Effect.gen(function* () {
+    const { clients, inbox } = yield* withholdingByText;
+    /** The ids of the messages alice may read, in the order they were stored. */
+    const expected: string[] = [];
+    /** Each cursor a read returned, with the count of messages readable when it did. */
+    const cursors: Array<{ cursor: string; through: number }> = [];
+    const holds = fc.asyncProperty(steps, (sequence) =>
+      Effect.gen(function* () {
+        for (const step of sequence) {
+          if (step.step === "send") {
+            const { id } = yield* send(clients[step.author], {
+              text: step.readable ? "hello" : "withheld",
+            });
+            if (step.readable) {
+              expected.push(id);
+            }
+          } else {
+            const presented =
+              step.cursor === undefined
+                ? undefined
+                : cursors.at(-1 - step.cursor);
+            const read = yield* inbox(presented?.cursor);
+            expect(read.ids).toEqual(
+              expected.slice(presented?.through ?? expected.length),
+            );
+            cursors.push({ cursor: read.nextCursor, through: expected.length });
+          }
+        }
+      }).pipe(Effect.runPromise),
+    );
+    yield* Effect.tryPromise(() => fc.assert(holds, { numRuns: 30 }));
+  }));
+
+it("gives messages stored at the same time distinct places in their recipient's read order", () =>
+  Effect.gen(function* () {
+    const { clients, inbox } = yield* withholdingByText;
+    const sent = yield* Effect.forEach(
+      Arr.makeBy(12, (index) => (index % 2 === 0 ? "bob" : "carol")),
+      (author) =>
+        Effect.map(send(clients[author], { text: "hello" }), ({ id }) => id),
+      { concurrency: 12 },
+    );
+    const read = yield* inbox("0");
+    expect(new Set(read.ids)).toEqual(new Set(sent));
+    expect(read.nextCursor).toBe("12");
   }));

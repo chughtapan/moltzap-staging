@@ -54,9 +54,9 @@ import {
   requiredScope,
   restrictedLogin,
 } from "../../src/__tests__/test.js";
-import { openConversations } from "../../src/conversations.js";
 import { makeFirewall } from "../../src/firewall.js";
 import { AgentName } from "../../src/messages.js";
+import { openDaemon } from "../../src/server.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
@@ -316,7 +316,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
  * may not.
  */
 const preparedBy = (url: Redacted.Redacted, issuer: string) =>
-  openConversations(url, {
+  openDaemon(url, {
     owner: { issuer, subject: SERVER_AGENT_OWNER },
     name: AgentName.make(SERVER_AGENT_NAME),
     firewall: (me) => makeFirewall({ me, historyLimit: 1 }),
