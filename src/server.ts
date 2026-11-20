@@ -146,7 +146,6 @@ const prepareTables = Effect.fn("prepareDatabase")(
   ),
 );
 
-/** One row of `messages`. */
 const storedMessages = Schema.Array(
   Schema.Struct({
     sequence: Schema.Number,
@@ -162,7 +161,6 @@ const storedMessages = Schema.Array(
 );
 type StoredMessage = (typeof storedMessages.Type)[number];
 
-/** At most `limit` of the stored messages that meet `where`, oldest first. */
 const messagesWhere = (
   sql: SqlClient.SqlClient,
   where: Statement.Fragment,
@@ -178,7 +176,6 @@ const messagesWhere = (
 
 const savedRecord = Schema.parseJson(checkRecordSchema);
 
-/** Saves what the server agent's firewall concluded of one message. */
 const storeDecision = (sql: SqlClient.SqlClient, record: CheckRecord) =>
   Effect.flatMap(
     Schema.encode(savedRecord)(record),
@@ -189,7 +186,6 @@ const storeDecision = (sql: SqlClient.SqlClient, record: CheckRecord) =>
       })}`,
   ).pipe(Effect.orDie);
 
-/** Stores one message of `client`'s conversation with the decision of its check, when it had one. */
 const storeMessage = Effect.fn("saveMessage")(function* (
   sql: SqlClient.SqlClient,
   client: AgentName,
@@ -219,7 +215,6 @@ const storeMessage = Effect.fn("saveMessage")(function* (
   }
 }, Effect.orDie);
 
-/** The record of each of the latest hundred checks of the server agent's firewall at or after `since`, newest first. */
 const readDecisions = Effect.fn("readDecisions")(function* (
   sql: SqlClient.SqlClient,
   since: number,
@@ -233,7 +228,6 @@ const readDecisions = Effect.fn("readDecisions")(function* (
   return { decisions: saved.map(({ record }) => record) };
 }, Effect.orDie);
 
-/** The most inbox entries or history records one page holds. */
 const PAGE_SIZE = 50;
 
 /** One message as a host reads it, with the guidance the firewall gave the server agent with one it received. */
@@ -243,7 +237,6 @@ const InboxEntry = Schema.Struct({
 });
 type InboxEntry = typeof InboxEntry.Type;
 
-/** A send that cannot be a message. The host may show `message` to its agent. */
 class SendError extends Data.TaggedError("SendError")<{
   readonly reason: "content-invalid";
 }> {
@@ -260,11 +253,9 @@ const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
 };
 
 /**
- * A send the server agent's firewall refused. The sender can act on
- * registered feedback without seeing the check's evidence. `rule` and
- * `detail` are those of a structure check that refused or passed the message.
- * The message states each deciding rule's registered feedback as an error, or
- * the reason when there is none, then the check.
+ * A send the server agent's firewall refused. `rule` and `detail` are those
+ * of a structure check. The message states each deciding rule's feedback as
+ * an error, or the reason when there is none, then the check.
  */
 class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly reason: "firewall-refused";
@@ -287,7 +278,6 @@ class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   }
 }
 
-/** The refusal a send fails with when the firewall refused its message. */
 const refusalOf = (refused: {
   readonly checkId: string;
   readonly reason: FirewallRefusalReason;
@@ -330,7 +320,6 @@ const sendOutcomeUnknown = new SendOutcomeUnknown({
   reason: "outcome-unknown",
 });
 
-/** One inbox read: the cursor to read after and, in seconds, how long to wait for an entry when none follows it. */
 interface ReceiveRequest {
   readonly cursor?: string;
   readonly wait?: number;
@@ -348,7 +337,6 @@ const noArguments = Schema.Record({
   jsonSchema: { type: "object", properties: {}, additionalProperties: false },
 });
 
-/** The text of a message to send and the id of the message it answers. */
 const sentFields = {
   text: Schema.propertySignature(wellFormedString).annotations({
     description: "The message text.",
@@ -359,10 +347,8 @@ const sentFields = {
   }),
 };
 
-/** A send returns the message's id. Accepted work continues independently of the caller's lifetime. */
 const SendResult = Schema.Struct({ id: MsgId });
 
-/** A page of one conversation's messages. Absence of nextCursor marks its end. */
 const historyPage = Schema.Struct({
   records: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
   nextCursor: Schema.optional(Cursor),
@@ -374,7 +360,6 @@ const historyPage = Schema.Struct({
  */
 const MAXIMUM_WAIT_SECONDS = 50;
 
-/** How a message states one act of a norm, as every reader of the norms needs it. */
 const ACT_SYNTAX =
   "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
 
@@ -388,10 +373,8 @@ const requestRuntime = new AsyncLocalStorage<Runtime.Runtime<never>>();
 /** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
 const INBOX_CHECK_MILLISECONDS = 1000;
 
-/** The longest a webhook subscription lives without a refresh. */
 const WEBHOOK_TTL_MILLISECONDS = 30 * 60_000;
 
-/** The name of the event whose occurrences are an agent's inbox entries, in read order. */
 const INBOX_EVENT = "org.social-harness/inbox.pending";
 
 /**
@@ -402,20 +385,15 @@ const INBOX_EVENT = "org.social-harness/inbox.pending";
 const STORE_LOCK = 1;
 
 /**
- * Opens the daemon on the database at `url` until the scope closes: connects
- * and prepares the tables. The agent of the owner `server.issuer` and
- * `server.subject` name is the server agent, called `server.name`, whose
- * firewall checks every message; every other owner's agent is a client,
- * named from its owner. A URL that reaches no PostgreSQL server fails the
- * connection.
- *
- * Returns the MCP handler: for an admitted request, whose `authInfo` names
+ * Opens the daemon on the database at `url` until the scope closes, and
+ * returns its MCP handler: for an admitted request, whose `authInfo` names
  * its owner in `extra.issuer` and `extra.subject`, the web handler that
- * answers as the owner's agent. The SDK parses the request, negotiates the
- * protocol revision, builds an MCP server with the tools of the agent's role
- * and the inbox event, dispatches the method and frames the response. No MCP
- * server outlives a request, and an aborted request ends a call in flight.
+ * answers as the owner's agent. The owner `server.issuer` and
+ * `server.subject` name has the server agent, called `server.name`; every
+ * other owner has a client, named from its issuer and subject. No MCP server
+ * outlives a request, and an aborted request ends a call in flight.
  */
+// eslint-disable-next-line max-lines-per-function -- This function is the scope the tools share: the database client, the firewall, the locks and the wake signal. Each function inside it is under the limit.
 export const openDaemon = Effect.fn("openDaemon")(function* (
   url: Redacted.Redacted,
   server: {
@@ -486,18 +464,15 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
 
   /**
    * Sends one message in `client`'s conversation, from the server agent when
-   * `author` is its name and from the client otherwise, under the
-   * conversation's lock: a check reads the conversation's earlier messages,
-   * so its messages are checked and stored one at a time, while other
-   * conversations do not wait. The server agent writes only to a client that
-   * has written to it. The firewall checks the message as one its agent sends
-   * or is sent. A message the server agent may not send, or one whose check
-   * could not run, fails the send and is not stored. Otherwise one
-   * transaction stores the message with the decision and, for a message
-   * withheld from the server agent, the firewall's reply to its sender with
-   * the decision that allows it. No transaction is open while a check runs. A
-   * waiting read wakes once a message it may read is stored. Each call
-   * creates a new message, so retrying an uncertain send can duplicate it.
+   * `author` is its name and from the client otherwise. A check reads the
+   * conversation's earlier messages, so the conversation's lock is held from
+   * that read until the message is stored, while other conversations do not
+   * wait. No transaction is open while a check runs. A message the server
+   * agent may not send, or one whose check could not run, fails the send and
+   * is not stored. A message withheld from the server agent is stored with
+   * `allowed` false, in one transaction with the firewall's reply to its
+   * sender. The transaction takes the store lock first, so messages commit
+   * in `sequence` order.
    */
   const send = Effect.fn("send")(
     function* (
@@ -595,12 +570,9 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
   );
 
   /**
-   * At most `limit` of the inbox entries of the agent named `reader` after
-   * `cursor`, in the order they were stored, with the cursor to read on from
-   * and whether more entries follow. The server agent's inbox holds the
-   * messages its firewall allowed from every client; a client's holds the
-   * server agent's messages to it. Without a cursor the read starts from the
-   * newest message and returns none.
+   * The server agent's inbox holds the messages its firewall allowed from
+   * every client; a client's holds the server agent's messages to it. Without
+   * a cursor the read starts after the newest message and returns none.
    */
   const readInbox = Effect.fn("readInbox")(function* (
     reader: AgentName,
@@ -625,14 +597,7 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     };
   }, Effect.orDie);
 
-  /**
-   * A page of `reader`'s inbox entries after `cursor`, with the cursor that
-   * reads on from the last of them. Without a cursor the read starts from
-   * now. With `wait` seconds and no entry to return, it reads once more when
-   * an entry becomes readable or the wait ends; a waiting read subscribes
-   * before it reads, so an entry that becomes readable after the read is not
-   * missed.
-   */
+  /** A waiting read subscribes before it reads, so an entry that becomes readable after the read is not missed. */
   const receive = Effect.fn("receive")(function* (
     reader: AgentName,
     { cursor, wait }: ReceiveRequest,
@@ -656,12 +621,52 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     return yield* read(page.nextCursor);
   }, Effect.scoped);
 
+  /** One check of the inbox event for the agent `principal` names. */
+  const inboxOccurrences = (
+    principal: string | null,
+    after: { readonly cursor: string | null; readonly maxEvents?: number },
+  ) =>
+    Effect.gen(function* () {
+      const page = yield* readInbox(
+        yield* Schema.decodeUnknown(AgentName)(principal),
+        {
+          limit: Math.min(after.maxEvents ?? PAGE_SIZE, PAGE_SIZE),
+          ...(after.cursor === null
+            ? {}
+            : { cursor: yield* Schema.decode(Cursor)(after.cursor) }),
+        },
+      );
+      return {
+        events: (yield* Schema.encode(Schema.Array(InboxEntry))(
+          page.entries,
+        )).map((data) => ({
+          eventId: `${data.message.author}/${data.message.msgId}`,
+          data,
+        })),
+        cursor: page.nextCursor,
+        hasMore: page.hasMore,
+      };
+    });
+
   /**
-   * One page of `client`'s conversation as `reader` may read it, oldest
-   * first, after the cursor an earlier page returned: each message `reader`
-   * sent, and each one it received, with its guidance, unless it was
-   * withheld. A page's `nextCursor` is the place of its last message.
+   * The inbox event: an occurrence is an inbox entry, and a subscription's
+   * cursor is an inbox cursor. The SDK delivers by poll, push and webhook,
+   * and keeps every subscription in memory.
    */
+  const events = new EventsExtension({
+    getPrincipal: ({ http }) => callerOf(http?.authInfo),
+    checkIntervalMs: INBOX_CHECK_MILLISECONDS,
+    webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
+    webhookSender: nodeWebhookSender(),
+  });
+  events.registerEvent(INBOX_EVENT, {
+    description: "An inbox entry: its message and any guidance.",
+    payloadSchema: standard(InboxEntry),
+    check: (...[{ principal, maxEvents, signal }, , cursor]) =>
+      run(inboxOccurrences(principal, { cursor, maxEvents }), { signal }),
+  });
+
+  /** Each message `reader` sent in `client`'s conversation, and each one it received unless it was withheld. */
   const history = Effect.fn("historyRecords")(function* (
     reader: AgentName,
     client: AgentName,
@@ -700,7 +705,6 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
       return yield* history(server.name, client, cursor);
     });
 
-  /** The name of every client with a conversation, in order. */
   const conversations = sql<{
     client: string;
   }>`SELECT DISTINCT client FROM messages`.pipe(
@@ -714,64 +718,79 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     Effect.withSpan("conversationsOf"),
   );
 
-  /**
-   * One check of the inbox event: at most `maxEvents` of the entries after
-   * `cursor` in the inbox of the agent `principal` names, as occurrences.
-   */
-  const inboxOccurrences = (
-    principal: string | null,
-    after: { readonly cursor: string | null; readonly maxEvents?: number },
-  ) =>
-    Effect.gen(function* () {
-      const page = yield* readInbox(
-        yield* Schema.decodeUnknown(AgentName)(principal),
+  const registerSharedTools = (mcp: McpServer, caller: AgentName) => {
+    register(
+      mcp,
+      "status",
+      {
+        description:
+          "Read this agent's name, which is the author of the messages it sends.",
+        input: noArguments,
+        output: Schema.Struct({ agentName: AgentName }),
+        readOnly: true,
+      },
+      () => Effect.succeed({ agentName: caller }),
+    );
+    register(
+      mcp,
+      "receive_messages",
+      {
+        description:
+          "Receive inbox entries in order, each with its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries. Pass wait to wait up to that many seconds when no entry follows the cursor; the call returns as soon as one becomes readable, or with no entries when the wait ends.",
+        input: Schema.Struct({
+          cursor: Schema.optional(Cursor),
+          wait: Schema.optional(
+            Schema.Number.pipe(
+              Schema.positive(),
+              Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
+            ).annotations({
+              description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for an entry when none follows the cursor. Call receive_messages again with nextCursor to keep waiting. Without wait the call returns at once.`,
+            }),
+          ),
+        }),
+        output: Schema.Struct({
+          entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
+          nextCursor: Cursor,
+        }),
+        readOnly: true,
+      },
+      (request) => receive(caller, request),
+    );
+    if (norms !== undefined) {
+      register(
+        mcp,
+        "read_norms",
         {
-          limit: Math.min(after.maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-          ...(after.cursor === null
-            ? {}
-            : { cursor: yield* Schema.decode(Cursor)(after.cursor) }),
+          description: `${
+            caller === server.name
+              ? "List the installed norms and their complete documents: the roles, when each act may be sent and the fields it takes."
+              : "List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them."
+          } ${ACT_SYNTAX}`,
+          input: noArguments,
+          output: Schema.Struct({
+            norms: Schema.Array(
+              Schema.Struct({
+                name: Schema.String,
+                description: Schema.String,
+                document: Schema.String,
+              }),
+            ),
+          }),
+          readOnly: true,
         },
+        () => Effect.succeed({ norms: [...norms] }),
       );
-      return {
-        events: (yield* Schema.encode(Schema.Array(InboxEntry))(
-          page.entries,
-        )).map((data) => ({
-          eventId: `${data.message.author}/${data.message.msgId}`,
-          data,
-        })),
-        cursor: page.nextCursor,
-        hasMore: page.hasMore,
-      };
-    });
+    }
+  };
 
-  /**
-   * The Events extension every request's server is built with. Its one event
-   * type is the inbox of the agent a request is admitted as: an occurrence is
-   * an inbox entry, and a subscription's cursor is the sequence of the last
-   * entry it was sent. The SDK delivers by poll, push and webhook, and keeps
-   * every subscription in memory.
-   */
-  const events = new EventsExtension({
-    getPrincipal: ({ http }) => callerOf(http?.authInfo),
-    checkIntervalMs: INBOX_CHECK_MILLISECONDS,
-    webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
-    webhookSender: nodeWebhookSender(),
-  });
-  events.registerEvent(INBOX_EVENT, {
-    description: "An inbox entry: its message and any guidance.",
-    payloadSchema: standard(InboxEntry),
-    check: (...[{ principal, maxEvents, signal }, , cursor]) =>
-      run(inboxOccurrences(principal, { cursor, maxEvents }), { signal }),
-  });
-
-  /** The server agent's own tools: it names the client of each conversation and reads its firewall's decisions. */
+  /** The server agent names the client of each conversation and reads its firewall's decisions. */
   const registerServerAgentTools = (mcp: McpServer) => {
     register(
       mcp,
       "send_message",
       {
         description:
-          "Send a message to a client that has written to you. Returns id, the message id. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what clients send.",
+          "Send a message to a client. You can write only to a client that has written to you: any other name fails with unknown-agent. Returns id, the message id. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what clients send.",
         input: Schema.Struct({
           to: Schema.propertySignature(AgentName).annotations({
             description:
@@ -827,7 +846,7 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     );
   };
 
-  /** The tools of the client named `client`, which name no recipient and no conversation: both are the server agent. */
+  /** A client names no recipient and no conversation: both are the server agent. */
   const registerClientTools = (mcp: McpServer, client: AgentName) => {
     register(
       mcp,
@@ -855,78 +874,16 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     );
   };
 
-  /** The MCP server for one request, with the inbox event and the tools of `caller`'s role. */
   const requestServer = (caller: AgentName) => {
     const mcp = new McpServer(
       { name: "sharnessd", version: packageVersion },
       { extensions: [events] },
     );
-    register(
-      mcp,
-      "status",
-      {
-        description:
-          "Read this agent's name, which is the author of the messages it sends.",
-        input: noArguments,
-        output: Schema.Struct({ agentName: AgentName }),
-        readOnly: true,
-      },
-      () => Effect.succeed({ agentName: caller }),
-    );
-    register(
-      mcp,
-      "receive_messages",
-      {
-        description:
-          "Receive inbox entries in order, each with its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries. Pass wait to wait up to that many seconds when no entry follows the cursor; the call returns as soon as one becomes readable, or with no entries when the wait ends.",
-        input: Schema.Struct({
-          cursor: Schema.optional(Cursor),
-          wait: Schema.optional(
-            Schema.Number.pipe(
-              Schema.positive(),
-              Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
-            ).annotations({
-              description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for an entry when none follows the cursor. Call receive_messages again with nextCursor to keep waiting. Without wait the call returns at once.`,
-            }),
-          ),
-        }),
-        output: Schema.Struct({
-          entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
-          nextCursor: Cursor,
-        }),
-        readOnly: true,
-      },
-      (request) => receive(caller, request),
-    );
+    registerSharedTools(mcp, caller);
     if (caller === server.name) {
       registerServerAgentTools(mcp);
     } else {
       registerClientTools(mcp, caller);
-    }
-    if (norms !== undefined) {
-      register(
-        mcp,
-        "read_norms",
-        {
-          description: `${
-            caller === server.name
-              ? "List the installed norms and their complete documents: the roles, when each act may be sent and the fields it takes."
-              : "List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them."
-          } ${ACT_SYNTAX}`,
-          input: noArguments,
-          output: Schema.Struct({
-            norms: Schema.Array(
-              Schema.Struct({
-                name: Schema.String,
-                description: Schema.String,
-                document: Schema.String,
-              }),
-            ),
-          }),
-          readOnly: true,
-        },
-        () => Effect.succeed({ norms: [...norms] }),
-      );
     }
     return mcp;
   };
@@ -1012,7 +969,6 @@ interface Failure {
   readonly reason: string;
 }
 
-/** The result of a call that failed with `failure`: its message as the text, and its fields without its tag. */
 function failed(failure: Failure) {
   return {
     isError: true as const,

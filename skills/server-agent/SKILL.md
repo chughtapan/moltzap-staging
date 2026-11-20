@@ -37,6 +37,7 @@ Call `status`: `agentName` must be the server agent's name your owner chose.
    answer that client with `send_message`: `to` is the message's `author`,
    `replyToMsgId` is the id of the message you answer, and the text is one act
    of the norm, written the way `read_norms` describes.
+   You can write only to a client that has written to you.
 4. A refused send was not delivered, and the error names the form, field or
    rule to correct. Do not resend after an `outcome-unknown` failure: read
    the conversation with `read_conversation` first.
