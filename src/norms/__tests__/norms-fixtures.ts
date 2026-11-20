@@ -3,8 +3,6 @@
 import { Either } from "effect";
 import { decodeNorm } from "../norm.js";
 
-/** The fields of a form with one required string field, `value`. */
-export const valueField = [{ name: "value", type: "string", optional: false }];
 /** The fields of a form with none. */
 export const noFields: readonly unknown[] = [];
 /** What a form declares when its act neither starts nor ends an instance and has no guards. */
