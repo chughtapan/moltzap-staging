@@ -250,41 +250,6 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
 });
 
 /**
- * The daemon's Events extension, which every request's server is built with.
- * Its one event type is the inbox of the agent a request is admitted as: an
- * occurrence is an inbox entry, and a subscription's cursor is the read
- * number of the last entry it was sent. The SDK delivers by poll, push and
- * webhook, and keeps every subscription in memory.
- */
-const makeInboxEvents = Effect.fn("makeInboxEvents")(function* (
-  conversations: Conversations,
-) {
-  const run = Runtime.runPromise(yield* Effect.runtime());
-  const events = new EventsExtension({
-    getPrincipal: ({ http }) =>
-      inRequest(
-        Effect.map(
-          admittedAgent(conversations, http?.authInfo),
-          ({ agentId }) => agentId,
-        ),
-      ),
-    checkIntervalMs: INBOX_CHECK_MILLISECONDS,
-    webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
-    webhookSender: nodeWebhookSender(),
-  });
-  events.registerEvent(INBOX_EVENT, {
-    description:
-      "An inbox entry: its conversation address, its message and any guidance.",
-    payloadSchema: standard(InboxEntry),
-    check: (...[{ principal, maxEvents, signal }, , cursor]) =>
-      run(inboxOccurrences(conversations, principal, { cursor, maxEvents }), {
-        signal,
-      }),
-  });
-  return events;
-});
-
-/**
  * The app the listener serves. The MCP SDK validates the Host and Origin
  * headers against the resource's hostname, serves the OAuth discovery
  * documents, and checks the bearer token's scope and expiry; a refusal is the
@@ -507,20 +472,6 @@ function requestServer(
   return mcp;
 }
 
-/**
- * Runs `work` for the MCP SDK in the runtime of the HTTP request's fiber, so
- * its spans keep their parent, and interrupts it when `signal` aborts.
- */
-function inRequest<A>(work: Effect.Effect<A>, signal?: AbortSignal) {
-  return Effect.runPromise(
-    Effect.fromNullable(requestRuntime.getStore()).pipe(
-      Effect.flatMap((runtime) => Effect.provide(work, runtime)),
-      Effect.orDie,
-    ),
-    { signal },
-  );
-}
-
 /** The server agent's tools: it addresses any client and reads its firewall's decisions. */
 function registerServerAgentTools(
   mcp: McpServer,
@@ -680,6 +631,104 @@ function registerConversationTools<
   );
 }
 
+/** The other agent `address` names for `self`. */
+function addressedAgent(
+  conversations: Conversations,
+  self: AgentCard,
+  address: AgentAddress,
+) {
+  return Effect.gen(function* () {
+    const agent = yield* agentNamed(
+      conversations,
+      address.slice(AGENT_ADDRESS_PREFIX.length),
+    );
+    if (agent === undefined) {
+      return yield* new AddressError({ reason: "unknown-agent", address });
+    }
+    if (agent.agentId === self.agentId) {
+      return yield* new AddressError({ reason: "invalid-address", address });
+    }
+    return agent;
+  });
+}
+
+/** An inbox entry as a host reads it: under the address of its message's author. */
+function inboxEntry(entry: InboxEntryOf): typeof InboxEntry.Type {
+  return {
+    address: addressOf(entry.message.author.agentName),
+    message: entry.message,
+    ...(entry.guidance === undefined ? {} : { guidance: entry.guidance }),
+  };
+}
+
+/**
+ * The daemon's Events extension, which every request's server is built with.
+ * Its one event type is the inbox of the agent a request is admitted as: an
+ * occurrence is an inbox entry, and a subscription's cursor is the read
+ * number of the last entry it was sent. The SDK delivers by poll, push and
+ * webhook, and keeps every subscription in memory.
+ */
+function makeInboxEvents(conversations: Conversations) {
+  return Effect.gen(function* () {
+    const run = Runtime.runPromise(yield* Effect.runtime());
+    const events = new EventsExtension({
+      getPrincipal: ({ http }) =>
+        inRequest(
+          Effect.map(
+            admittedAgent(conversations, http?.authInfo),
+            ({ agentId }) => agentId,
+          ),
+        ),
+      checkIntervalMs: INBOX_CHECK_MILLISECONDS,
+      webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
+      webhookSender: nodeWebhookSender(),
+    });
+    events.registerEvent(INBOX_EVENT, {
+      description:
+        "An inbox entry: its conversation address, its message and any guidance.",
+      payloadSchema: standard(InboxEntry),
+      check: (...[{ principal, maxEvents, signal }, , cursor]) =>
+        run(inboxOccurrences(conversations, principal, { cursor, maxEvents }), {
+          signal,
+        }),
+    });
+    return events;
+  }).pipe(Effect.withSpan("makeInboxEvents"));
+}
+
+/**
+ * One check of the inbox event: at most `maxEvents` of the entries after
+ * `cursor` in the inbox of the agent `agentId` names, as occurrences.
+ */
+function inboxOccurrences(
+  conversations: Conversations,
+  agentId: string | null,
+  after: { readonly cursor: string | null; readonly maxEvents?: number },
+) {
+  return Effect.gen(function* () {
+    const page = yield* readInbox(
+      conversations,
+      yield* Effect.fromNullable(agentId),
+      {
+        limit: Math.min(after.maxEvents ?? PAGE_SIZE, PAGE_SIZE),
+        ...(after.cursor === null
+          ? {}
+          : { cursor: yield* Schema.decode(Cursor)(after.cursor) }),
+      },
+    );
+    return {
+      events: (yield* Schema.encode(Schema.Array(InboxEntry))(
+        page.entries.map(inboxEntry),
+      )).map((data) => ({
+        eventId: `${data.message.author.agentId}/${data.message.msgId}`,
+        data,
+      })),
+      cursor: page.nextCursor,
+      hasMore: page.hasMore,
+    };
+  });
+}
+
 /**
  * Registers a tool whose calls `execute` answers. A call runs in the runtime
  * of the HTTP request's fiber and is interrupted when the request is aborted.
@@ -791,64 +840,15 @@ function standard<A, I>(
 }
 
 /**
- * One check of the inbox event: at most `maxEvents` of the entries after
- * `cursor` in the inbox of the agent `agentId` names, as occurrences.
+ * Runs `work` for the MCP SDK in the runtime of the HTTP request's fiber, so
+ * its spans keep their parent, and interrupts it when `signal` aborts.
  */
-function inboxOccurrences(
-  conversations: Conversations,
-  agentId: string | null,
-  after: { readonly cursor: string | null; readonly maxEvents?: number },
-) {
-  return Effect.gen(function* () {
-    const page = yield* readInbox(
-      conversations,
-      yield* Effect.fromNullable(agentId),
-      {
-        limit: Math.min(after.maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-        ...(after.cursor === null
-          ? {}
-          : { cursor: yield* Schema.decode(Cursor)(after.cursor) }),
-      },
-    );
-    return {
-      events: (yield* Schema.encode(Schema.Array(InboxEntry))(
-        page.entries.map(inboxEntry),
-      )).map((data) => ({
-        eventId: `${data.message.author.agentId}/${data.message.msgId}`,
-        data,
-      })),
-      cursor: page.nextCursor,
-      hasMore: page.hasMore,
-    };
-  });
-}
-
-/** An inbox entry as a host reads it: under the address of its message's author. */
-function inboxEntry(entry: InboxEntryOf): typeof InboxEntry.Type {
-  return {
-    address: addressOf(entry.message.author.agentName),
-    message: entry.message,
-    ...(entry.guidance === undefined ? {} : { guidance: entry.guidance }),
-  };
-}
-
-/** The other agent `address` names for `self`. */
-function addressedAgent(
-  conversations: Conversations,
-  self: AgentCard,
-  address: AgentAddress,
-) {
-  return Effect.gen(function* () {
-    const agent = yield* agentNamed(
-      conversations,
-      address.slice(AGENT_ADDRESS_PREFIX.length),
-    );
-    if (agent === undefined) {
-      return yield* new AddressError({ reason: "unknown-agent", address });
-    }
-    if (agent.agentId === self.agentId) {
-      return yield* new AddressError({ reason: "invalid-address", address });
-    }
-    return agent;
-  });
+function inRequest<A>(work: Effect.Effect<A>, signal?: AbortSignal) {
+  return Effect.runPromise(
+    Effect.fromNullable(requestRuntime.getStore()).pipe(
+      Effect.flatMap((runtime) => Effect.provide(work, runtime)),
+      Effect.orDie,
+    ),
+    { signal },
+  );
 }

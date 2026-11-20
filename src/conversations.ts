@@ -263,7 +263,7 @@ export type HistoryRecord =
   | ({ readonly kind: "received" } & InboxEntry);
 
 /** A send that cannot be a message. The host may show `message` to its agent. */
-export class SendError extends Data.TaggedError("SendError")<{
+class SendError extends Data.TaggedError("SendError")<{
   readonly reason: "content-invalid";
 }> {
   override get message(): string {

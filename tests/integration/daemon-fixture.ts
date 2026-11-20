@@ -54,6 +54,9 @@ import {
   requiredScope,
   restrictedLogin,
 } from "../../src/__tests__/test.js";
+import { openConversations } from "../../src/conversations.js";
+import { makeFirewall } from "../../src/firewall.js";
+import { AgentName } from "../../src/messages.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
@@ -308,6 +311,21 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   );
 
 /**
+ * Creates the daemon's tables and its server agent as the login of `url`,
+ * which may create tables, so the daemon serves them through a login that
+ * may not.
+ */
+const preparedBy = (url: Redacted.Redacted, issuer: string) =>
+  openConversations(url, {
+    owner: { issuer, subject: SERVER_AGENT_OWNER },
+    name: AgentName.make(SERVER_AGENT_NAME),
+    firewall: (me) => makeFirewall({ me, historyLimit: 1 }),
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError(failed("could not prepare the daemon's database")),
+  );
+
+/**
  * Prepares one daemon whose server agent's owner and clients' owners sign in
  * with tokens from its own test issuer. The scope removes its directory and
  * stops its issuer and every process and connection it started.
@@ -324,6 +342,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
   const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
   const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
   const database = yield* openTestDatabase();
+  yield* preparedBy(database.url, issuer.issuer);
   const restrictedUrl = yield* restrictedLogin(database);
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
