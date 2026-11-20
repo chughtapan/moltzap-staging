@@ -129,6 +129,7 @@
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
+    "@modelcontextprotocol/node": "catalog:",
     "@modelcontextprotocol/server": "catalog:",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/exporter-trace-otlp-proto": "catalog:",

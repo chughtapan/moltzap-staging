@@ -1,7 +1,7 @@
 /**
- * @file What agents observe of one daemon through their tools: the tools of
+ * @file What agents observe of the server through their tools: the tools of
  * their role, each call's result or failure, sends and their checks, the
- * inbox, history and conversations; and what opening a daemon does to its
+ * inbox, history and conversations; and what opening it does to its
  * database.
  */
 
@@ -18,24 +18,24 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { DecisionProvider, Firewall } from "./firewall.js";
+import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
 import {
   callTool,
   decisionState,
   inboxOf,
-  inProcessDaemon,
+  inProcessServer,
   send,
   type SignedIn,
-} from "./__tests__/daemon.js";
-import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
+} from "./__tests__/server.js";
 import { openTestDatabase } from "./__tests__/test.js";
 import { AgentName } from "./messages.js";
 import { compileNorm } from "./norms/compiler.js";
-import { openDaemon } from "./server.js";
+import { serverFactory } from "./server.js";
 
 it("gives the server agent its tools, and a status result that names the agent", () =>
   Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon();
-    const alice = yield* daemon.signInAs("alice");
+    const server = yield* inProcessServer();
+    const alice = yield* server.signInAs("alice");
     const { tools } = yield* Effect.tryPromise(() => alice.mcp.listTools());
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set([
@@ -58,8 +58,8 @@ it("gives the server agent its tools, and a status result that names the agent",
 
 it("gives a client tools that name no recipient and no conversation", () =>
   Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon();
-    const bob = yield* daemon.signInAs("bob");
+    const server = yield* inProcessServer();
+    const bob = yield* server.signInAs("bob");
     const { tools } = yield* Effect.tryPromise(() => bob.mcp.listTools());
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set([
@@ -90,8 +90,8 @@ it("gives a client tools that name no recipient and no conversation", () =>
 
 it("refuses a call with a wrong or an unknown argument without running the tool", () =>
   Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon();
-    const alice = yield* daemon.signInAs("alice");
+    const server = yield* inProcessServer();
+    const alice = yield* server.signInAs("alice");
     for (const wrong of [{ text: 1 }, { extra_field: "x" }]) {
       const failure = yield* callTool(alice, "send_message", {
         to: "bob",
@@ -120,7 +120,7 @@ it("answers a failed call with the failure's message and its fields", () =>
       },
     ];
     const pending = [...refusals];
-    const daemon = yield* inProcessDaemon({
+    const server = yield* inProcessServer({
       firewall: {
         checkOutgoing: () =>
           Effect.map(Effect.fromNullable(pending.shift()), (next) => ({
@@ -130,8 +130,8 @@ it("answers a failed call with the failure's message and its fields", () =>
           })).pipe(Effect.orDie),
       },
     });
-    const alice = yield* daemon.signInAs("alice");
-    const bob = yield* daemon.signInAs("bob");
+    const alice = yield* server.signInAs("alice");
+    const bob = yield* server.signInAs("bob");
     yield* send(bob, { text: "hi" });
     const said: Readonly<Record<string, string>> = {
       chk_1:
@@ -163,21 +163,21 @@ it("answers a failed call with the failure's message and its fields", () =>
 
 it("answers a call that dies without the defect's text", () =>
   Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon({
+    const server = yield* inProcessServer({
       firewall: {
         checkOutgoing: () =>
           Effect.dieMessage("PRIVATE relation does not exist"),
       },
     });
-    const alice = yield* daemon.signInAs("alice");
-    const bob = yield* daemon.signInAs("bob");
+    const alice = yield* server.signInAs("alice");
+    const bob = yield* server.signInAs("bob");
     yield* send(bob, { text: "hi" });
     const died = yield* send(alice, { to: bob.name, text: "hello" }).pipe(
       Effect.flip,
     );
     expect(Object.keys(died)).toEqual(["message"]);
     expect(died.message).not.toContain("PRIVATE");
-    yield* daemon.sql`DROP TABLE firewall_checks`;
+    yield* server.sql`DROP TABLE firewall_checks`;
     const failure = yield* callTool(alice, "read_firewall_decisions").pipe(
       Effect.flip,
     );
@@ -190,7 +190,7 @@ it("interrupts only the aborted call, whose conversation the next send then uses
     const entered = yield* Deferred.make<undefined>();
     const interrupted = yield* Deferred.make<undefined>();
     let first = true;
-    const daemon = yield* inProcessDaemon({
+    const server = yield* inProcessServer({
       firewall: {
         checkOutgoing: () =>
           Effect.suspend(() => {
@@ -207,8 +207,8 @@ it("interrupts only the aborted call, whose conversation the next send then uses
           }),
       },
     });
-    const alice = yield* daemon.signInAs("alice");
-    const bob = yield* daemon.signInAs("bob");
+    const alice = yield* server.signInAs("alice");
+    const bob = yield* server.signInAs("bob");
     yield* send(bob, { text: "hi" });
     const hello = { to: bob.name, text: "hello" };
 
@@ -220,11 +220,11 @@ it("interrupts only the aborted call, whose conversation the next send then uses
     expect(yield* send(alice, hello)).toHaveProperty("id");
   }));
 
-/** A daemon opened on `database`, with Alice as its server agent behind a firewall that allows everything. */
+/** A server opened on `database`, with Alice as its server agent behind a firewall that allows everything. */
 const openOn = (
   database: Effect.Effect.Success<ReturnType<typeof openTestDatabase>>,
 ) =>
-  openDaemon(database.url, {
+  serverFactory(database.url, {
     issuer: "urn:social-harness:test",
     subject: "alice",
     name: AgentName.make("alice"),
@@ -275,13 +275,13 @@ const incomingViolation: DecisionProvider = {
     ),
 };
 
-/** A daemon with its server agent Alice and her client Bob signed in. */
-const aliceAndBob = (options?: Parameters<typeof inProcessDaemon>[0]) =>
+/** A server with its server agent Alice and her client Bob signed in. */
+const aliceAndBob = (options?: Parameters<typeof inProcessServer>[0]) =>
   Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon(options);
-    const alice = yield* daemon.signInAs("alice");
-    const bob = yield* daemon.signInAs("bob");
-    return { daemon, alice, bob };
+    const server = yield* inProcessServer(options);
+    const alice = yield* server.signInAs("alice");
+    const bob = yield* server.signInAs("bob");
+    return { server, alice, bob };
   });
 
 /** Whether `agent` sent or received each message on the first page of its history with `client`, or with the server agent. */
@@ -317,7 +317,7 @@ it("checks the messages of one conversation in order while another conversation 
     const entered = yield* Deferred.make<undefined>();
     const release = yield* Deferred.make<undefined>();
     const assessed: string[] = [];
-    const { daemon, alice, bob } = yield* aliceAndBob({
+    const { server, alice, bob } = yield* aliceAndBob({
       policy: policy({
         decide: (request) =>
           Effect.gen(function* () {
@@ -331,7 +331,7 @@ it("checks the messages of one conversation in order while another conversation 
           }),
       }),
     });
-    const carol = yield* daemon.signInAs("carol");
+    const carol = yield* server.signInAs("carol");
     const authors = Effect.map(inboxOf(alice), (messages) =>
       messages.map((message) => message.author),
     );
@@ -515,11 +515,11 @@ it("continues a conversation's history from the cursor a page returned, with wha
 
 it("lists every conversation once, in name order", () =>
   Effect.gen(function* () {
-    const daemon = yield* inProcessDaemon();
-    const alice = yield* daemon.signInAs("alice");
+    const server = yield* inProcessServer();
+    const alice = yield* server.signInAs("alice");
     const clients: string[] = [];
     for (const owner of ["one", "two", "three", "two"]) {
-      const client = yield* daemon.signInAs(owner);
+      const client = yield* server.signInAs(owner);
       yield* send(client, { text: "Hello" });
       clients.push(client.name);
     }
@@ -570,9 +570,9 @@ it.prop(
   [accounts],
   ([owners]) =>
     Effect.gen(function* () {
-      const daemon = yield* inProcessDaemon();
+      const server = yield* inProcessServer();
       const nameOf = (owner: (typeof owners)[number]) =>
-        Effect.map(daemon.signInAs(owner), (signedIn) => signedIn.name);
+        Effect.map(server.signInAs(owner), (signedIn) => signedIn.name);
       const names = yield* Effect.forEach(owners, nameOf, {
         concurrency: owners.length,
       });
@@ -591,7 +591,7 @@ it.prop(
   { fastCheck: { numRuns: 10 } },
 );
 
-/** A daemon whose firewall withholds exactly the messages whose text is `withheld`, with Alice and two clients signed in. */
+/** A server whose firewall withholds exactly the messages whose text is `withheld`, with Alice and two clients signed in. */
 const withholdingByText = Effect.gen(function* () {
   const decide: Firewall["checkIncoming"] = (message) =>
     Effect.succeed(
@@ -604,13 +604,13 @@ const withholdingByText = Effect.gen(function* () {
           }
         : { kind: "allowed" },
     );
-  const daemon = yield* inProcessDaemon({
+  const server = yield* inProcessServer({
     firewall: { checkIncoming: decide },
   });
-  const alice = yield* daemon.signInAs("alice");
+  const alice = yield* server.signInAs("alice");
   const clients = {
-    bob: yield* daemon.signInAs("bob"),
-    carol: yield* daemon.signInAs("carol"),
+    bob: yield* server.signInAs("bob"),
+    carol: yield* server.signInAs("carol"),
   };
   /** The ids of the messages Alice may read after `cursor`, in read order, with the cursor to read on from. */
   const inbox = (cursor?: string) =>

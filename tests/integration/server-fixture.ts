@@ -1,7 +1,7 @@
 /**
  * @file One `sharnessd` process that hosts every agent of a test.
  *
- * `sharedDaemon()` prepares a daemon's settings, database and OAuth issuer
+ * `sharedServer()` prepares a server's settings, database and OAuth issuer
  * and returns it without starting it:
  *
  * - `directory`: the directory holding its settings file.
@@ -15,7 +15,7 @@
  *   agent's, and any other is a client's.
  *
  * A suite drives the signed-in agents as their hosts do, through the official
- * MCP client and the tool helpers of `src/__tests__/daemon.ts`. `received`
+ * MCP client and the tool helpers of `src/__tests__/server.ts`. `received`
  * reads what the inbox event delivers to an agent. `processTrace` makes a
  * trace a vitest test whose children stop with it.
  */
@@ -47,7 +47,7 @@ import {
   callTool,
   decodeInboxEntry,
   type SignedIn,
-} from "../../src/__tests__/daemon.js";
+} from "../../src/__tests__/server.js";
 import {
   issuerFixture,
   openTestDatabase,
@@ -56,7 +56,7 @@ import {
 } from "../../src/__tests__/test.js";
 import { makeFirewall } from "../../src/firewall.js";
 import { AgentName } from "../../src/messages.js";
-import { openDaemon } from "../../src/server.js";
+import { serverFactory } from "../../src/server.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
@@ -70,7 +70,7 @@ export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
 /** The owner whose token signs the server agent in, as the `serverAgent` setting names it. */
 export const SERVER_AGENT_OWNER = "server-agent-owner";
 
-/** The name of the server agent of a daemon whose settings name no other. */
+/** The name of the server agent of a server whose settings name no other. */
 export const SERVER_AGENT_NAME = "server-agent";
 
 /** A child process and everything it has printed. */
@@ -102,7 +102,7 @@ const WORKSPACE_ROOT = resolve(
 /** Children use the current Node installation and system executables. */
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 
-const DAEMON_COMMAND: readonly [string, readonly string[]] = [
+const SERVER_COMMAND: readonly [string, readonly string[]] = [
   process.execPath,
   [join(WORKSPACE_ROOT, "dist/main.js")],
 ];
@@ -206,21 +206,21 @@ const managedProcess = Effect.fn("managedProcess")(function* (
 }, Effect.uninterruptible);
 
 /**
- * Whether the daemon printed its listening line for `endpoint`. It prints the
+ * Whether the server printed its listening line for `endpoint`. It prints the
  * line only after binding, so another process holding a released port cannot
  * satisfy readiness the way it could answer a connection.
  */
-const daemonListening = (running: RunningProcess, endpoint: URL) =>
+const serverListening = (running: RunningProcess, endpoint: URL) =>
   Effect.sync(() =>
     running.logs().includes(`sharnessd listening on ${endpoint.href} (`),
   );
 
-/** Waits until the daemon has printed its listening line, and fails with its output when it exits first or thirty seconds pass. */
+/** Waits until the server has printed its listening line, and fails with its output when it exits first or thirty seconds pass. */
 const awaitListening = Effect.fn("awaitListening")(
   (running: RunningProcess, endpoint: URL) =>
     Effect.gen(function* () {
       while (!hasExited(running.child)) {
-        if (yield* daemonListening(running, endpoint)) {
+        if (yield* serverListening(running, endpoint)) {
           return;
         }
         yield* Effect.sleep(POLL_INTERVAL);
@@ -239,7 +239,7 @@ const awaitListening = Effect.fn("awaitListening")(
     ),
 );
 
-/** Runs a daemon that must exit instead of serving, and gives its exit code and output. */
+/** Runs a server that must exit instead of serving, and gives its exit code and output. */
 const startupFailure = (
   spawned: Effect.Effect<RunningProcess, never, Scope.Scope>,
 ) =>
@@ -250,7 +250,7 @@ const startupFailure = (
         duration: READINESS_TIMEOUT,
         onTimeout: () =>
           new ProcessTestError({
-            message: `daemon did not exit\n${running.logs()}`,
+            message: `server did not exit\n${running.logs()}`,
           }),
       }),
     );
@@ -272,12 +272,12 @@ const settingsDocument = (
       Effect.suspend(() => {
         document = { ...document, ...changes };
         return filesystem.writeFileString(file, JSON.stringify(document));
-      }).pipe(Effect.mapError(failed("could not write the daemon settings")));
+      }).pipe(Effect.mapError(failed("could not write the server settings")));
     yield* configure({});
     return configure;
   });
 
-/** Connects to the daemon at `endpoint` as the holder of `bearer` and reads its agent from `status`. */
+/** Connects to the server at `endpoint` as the holder of `bearer` and reads its agent from `status`. */
 const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   Effect.gen(function* () {
     const events = new EventsClientExtension();
@@ -301,17 +301,17 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
     const subscriber: Subscriber = { name: agentName, mcp, events };
     return subscriber;
   }).pipe(
-    Effect.mapError(failed("could not sign in to the daemon")),
+    Effect.mapError(failed("could not sign in to the server")),
     Effect.withSpan("signIn"),
   );
 
 /**
- * Creates the daemon's tables as the login of `url`,
- * which may create tables, so the daemon serves them through a login that
+ * Creates the server's tables as the login of `url`,
+ * which may create tables, so the server serves them through a login that
  * may not.
  */
 const preparedBy = (url: Redacted.Redacted, issuer: string) =>
-  openDaemon(url, {
+  serverFactory(url, {
     issuer,
     subject: SERVER_AGENT_OWNER,
     name: AgentName.make(SERVER_AGENT_NAME),
@@ -321,19 +321,19 @@ const preparedBy = (url: Redacted.Redacted, issuer: string) =>
     }),
   }).pipe(
     Effect.scoped,
-    Effect.mapError(failed("could not prepare the daemon's database")),
+    Effect.mapError(failed("could not prepare the server's database")),
   );
 
 /**
- * Prepares one daemon whose server agent's owner and clients' owners sign in
+ * Prepares one server whose server agent's owner and clients' owners sign in
  * with tokens from its own test issuer. The scope removes its directory and
  * stops its issuer and every process and connection it started.
  */
-export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
+export const sharedServer = Effect.fn("sharedServer")(function* () {
   const filesystem = yield* FileSystem.FileSystem;
   const directory = yield* filesystem
-    .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
-    .pipe(Effect.mapError(failed("could not create the daemon directory")));
+    .makeTempDirectoryScoped({ prefix: "sharness-server-" })
+    .pipe(Effect.mapError(failed("could not create the server directory")));
   const issuer = yield* issuerFixture().pipe(
     Effect.mapError(failed("could not start the test issuer")),
   );
@@ -346,6 +346,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
     SHARNESS_DATABASE_URL: Redacted.value(restrictedUrl),
+    SHARNESS_DECISION_PROVIDER_KEY: "private-decision-provider-key",
   };
   const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
     port,
@@ -357,16 +358,23 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
     },
     serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
   });
-  const spawned = managedProcess(...DAEMON_COMMAND, environment);
-  const bearer = (owner: string) =>
+  const spawned = managedProcess(...SERVER_COMMAND, environment);
+  const bearer = (
+    owner: string,
+    claims: Parameters<typeof issuer.token>[2] = {},
+  ) =>
     issuer
-      .token(owner, resource)
+      .token(owner, resource, claims)
       .pipe(
         Effect.map(Redacted.make),
         Effect.mapError(failed(`could not issue a token for ${owner}`)),
       );
   return {
     directory,
+    endpoint,
+    resource,
+    host: `${LOOPBACK_HOST}:${port}`,
+    bearer,
     start: () =>
       spawned.pipe(
         Effect.tap((running) => awaitListening(running, endpoint)),

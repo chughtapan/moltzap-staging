@@ -1,4 +1,4 @@
-/** @file Fixtures for tests of the daemon: a PostgreSQL schema of its own for each test on the server `SHARNESS_PG_TEST_URL` names, and an OAuth issuer on this machine. */
+/** @file Fixtures for tests of the server: a PostgreSQL schema of its own for each test on the server `SHARNESS_PG_TEST_URL` names, and an OAuth issuer on this machine. */
 
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
@@ -54,7 +54,7 @@ export type TestDatabase = Effect.Effect.Success<
 
 /**
  * Creates a login of `database`'s tables that can read and write rows but can
- * not create objects, as the login a daemon serves
+ * not create objects, as the login a server serves
  * through cannot. Returns the URL that reaches the schema as that login;
  * closing the scope drops it.
  */
@@ -81,13 +81,13 @@ export const restrictedLogin = Effect.fn("restrictedLogin")(function* ({
   return Redacted.make(restricted.href);
 }, Effect.orDie);
 
-/** The scope a token carries unless told otherwise, for the daemon to require. */
+/** The scope a token carries unless told otherwise, for the server to require. */
 export const requiredScope = "use:mcp";
 
 /**
  * An OpenID issuer on `127.0.0.1`, at `port` or a free one, with a key of its
  * own, and a signer of access tokens for its subjects. A token selects its
- * subject's agent on a daemon whose resource is `audience`, for an hour and
+ * subject's agent on a server whose resource is `audience`, for an hour and
  * with `requiredScope` unless `claims` say otherwise. The scope closes the
  * listener.
  */

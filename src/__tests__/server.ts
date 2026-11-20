@@ -1,20 +1,21 @@
 /**
- * @file The daemon in a test's own process: `server.ts` opened on a test
+ * @file The server in a test's own process: `server.ts` opened on a test
  * database with the server agent's real firewall. A test signs agents in and
- * calls their tools as a host does, through the daemon's MCP handler.
- * `callTool` and the helpers over it also drive a daemon process.
+ * calls their tools as a host does, through the MCP SDK's handler.
+ * `callTool` and the helpers over it also drive a `sharnessd` process.
  */
 
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import { Effect, Schema } from "effect";
 import type { TestPolicy } from "./firewall-fixtures.js";
 import { checkRecordSchema, type Firewall, makeFirewall } from "../firewall.js";
 import { AgentName, Message, MsgId } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
-import { openDaemon } from "../server.js";
+import { serverFactory } from "../server.js";
 import { openTestDatabase } from "./test.js";
 
 /** The issuer of every owner a test signs in by name. */
@@ -42,13 +43,13 @@ export interface SignedIn {
 }
 
 /**
- * A daemon whose server agent is named `alice` and owned by the owner
+ * A server whose server agent is named `alice` and owned by the owner
  * `alice`, behind a firewall with the given policy, norms, notice and history
  * limit, or one that allows every message. `firewall` replaces operations of
  * that firewall. `signInAs` gives an MCP connection as the agent of an owner:
  * the owner a name stands for, or the owner given.
  */
-export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
+export const inProcessServer = Effect.fn("inProcessServer")(function* (
   options: {
     readonly policy?: TestPolicy;
     readonly norms?: InstalledNorms;
@@ -59,7 +60,7 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
 ) {
   const database = yield* openTestDatabase();
   const { norms } = options;
-  const answerAs = yield* openDaemon(database.url, {
+  const factory = yield* serverFactory(database.url, {
     issuer,
     subject: "alice",
     name: AgentName.make("alice"),
@@ -85,13 +86,14 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
           })),
         }),
   }).pipe(Effect.orDie);
+  const handler = createMcpHandler(factory);
   return {
     sql: database.sql,
     signInAs: (
       owner: string | { readonly issuer: string; readonly subject: string },
     ) =>
       Effect.gen(function* () {
-        const answer = yield* answerAs({
+        const authInfo = {
           token: "",
           clientId: "",
           scopes: [],
@@ -99,8 +101,10 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
             typeof owner === "string"
               ? { issuer, subject: owner }
               : { ...owner },
-        });
-        const mcp = yield* connect(answer);
+        };
+        const mcp = yield* connect((request) =>
+          handler.fetch(request, { authInfo }),
+        );
         const { agentName } = yield* callTool({ mcp }, "status").pipe(
           Effect.orDie,
         );
@@ -151,7 +155,7 @@ export function callTool<Name extends ToolName>(
   Readonly<Record<string, unknown>>
 >;
 /**
- * Calls a tool as `agent` and decodes its result. A call the daemon answers
+ * Calls a tool as `agent` and decodes its result. A call the server answers
  * as failed fails with the result's structured fields and, as `message`, the
  * text a model reads. Interrupting the call aborts its request.
  */
@@ -201,7 +205,7 @@ export const inboxOf = (agent: Pick<SignedIn, "mcp">) =>
 function connect(answer: (request: Request) => ReturnType<typeof fetch>) {
   return Effect.gen(function* () {
     const mcp = new Client(
-      { name: "daemon-test", version: "1" },
+      { name: "server-test", version: "1" },
       { versionNegotiation: { mode: { pin: "2026-07-28" } } },
     );
     const transport = new StreamableHTTPClientTransport(endpoint, {

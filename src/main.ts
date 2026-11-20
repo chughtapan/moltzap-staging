@@ -1,29 +1,22 @@
 #!/usr/bin/env node
 /**
- * @file The `sharnessd` executable: the settings file, OAuth admission, the
- * HTTP listener and start-up around the daemon `server.ts` is. `--help`
- * prints the usage, no argument runs the daemon until it stops, and any other
+ * @file The `sharnessd` executable: it reads the settings file, builds the
+ * server agent's firewall, and serves the MCP server of `server.ts` over
+ * HTTP behind the MCP SDK's bearer authentication. `--help` prints the
+ * usage, no argument serves until the process is stopped, and any other
  * arguments print the usage to standard error. A startup failure prints one
- * line. Every outcome but the usage and a stopped daemon exits
- * unsuccessfully. Importing the file starts nothing.
+ * line and exits unsuccessfully.
  */
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
-import {
-  FileSystem,
-  HttpApp,
-  HttpBody,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "@effect/platform";
-import {
-  NodeFileSystem,
-  NodeHttpServer,
-  NodeRuntime,
-} from "@effect/platform-node";
+import { FileSystem } from "@effect/platform";
+import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { discoverAuthorizationServerMetadata } from "@modelcontextprotocol/client";
+import { toNodeHandler } from "@modelcontextprotocol/node";
 import {
+  createMcpHandler,
   getOAuthProtectedResourceMetadataUrl,
   hostHeaderValidationResponse,
+  type McpServerFactory,
   OAuthError,
   OAuthErrorCode,
   oauthMetadataResponse,
@@ -39,15 +32,12 @@ import {
   Data,
   Effect,
   Layer,
-  Match,
   Option,
   Schema,
-  type Scope,
-  Stream,
   Struct,
 } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The MCP SDK's Node handler serves on a node:http server.
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import {
@@ -63,19 +53,17 @@ import {
   type NormsConfigurationError,
   structureCheck,
 } from "./norms/index.js";
-import { databaseUrl, openDaemon, packageVersion } from "./server.js";
+import { databaseUrl, packageVersion, serverFactory } from "./server.js";
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.
  */
-class DaemonConfigurationError extends Data.TaggedError(
-  "DaemonConfigurationError",
-)<{
+class SettingsError extends Data.TaggedError("SettingsError")<{
   readonly message: string;
 }> {}
 
 /** A startup refusal whose message names the setting to change. */
-const refused = (message: string) => new DaemonConfigurationError({ message });
+const refused = (message: string) => new SettingsError({ message });
 
 /**
  * The URL `value` names when it parses, uses one of `protocols` (each with its
@@ -110,7 +98,7 @@ const oauthIssuer = Schema.Union(
   ),
 );
 
-/** The OAuth resource the daemon is, and the issuer whose tokens it admits. */
+/** The OAuth resource the server is, and the issuer whose tokens it admits. */
 const authentication = Schema.Struct({
   resource: httpsUrl.pipe(
     Schema.filter(
@@ -139,11 +127,11 @@ const settingsFile = Schema.Struct({
 });
 
 /**
- * What the daemon holds after reading the settings file and the files it
+ * What the process holds after reading the settings file and the files it
  * names: the message policy, the provider credential and the norms
  * themselves, in place of their paths.
  */
-type DaemonSettings = Omit<
+type Settings = Omit<
   typeof settingsFile.Type,
   "messagePolicyFile" | "normsDirectory"
 > & {
@@ -153,12 +141,12 @@ type DaemonSettings = Omit<
 
 /**
  * The paths the settings file names resolve against its own directory,
- * whatever the daemon's working directory.
+ * whatever the working directory.
  */
-const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
+const loadSettings = Effect.fn("loadSettings")(function* () {
   const settingsPath = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
     Effect.mapError(() =>
-      refused("Set SHARNESS_CONFIG_FILE to the daemon settings file"),
+      refused("Set SHARNESS_CONFIG_FILE to the server settings file"),
     ),
   );
   const filesystem = yield* FileSystem.FileSystem;
@@ -169,7 +157,7 @@ const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       }),
     ),
     Effect.mapError(() =>
-      refused("The daemon settings file is unreadable or invalid"),
+      refused("The server settings file is unreadable or invalid"),
     ),
   );
   const settingsDirectory = dirname(resolve(settingsPath));
@@ -202,7 +190,7 @@ const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       "The configured norms have English rules, which need a messagePolicyFile with a decisionProvider to check them",
     );
   }
-  const settings: DaemonSettings = {
+  const settings: Settings = {
     ...Struct.omit(file, "messagePolicyFile", "normsDirectory"),
     messagePolicy: Option.getOrUndefined(messagePolicy),
     ...(norms === undefined ? {} : { norms }),
@@ -210,45 +198,29 @@ const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   return settings;
 });
 
-/** The issuer's metadata could not be read, names another issuer or names no key set. */
-class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
-
-/** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
-const serveMcp = Effect.fn("Mcp.serve")(function* (
-  port: number,
-  app: HttpApp.Default<never, Scope.Scope>,
-  host: string,
-) {
-  const listener = yield* Effect.sync(createServer);
-  const http = yield* NodeHttpServer.make(() => listener, { host, port });
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      listener.closeAllConnections();
-    }),
-  );
-  yield* http.serve(app);
-});
-
 /**
- * The app the listener serves. The MCP SDK validates the Host and Origin
- * headers against the resource's hostname, serves the OAuth discovery
- * documents, and checks the bearer token's scope and expiry; a refusal is the
- * SDK's response. Any path but `/mcp` answers 404. A token is a JWT the issuer
- * signed for the resource with a subject, verified against the key set the
- * issuer's metadata names. The daemon's MCP handler answers an admitted
- * request as the agent of the token's subject, on a stream that ends when the
- * token expires.
+ * Listens on the settings' host and port and answers each request as the MCP
+ * SDK's example of a bearer-authenticated server does. The SDK validates the
+ * Host and Origin headers against the resource's hostname, serves the OAuth
+ * discovery documents, and checks the bearer token's scope and expiry; a
+ * refusal is the SDK's response. Any path but `/mcp` answers 404. A token is
+ * a JWT the issuer signed for the resource with a subject, verified against
+ * the key set the issuer's metadata names. Returns once the listener accepts
+ * connections.
  */
-const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
-  { issuer, resource, scope }: DaemonSettings["authentication"],
-  answerAs: Effect.Effect.Success<ReturnType<typeof openDaemon>>,
+const listen = Effect.fn("listen")(function* (
+  { host, port, authentication }: Settings,
+  factory: McpServerFactory,
 ) {
+  const { issuer, resource, scope } = authentication;
   const metadata = yield* Effect.tryPromise({
     try: () => discoverAuthorizationServerMetadata(issuer),
-    catch: () => new AuthenticationRefused(),
-  });
+    catch: () => undefined,
+  }).pipe(Effect.orElseSucceed(() => undefined));
   if (typeof metadata?.jwks_uri !== "string") {
-    return yield* new AuthenticationRefused();
+    return yield* refused(
+      `The OAuth issuer ${issuer} did not answer with its configuration. Check authentication.issuer and that the server can reach it.`,
+    );
   }
   const keys = createRemoteJWKSet(new URL(metadata.jwks_uri));
   const hostnames = [resource.hostname];
@@ -257,7 +229,7 @@ const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
     resourceServerUrl: resource,
     scopesSupported: [scope],
   };
-  const bearer = requireBearerAuth({
+  const gate = requireBearerAuth({
     requiredScopes: [scope],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resource),
     verifier: {
@@ -282,60 +254,45 @@ const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
       },
     },
   });
-  return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const web = new Request(new URL(request.url, resource), {
-      method: request.method,
-      headers: request.headers,
-    });
+  const handler = createMcpHandler(factory);
+  // eslint-disable-next-line agent-code-guard/async-keyword -- The MCP SDK's Node handler takes a promise-based fetch function.
+  const fetch = async (request: Request) => {
     const answered =
-      hostHeaderValidationResponse(web, hostnames) ??
-      originValidationResponse(web, hostnames) ??
-      oauthMetadataResponse(web, discovery);
+      hostHeaderValidationResponse(request, hostnames) ??
+      originValidationResponse(request, hostnames) ??
+      oauthMetadataResponse(request, discovery);
     if (answered !== undefined) {
-      return HttpServerResponse.fromWeb(answered);
+      return answered;
     }
-    if (new URL(web.url).pathname !== "/mcp") {
-      return HttpServerResponse.empty({ status: 404 });
+    if (new URL(request.url).pathname !== "/mcp") {
+      return new Response(null, { status: 404 });
     }
-    // eslint-disable-next-line agent-code-guard/effect-promise -- The SDK's gate resolves to its refusal and does not reject.
-    const authInfo = yield* Effect.promise(() => bearer(web));
-    if (authInfo instanceof Response) {
-      return HttpServerResponse.fromWeb(authInfo);
-    }
-    const response = yield* HttpApp.fromWebHandler(
-      yield* answerAs(authInfo),
-    ).pipe(Effect.interruptible, Effect.orDie);
-    return yield* limitResponseStream(
-      response,
-      Stream.interruptAfter(
-        Math.max(0, (authInfo.expiresAt ?? 0) * 1000 - Date.now()),
-      ),
-    );
+    const authInfo = await gate(request);
+    return authInfo instanceof Response
+      ? authInfo
+      : await handler.fetch(request, { authInfo });
+  };
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- The MCP SDK's Node handler is a request listener that returns a promise it never rejects.
+  const listener = createServer(toNodeHandler({ fetch }));
+  yield* Effect.async<undefined, SettingsError>((resume) => {
+    listener.once("error", () => {
+      resume(
+        refused(
+          `The server could not listen on ${host}:${port}. Stop the process that uses the port, or set another port.`,
+        ),
+      );
+    });
+    listener.listen(port, host, () => {
+      resume(Effect.succeed(undefined));
+    });
   });
 });
 
-/** Ends a streamed response body when `limit` says so. Other bodies are returned as they are. */
-function limitResponseStream(
-  response: HttpServerResponse.HttpServerResponse,
-  limit: <A, E>(body: Stream.Stream<A, E>) => Stream.Stream<A, E>,
-) {
-  return Match.value(response.body).pipe(
-    Match.tag("Stream", (body) =>
-      HttpServerResponse.setBody(
-        response,
-        HttpBody.stream(limit(body.stream), body.contentType),
-      ),
-    ),
-    Match.orElse(() => response),
-  );
-}
-
-/** What `--help` prints: the variables the daemon reads at every start. */
+/** What `--help` prints: the variables read at every start. */
 const HELP_MESSAGE = [
   "Usage: sharnessd [--help]",
   "",
-  "SHARNESS_CONFIG_FILE: JSON daemon settings file",
+  "SHARNESS_CONFIG_FILE: JSON server settings file",
   "SHARNESS_DATABASE_URL: PostgreSQL connection URL",
   "SHARNESS_DECISION_PROVIDER_KEY: API key of the message policy's decision provider",
   "Standard OTEL_* variables configure telemetry.",
@@ -343,9 +300,9 @@ const HELP_MESSAGE = [
 
 /** Printed for a startup failure that names no setting of its own. */
 const UNEXPLAINED_FAILURE =
-  "The daemon could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL; run sharnessd --help for what each must hold.";
+  "The server could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL; run sharnessd --help for what each must hold.";
 
-/** Prints one line to standard error and makes the daemon exit unsuccessfully. */
+/** Prints one line to standard error and makes the process exit unsuccessfully. */
 const exitUnsuccessfully = (line: string) =>
   Console.error(line).pipe(
     Effect.andThen(
@@ -392,16 +349,12 @@ const spanExport = Layer.unwrapEffect(
   }).pipe(Effect.orDie),
 );
 
-/**
- * Runs the daemon until it is interrupted: installs the server agent's
- * firewall and answers each authenticated request from its owner's agent.
- * Fails if it cannot start.
- */
-export const runDaemon = Effect.gen(function* () {
+/** Serves until the process is stopped. Fails if it cannot start. */
+const serve = Effect.gen(function* () {
   const url = yield* databaseUrl;
-  const settings = yield* loadDaemonSettings();
+  const settings = yield* loadSettings();
   const { authentication, norms } = settings;
-  const answerAs = yield* openDaemon(url, {
+  const factory = yield* serverFactory(url, {
     issuer: authentication.issuer,
     subject: settings.serverAgent.subject,
     name: settings.serverAgent.name,
@@ -424,48 +377,33 @@ export const runDaemon = Effect.gen(function* () {
           })),
         }),
   });
-  const app = yield* makeMcpHttpApp(authentication, answerAs).pipe(
-    Effect.catchTag("AuthenticationRefused", () =>
-      refused(
-        `The OAuth issuer ${authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,
-      ),
-    ),
-  );
-  yield* serveMcp(settings.port, app, settings.host).pipe(
-    Effect.catchTag("ServeError", () =>
-      refused(
-        `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
-      ),
-    ),
-  );
+  yield* listen(settings, factory);
   yield* Console.log(
     `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
   );
   return yield* Effect.never;
 }).pipe(
   Effect.scoped,
-  Effect.withSpan("runDaemon"),
+  Effect.withSpan("serve"),
   Effect.provide(Layer.merge(NodeFileSystem.layer, spanExport)),
 );
 
-if (import.meta.main) {
-  const args = process.argv.slice(2);
-  NodeRuntime.runMain(
-    Effect.suspend(() => {
-      if (args.length === 1 && args[0] === "--help") {
-        return Console.log(HELP_MESSAGE);
-      }
-      if (args.length === 0) {
-        return runDaemon;
-      }
-      return exitUnsuccessfully(HELP_MESSAGE);
-    }).pipe(
-      Effect.catchTags({
-        DaemonConfigurationError: ({ message }) => exitUnsuccessfully(message),
-        DatabaseUrlMissingError: ({ message }) => exitUnsuccessfully(message),
-        DatabasePreparationError: ({ message }) => exitUnsuccessfully(message),
-      }),
-      Effect.catchAll(() => exitUnsuccessfully(UNEXPLAINED_FAILURE)),
-    ),
-  );
-}
+const args = process.argv.slice(2);
+NodeRuntime.runMain(
+  Effect.suspend(() => {
+    if (args.length === 1 && args[0] === "--help") {
+      return Console.log(HELP_MESSAGE);
+    }
+    if (args.length === 0) {
+      return serve;
+    }
+    return exitUnsuccessfully(HELP_MESSAGE);
+  }).pipe(
+    Effect.catchTags({
+      SettingsError: ({ message }) => exitUnsuccessfully(message),
+      DatabaseUrlMissingError: ({ message }) => exitUnsuccessfully(message),
+      DatabasePreparationError: ({ message }) => exitUnsuccessfully(message),
+    }),
+    Effect.catchAll(() => exitUnsuccessfully(UNEXPLAINED_FAILURE)),
+  ),
+);
