@@ -161,7 +161,7 @@ type DaemonSettings = Omit<
  * The paths the settings file names resolve against its own directory,
  * whatever the daemon's working directory.
  */
-export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
+const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   const settingsPath = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
     Effect.mapError(() =>
       refused("Set SHARNESS_CONFIG_FILE to the daemon settings file"),
@@ -220,7 +220,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
 class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
-export const serveMcp = Effect.fn("Mcp.serve")(function* (
+const serveMcp = Effect.fn("Mcp.serve")(function* (
   port: number,
   app: HttpApp.Default<never, Scope.Scope>,
   host: string,
@@ -245,7 +245,7 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
  * request as the agent of the token's subject, on a stream that ends when the
  * token expires.
  */
-export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
+const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   { issuer, resource, scope }: DaemonSettings["authentication"],
   daemon: Daemon,
 ) {
@@ -404,7 +404,7 @@ const spanExport = Layer.unwrapEffect(
  * firewall and answers each authenticated request from its owner's agent.
  * Fails if it cannot start.
  */
-const runDaemon = Effect.gen(function* () {
+export const runDaemon = Effect.gen(function* () {
   const url = yield* databaseUrl;
   const settings = yield* loadDaemonSettings();
   const { authentication, norms } = settings;

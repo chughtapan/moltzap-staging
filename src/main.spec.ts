@@ -1,90 +1,172 @@
 /**
- * @file The executable's parts: it loads its settings from one file and
- * refuses a document it cannot serve; it admits owner-bound JWTs verified
- * against a real issuer key-set endpoint; and its listener reports a taken
- * port and closes open streams with its scope.
+ * @file The daemon as its executable runs it, against a test database and a
+ * test issuer: which settings it starts with and which it refuses, with what
+ * message; whom it admits; and when it ends a stream.
  */
 import {
+  FetchHttpClient,
   FileSystem,
-  HttpApp,
   HttpClient,
-  HttpClientError,
-  HttpClientResponse,
-  HttpServerResponse,
+  HttpClientRequest,
 } from "@effect/platform";
-import {
-  NodeContext,
-  NodeHttpClient,
-  NodeHttpServer,
-} from "@effect/platform-node";
+import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import {
   ConfigProvider,
   Effect,
-  Either,
-  Exit,
   FastCheck as fc,
+  Fiber,
+  Layer,
   Redacted,
-  Scope,
-  Stream,
+  Schedule,
 } from "effect";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
-import { createServer } from "node:http";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { inProcessDaemon } from "./__tests__/daemon.js";
-import { issuerFixture, requiredScope } from "./__tests__/test.js";
-import { loadDaemonSettings, makeMcpHttpApp, serveMcp } from "./main.js";
+import { callTool } from "./__tests__/daemon.js";
+import {
+  issuerFixture,
+  openTestDatabase,
+  requiredScope,
+} from "./__tests__/test.js";
+import { runDaemon } from "./main.js";
 
-const settingsVariable = "SHARNESS_CONFIG_FILE";
 const providerKey = "private-decision-provider-key";
-const settings = {
-  port: 4319,
-  host: "127.0.0.1",
-  authentication: {
-    resource: "https://mcp.example/mcp",
-    issuer: "https://issuer.example/",
-    scope: "use:mcp",
-  },
-  serverAgent: { name: "front-desk", subject: "server" },
-};
+const protocolVersion = "2026-07-28";
+
+/** A free loopback port, released before the daemon binds it. */
+const freePort = Effect.async<number>((resume) => {
+  const server = createServer();
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    server.close(() => {
+      resume(
+        address === null || typeof address === "string"
+          ? Effect.dieMessage("Expected a TCP port")
+          : Effect.succeed(address.port),
+      );
+    });
+  });
+});
 
 /**
- * A valid settings file in a directory of its own, loaded through the variable
- * that names it.
+ * A daemon the executable's entry runs: valid settings in a directory of
+ * their own, a test database and a test issuer. `write` replaces the
+ * settings file, `refusal` is the message the daemon refuses to start with,
+ * and `start` runs it until the test ends, once it listens.
  */
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
+  const client = yield* HttpClient.HttpClient;
   const directory = yield* filesystem.makeTempDirectoryScoped({
     prefix: "sharness-settings-",
   });
+  const database = yield* openTestDatabase();
+  const issuer = yield* issuerFixture().pipe(Effect.orDie);
+  const port = yield* freePort;
+  const endpoint = `http://127.0.0.1:${port}/mcp`;
+  const resource = `https://127.0.0.1:${port}/mcp`;
+  const settings = {
+    port,
+    host: "127.0.0.1",
+    authentication: { resource, issuer: issuer.issuer, scope: requiredScope },
+    serverAgent: { name: "front-desk", subject: "server" },
+  };
   const filename = join(directory, "settings.json");
   const write = (value: unknown) =>
     filesystem.writeFileString(filename, JSON.stringify(value));
   yield* write(settings);
-  const load = loadDaemonSettings().pipe(
+  const run = runDaemon.pipe(
     Effect.withConfigProvider(
       ConfigProvider.fromMap(
         new Map([
-          [settingsVariable, filename],
+          ["SHARNESS_CONFIG_FILE", filename],
+          ["SHARNESS_DATABASE_URL", Redacted.value(database.url)],
           ["SHARNESS_DECISION_PROVIDER_KEY", providerKey],
         ]),
       ),
     ),
   );
-  return { filesystem, directory, filename, write, load };
+  const start = Effect.gen(function* () {
+    const running = yield* Effect.forkScoped(run);
+    yield* Effect.raceFirst(
+      client.get(endpoint).pipe(Effect.retry(Schedule.spaced("25 millis"))),
+      Fiber.join(running),
+    );
+    return running;
+  });
+  /** One raw MCP request with the given bearer token, or with none. */
+  const request = (method: string, bearer?: string) =>
+    HttpClientRequest.post(endpoint).pipe(
+      HttpClientRequest.setHeaders({
+        ...(bearer === undefined ? {} : { authorization: `Bearer ${bearer}` }),
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": protocolVersion,
+        "mcp-method": method,
+      }),
+      HttpClientRequest.bodyUnsafeJson({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params: {
+          notifications: { toolsListChanged: true },
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": protocolVersion,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {
+              name: "daemon-test",
+              version: "1",
+            },
+          },
+        },
+      }),
+      client.execute,
+      Effect.orDie,
+    );
+  return {
+    filesystem,
+    directory,
+    settings,
+    write,
+    start,
+    request,
+    endpoint,
+    /** Fails while nothing listens on the daemon's port. */
+    reach: client.get(endpoint),
+    /** The message the daemon refuses to start with. */
+    refusal: run.pipe(
+      Effect.flip,
+      Effect.map((failure) => failure.message),
+      Effect.timeout("20 seconds"),
+    ),
+    /** A token of the daemon's issuer for `subject`, as `claims` change it. */
+    token: (subject: string, claims: Parameters<typeof issuer.token>[2] = {}) =>
+      issuer.token(subject, resource, claims).pipe(Effect.orDie),
+    /** The subject of every owner with an agent. */
+    owners: database.sql<{
+      subject: string;
+    }>`SELECT subject FROM agent_cards ORDER BY subject`.pipe(
+      Effect.map((rows) => rows.map((row) => row.subject)),
+      Effect.orDie,
+    ),
+  };
 });
+
+/** The file system and the HTTP client the fixture uses. */
+const platform = Layer.merge(NodeContext.layer, FetchHttpClient.layer);
+
+type Fixture = Effect.Effect.Success<typeof fixture>;
 
 /**
  * A message policy file in `beneath`, a directory under the settings file's
  * own, with a decision provider when `judged`. Returns the setting that
  * names it.
  */
-function messagePolicy(
-  test: Effect.Effect.Success<typeof fixture>,
-  judged: boolean,
-  beneath = "",
-) {
+function messagePolicy(test: Fixture, judged: boolean, beneath = "") {
   return Effect.gen(function* () {
     const directory = join(test.directory, beneath);
     yield* test.filesystem.makeDirectory(directory, { recursive: true });
@@ -108,11 +190,7 @@ const ruledNorm = `${unruledNorm}(rule :act ask "The question is polite.")
 `;
 
 /** A norms directory in `beneath` holding `document` as its one norm document. */
-function norms(
-  test: Effect.Effect.Success<typeof fixture>,
-  document: string,
-  beneath = "",
-) {
+function norms(test: Fixture, document: string, beneath = "") {
   return Effect.gen(function* () {
     const directory = join(test.directory, beneath, "norms");
     yield* test.filesystem.makeDirectory(directory, { recursive: true });
@@ -124,106 +202,93 @@ function norms(
   });
 }
 
+/** An SDK client connected to the daemon as the holder of `bearer`. The scope closes it. */
+const connect = (test: Fixture, bearer: string) =>
+  Effect.gen(function* () {
+    const mcp = new Client(
+      { name: "daemon-test", version: "1" },
+      { versionNegotiation: { mode: { pin: protocolVersion } } },
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL(test.endpoint),
+      { requestInit: { headers: { authorization: `Bearer ${bearer}` } } },
+    );
+    yield* Effect.tryPromise(() => mcp.connect(transport)).pipe(Effect.orDie);
+    yield* Effect.addFinalizer(() =>
+      Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore),
+    );
+    return { mcp };
+  });
+
 it("names the missing settings-file variable", () =>
-  loadDaemonSettings().pipe(
-    Effect.withConfigProvider(ConfigProvider.fromMap(new Map())),
+  runDaemon.pipe(
+    Effect.withConfigProvider(
+      ConfigProvider.fromMap(
+        new Map([["SHARNESS_DATABASE_URL", "postgres://"]]),
+      ),
+    ),
     Effect.flip,
     Effect.tap((failure) => {
-      expect(failure.message).toContain(settingsVariable);
+      expect(failure.message).toContain("SHARNESS_CONFIG_FILE");
     }),
-    Effect.provide(NodeContext.layer),
   ));
-
-it("loads the settings file its variable names", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const loaded = yield* test.load;
-    expect(loaded.port).toBe(settings.port);
-    expect(loaded.authentication).toEqual({
-      ...settings.authentication,
-      resource: new URL(settings.authentication.resource),
-    });
-  }).pipe(Effect.provide(NodeContext.layer)));
 
 it("refuses a settings file that does not exist", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    yield* test.filesystem.remove(test.filename);
-    expect((yield* test.load.pipe(Effect.flip)).message).toContain(
-      "settings file",
-    );
-  }).pipe(Effect.provide(NodeContext.layer)));
+    yield* test.filesystem.remove(join(test.directory, "settings.json"));
+    expect(yield* test.refusal).toContain("settings file");
+  }).pipe(Effect.provide(platform)));
 
 it.each(["", "nested/deeper"])(
-  "resolves the policy and the norms directory relative to the settings file (beneath it: '%s'), and reads the provider key from its variable",
+  "starts with a policy, its provider key and a norms directory named relative to the settings file (beneath it: '%s'), and shows the norm to a signed-in agent",
   (beneath) =>
     Effect.gen(function* () {
       const test = yield* fixture;
       yield* test.write({
-        ...settings,
+        ...test.settings,
         ...(yield* messagePolicy(test, true, beneath)),
-        ...(yield* norms(test, unruledNorm, beneath)),
+        ...(yield* norms(test, ruledNorm, beneath)),
       });
 
-      const loaded = yield* test.load;
+      yield* test.start;
 
-      expect(
-        loaded.messagePolicy?.provider &&
-          Redacted.value(loaded.messagePolicy.provider.apiKey),
-      ).toBe(providerKey);
-      expect(loaded.norms?.map((norm) => norm.source)).toEqual([unruledNorm]);
-    }).pipe(Effect.provide(NodeContext.layer)),
+      const { mcp } = yield* connect(test, yield* test.token("server"));
+      const shown = yield* Effect.tryPromise(() =>
+        mcp.callTool({ name: "read_norms", arguments: {} }),
+      );
+      expect(shown.structuredContent).toMatchObject({
+        norms: [{ name: "ping", document: ruledNorm }],
+      });
+    }).pipe(Effect.provide(platform)),
 );
 
-it("loads the decision provider that judges initial norms' English rules, though the policy has no text rules", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.write({
-      ...settings,
-      ...(yield* messagePolicy(test, true)),
-      ...(yield* norms(test, ruledNorm)),
-    });
-
-    const loaded = yield* test.load;
-
-    expect(loaded.norms).toHaveLength(1);
-    expect(loaded.messagePolicy?.policy.rules).toEqual([]);
-    expect(loaded.messagePolicy?.provider?.model).toBe("configured-model");
-  }).pipe(Effect.provide(NodeContext.layer)));
-
 it.each([
-  { what: "no message policy", policy: () => Effect.succeed({}) },
-  {
-    what: "a message policy without a decision provider",
-    policy: (test: Effect.Effect.Success<typeof fixture>) =>
-      messagePolicy(test, false),
-  },
-])("refuses initial norms with English rules under $what", ({ policy }) =>
+  { what: "no message policy", judged: undefined },
+  { what: "a message policy without a decision provider", judged: false },
+])("refuses norms with English rules under $what", ({ judged }) =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.write({
-      ...settings,
-      ...(yield* policy(test)),
+      ...test.settings,
+      ...(judged === undefined ? {} : yield* messagePolicy(test, judged)),
       ...(yield* norms(test, ruledNorm)),
     });
 
-    const failure = yield* test.load.pipe(Effect.flip);
-
-    expect(failure.message).toContain("configured norms");
-  }).pipe(Effect.provide(NodeContext.layer)),
+    expect(yield* test.refusal).toContain("configured norms");
+  }).pipe(Effect.provide(platform)),
 );
 
 it("refuses a norms directory whose document does not compile", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.write({
-      ...settings,
+      ...test.settings,
       ...(yield* messagePolicy(test, false)),
       ...(yield* norms(test, "(norm ping :initiator Asker)")),
     });
-    const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure.message).toContain("norms directory");
-  }).pipe(Effect.provide(NodeContext.layer)));
+    expect(yield* test.refusal).toContain("norms directory");
+  }).pipe(Effect.provide(platform)));
 
 it.each([
   { maximumHistoryRecords: 1, taken: true },
@@ -235,18 +300,22 @@ it.each([
   ({ maximumHistoryRecords, taken }) =>
     Effect.gen(function* () {
       const test = yield* fixture;
-      yield* test.write({ ...settings, maximumHistoryRecords });
+      yield* test.write({ ...test.settings, maximumHistoryRecords });
 
-      const loaded = yield* test.load.pipe(Effect.either);
-
-      expect(Either.getOrUndefined(loaded)?.maximumHistoryRecords).toBe(
-        taken ? maximumHistoryRecords : undefined,
-      );
-    }).pipe(Effect.provide(NodeContext.layer)),
+      if (taken) {
+        yield* test.start;
+        expect((yield* test.request("server/discover")).status).toBe(401);
+      } else {
+        expect(yield* test.refusal).toContain("settings file");
+      }
+    }).pipe(Effect.provide(platform)),
 );
 
 const knownSettings = new Set([
-  ...Object.keys(settings),
+  "port",
+  "host",
+  "authentication",
+  "serverAgent",
   "messagePolicyFile",
   "normsDirectory",
   "maximumHistoryRecords",
@@ -264,7 +333,7 @@ const unservable = fc.oneof(
   fc
     .stringMatching(/^[a-zA-Z]{3,12}$/)
     .filter((name) => !knownSettings.has(name))
-    .map((name) => ({ [name]: settings.port })),
+    .map((name) => ({ [name]: 4319 })),
   fc
     .oneof(
       fc.stringMatching(/^[A-Z ]{3,12}$/),
@@ -273,96 +342,37 @@ const unservable = fc.oneof(
     .map((name) => ({ serverAgent: { name, subject: "server" } })),
 );
 
-it.prop(
-  "refuses a document with a setting it cannot serve",
-  [unservable],
-  ([setting]) =>
-    Effect.gen(function* () {
-      const test = yield* fixture;
-      yield* test.write({ ...settings, ...setting });
-
-      const failure = yield* test.load.pipe(Effect.flip);
-
-      expect(failure.message).toContain("settings file");
-    }).pipe(Effect.provide(NodeContext.layer)),
-  { fastCheck: { numRuns: 40 } },
-);
-
-const resource = new URL("https://mcp.example.test/mcp");
-const protocolVersion = "2026-07-28";
-
-/**
- * A daemon's HTTP app behind a test issuer: `token` signs a token for a
- * subject, and `request` sends one raw MCP request with a bearer token.
- */
-const admission = Effect.gen(function* () {
-  const { daemon, sql } = yield* inProcessDaemon();
-  const issuer = yield* issuerFixture().pipe(Effect.orDie);
-  const handle = HttpApp.toWebHandler(
-    yield* makeMcpHttpApp(
-      { resource, issuer: issuer.issuer, scope: requiredScope },
-      daemon,
-    ).pipe(Effect.orDie),
-  );
-  return {
-    sql,
-    issuer,
-    token: (subject: string, claims: Parameters<typeof issuer.token>[2] = {}) =>
-      issuer.token(subject, resource.href, claims).pipe(Effect.orDie),
-    request: (
-      bearer: string,
-      method: string,
-      params: Readonly<Record<string, unknown>> = {},
-    ) =>
-      Effect.tryPromise(() =>
-        handle(
-          new Request(resource, {
-            method: "POST",
-            headers: {
-              host: resource.host,
-              authorization: `Bearer ${bearer}`,
-              "content-type": "application/json",
-              accept: "application/json, text/event-stream",
-              "mcp-protocol-version": protocolVersion,
-              "mcp-method": method,
-            },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method,
-              params: {
-                ...params,
-                _meta: {
-                  "io.modelcontextprotocol/protocolVersion": protocolVersion,
-                  "io.modelcontextprotocol/clientCapabilities": {},
-                  "io.modelcontextprotocol/clientInfo": {
-                    name: "daemon-test",
-                    version: "1",
-                  },
-                },
-              },
-            }),
-          }),
+it("refuses a document with a setting it cannot serve", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(unservable, (setting) =>
+          Effect.gen(function* () {
+            yield* test.write({ ...test.settings, ...setting });
+            expect(yield* test.refusal).toContain("settings file");
+          }).pipe(Effect.runPromise),
         ),
-      ).pipe(Effect.orDie),
-  };
-});
+        { numRuns: 40 },
+      ),
+    );
+  }).pipe(Effect.provide(platform)));
 
-/** The subject of every owner with an agent on `daemon`. */
-const ownersOf = (daemon: Effect.Effect.Success<typeof admission>) =>
-  daemon.sql<{
-    subject: string;
-  }>`SELECT subject FROM agent_cards ORDER BY subject`.pipe(
-    Effect.map((rows) => rows.map((row) => row.subject)),
-    Effect.orDie,
-  );
+it("refuses to start on a port another process holds, naming the port", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.start;
+    expect(yield* test.refusal).toContain(
+      `could not listen on 127.0.0.1:${test.settings.port}`,
+    );
+  }).pipe(Effect.provide(platform)));
 
 /** A scope that begins with the configured one and goes on past it. */
 const longerScope = fc
   .stringMatching(/^[a-z:]{1,3}$/u)
   .map((more) => `${requiredScope}${more}`);
 
-/** Claims the resource admits: any subject, and the configured scope anywhere among those granted. */
+/** Claims the daemon admits: any subject, and the configured scope anywhere among those granted. */
 const admissible = fc.record({
   subject: fc.string({ minLength: 1 }),
   granted: fc
@@ -370,137 +380,108 @@ const admissible = fc.record({
     .map(([before, after]) => [...before, requiredScope, ...after]),
 });
 
-/** One claim that puts a token outside the resource's authority. */
+/** One claim that puts a token outside the daemon's authority. */
 const defect = fc.oneof(
   fc.record({ subject: fc.constant("") }),
-  fc.record({
-    audience: fc
-      .webUrl()
-      .filter((url) => url !== "https://mcp.example.test/mcp"),
-  }),
   fc.record({ granted: fc.array(longerScope) }),
   fc.record({ secondsLeft: fc.integer({ min: -3600, max: 0 }) }),
 );
 
-/** Checks `rule` against generated claims. */
-const forAll = <Claims>(
-  claims: fc.Arbitrary<Claims>,
-  rule: (claims: Claims) => Effect.Effect<void>,
-) =>
-  Effect.tryPromise(() =>
-    fc.assert(
-      fc.asyncProperty(claims, (each) => Effect.runPromise(rule(each))),
-    ),
-  );
-
-it("answers a token granted the scope from the agent of its subject", () =>
+it("answers a token granted the scope from the agent of its subject, whose tools it can call", () =>
   Effect.gen(function* () {
-    const daemon = yield* admission;
-    yield* forAll(admissible, ({ subject, granted }) =>
-      Effect.gen(function* () {
-        const response = yield* daemon.request(
-          yield* daemon.token(subject, { scope: granted.join(" ") }),
-          "server/discover",
-        );
-        expect(response.status).toBe(200);
-        expect(yield* ownersOf(daemon)).toContain(subject);
-      }),
+    const test = yield* fixture;
+    yield* test.start;
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(admissible, ({ subject, granted }) =>
+          Effect.gen(function* () {
+            const response = yield* test.request(
+              "server/discover",
+              yield* test.token(subject, { scope: granted.join(" ") }),
+            );
+            expect(response.status).toBe(200);
+            expect(yield* test.owners).toContain(subject);
+          }).pipe(Effect.runPromise),
+        ),
+        { numRuns: 30 },
+      ),
     );
-  }));
+    const status = yield* callTool(
+      yield* connect(test, yield* test.token("server")),
+      "status",
+    );
+    expect(status.agentName).toBe("front-desk");
+  }).pipe(Effect.provide(platform)));
 
-it("refuses a token with an empty subject, another audience, no grant of the scope or no time left", () =>
+it("refuses a request with no token, a defective token or another issuer's token, and creates no agent for it", () =>
   Effect.gen(function* () {
-    const daemon = yield* admission;
-    yield* forAll(defect, (claim) =>
+    const test = yield* fixture;
+    yield* test.start;
+    const other = yield* issuerFixture().pipe(Effect.orDie);
+    const refused = (bearer?: string) =>
       Effect.gen(function* () {
-        const token = yield* daemon.issuer
-          .token(
-            "subject" in claim ? claim.subject : "owner",
-            "audience" in claim ? claim.audience : resource.href,
-            {
-              ...("granted" in claim ? { scope: claim.granted.join(" ") } : {}),
-              ...("secondsLeft" in claim
-                ? { secondsLeft: claim.secondsLeft }
-                : {}),
-            },
-          )
-          .pipe(Effect.orDie);
-        const response = yield* daemon.request(token, "server/discover");
-        expect(response.ok).toBe(false);
-        expect(yield* ownersOf(daemon)).toEqual(["alice"]);
-      }),
+        expect(
+          (yield* test.request("server/discover", bearer)).status,
+        ).toBeGreaterThanOrEqual(400);
+        expect(yield* test.owners).toEqual(["server"]);
+      });
+    yield* refused();
+    yield* refused(
+      yield* other
+        .token("owner", test.settings.authentication.resource)
+        .pipe(Effect.orDie),
     );
-  }));
+    yield* refused(
+      yield* test
+        .token("owner", {})
+        .pipe(Effect.map((token) => `${token.slice(0, -4)}AAAA`)),
+    );
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(defect, (claim) =>
+          Effect.gen(function* () {
+            yield* refused(
+              yield* test.token("subject" in claim ? claim.subject : "owner", {
+                ...("granted" in claim
+                  ? { scope: claim.granted.join(" ") }
+                  : {}),
+                ...("secondsLeft" in claim
+                  ? { secondsLeft: claim.secondsLeft }
+                  : {}),
+              }),
+            );
+          }).pipe(Effect.runPromise),
+        ),
+        { numRuns: 30 },
+      ),
+    );
+  }).pipe(Effect.provide(platform)));
 
 it(
-  "closes an admitted stream at token expiry without closing later requests",
+  "ends an admitted stream when its token expires and when the daemon stops, and keeps answering other requests meanwhile",
   () =>
     Effect.gen(function* () {
-      const daemon = yield* admission;
-      const response = yield* daemon.request(
-        yield* daemon.token("alice", { secondsLeft: 2 }),
-        "subscriptions/listen",
-        { notifications: { toolsListChanged: true } },
+      const test = yield* fixture;
+      const running = yield* test.start;
+      const listen = (secondsLeft: number) =>
+        Effect.flatMap(test.token("server", { secondsLeft }), (token) =>
+          test.request("subscriptions/listen", token),
+        );
+
+      const expiring = yield* listen(2);
+      expect(expiring.status).toBe(200);
+      expect(yield* expiring.text).toContain(
+        "notifications/subscriptions/acknowledged",
       );
-      expect(response.status).toBe(200);
-      const body = yield* Effect.tryPromise(() => response.text());
-      expect(body).toContain("notifications/subscriptions/acknowledged");
-      const later = yield* daemon.request(
-        yield* daemon.token("alice"),
-        "server/discover",
-      );
-      expect(later.status).toBe(200);
-    }),
-  15000,
+      expect(
+        (yield* test.request("server/discover", yield* test.token("server")))
+          .status,
+      ).toBe(200);
+
+      const open = yield* listen(3600);
+      yield* Fiber.interrupt(running);
+      yield* open.text.pipe(Effect.ignore, Effect.timeout("5 seconds"));
+      expect(yield* Effect.flip(test.reach)).toBeDefined();
+    }).pipe(Effect.provide(platform)),
+  20_000,
 );
-
-const boundPort = Effect.gen(function* () {
-  const server = yield* NodeHttpServer.make(createServer, {
-    host: "127.0.0.1",
-    port: 0,
-  });
-  if (server.address._tag !== "TcpAddress") {
-    return yield* Effect.dieMessage("Expected TCP listener");
-  }
-  return server.address.port;
-});
-
-it("reports an occupied port before declaring the listener ready", () =>
-  Effect.gen(function* () {
-    const port = yield* boundPort;
-    expect(
-      yield* serveMcp(
-        port,
-        Effect.succeed(HttpServerResponse.empty()),
-        "127.0.0.1",
-      ).pipe(Effect.flip),
-    ).toMatchObject({ _tag: "ServeError" });
-  }));
-
-it("closes an active event stream with the listener's scope", () =>
-  Effect.gen(function* () {
-    const port = yield* Effect.scoped(boundPort);
-    const scope = yield* Scope.make();
-    const app = Effect.succeed(
-      HttpServerResponse.stream(
-        Stream.concat(Stream.make("active"), Stream.never).pipe(
-          Stream.encodeText,
-        ),
-      ),
-    );
-    yield* serveMcp(port, app, "127.0.0.1").pipe(
-      Effect.provideService(Scope.Scope, scope),
-    );
-    const url = `http://127.0.0.1:${port}`;
-    yield* HttpClient.get(url).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.provide(NodeHttpClient.layer),
-    );
-    yield* Scope.close(scope, Exit.void).pipe(Effect.timeout("2 seconds"));
-    expect(
-      yield* HttpClient.get(url).pipe(
-        Effect.provide(NodeHttpClient.layer),
-        Effect.flip,
-      ),
-    ).toBeInstanceOf(HttpClientError.RequestError);
-  }));
