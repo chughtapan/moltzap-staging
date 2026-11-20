@@ -1,5 +1,5 @@
 /**
- * @file The server one daemon is: the messages a server agent and each of
+ * @file The server `sharnessd` runs: the messages a server agent and each of
  * its clients send each other, every agent's inbox and history, and the
  * decisions of the server agent's firewall, with the tables they live in;
  * and the MCP tools and inbox event through which an agent's host reaches
@@ -11,8 +11,8 @@ import { SqlClient, type Statement } from "@effect/sql";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import {
   type AuthInfo,
-  createMcpHandler,
   McpServer,
+  type McpServerFactory,
   type StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
 import { EventsExtension } from "@modelcontextprotocol/server/ext/events";
@@ -33,7 +33,6 @@ import {
   Runtime,
   Schema,
 } from "effect";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import packageJson from "../package.json" with { type: "json" };
 import {
@@ -51,12 +50,11 @@ import {
   wellFormedString,
 } from "./messages.js";
 
-/** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
+/** The version of this package, as MCP clients and telemetry read it. */
 export const packageVersion: string = packageJson.version;
 
 /**
  * The environment names no database URL.
- * Exported so the daemon's inferred startup failure can be named.
  * @public
  */
 export class DatabaseUrlMissingError extends Data.TaggedError(
@@ -67,16 +65,15 @@ export class DatabaseUrlMissingError extends Data.TaggedError(
   }
 }
 
-/** The URL of the daemon's database. */
+/** Read from `SHARNESS_DATABASE_URL`. */
 export const databaseUrl = Config.redacted("SHARNESS_DATABASE_URL").pipe(
   Effect.catchTag("ConfigError", () => new DatabaseUrlMissingError()),
   Effect.withSpan("databaseUrl"),
 );
 
 /**
- * The daemon's tables could not be created. Messages name the operator's
+ * The tables could not be created. Messages name the operator's
  * action without disclosing SQL.
- * Exported so the daemon's inferred startup failure can be named.
  * @public
  */
 export class DatabasePreparationError extends Data.TaggedError(
@@ -347,13 +344,6 @@ const MAXIMUM_WAIT_SECONDS = 50;
 const ACT_SYNTAX =
   "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
 
-/**
- * The runtime of the fiber that carries the HTTP request the MCP SDK is
- * answering. The SDK builds the request's server and calls its tools from
- * promises, which this storage follows.
- */
-const requestRuntime = new AsyncLocalStorage<Runtime.Runtime<never>>();
-
 /** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
 const INBOX_CHECK_MILLISECONDS = 1000;
 
@@ -369,16 +359,16 @@ const INBOX_EVENT = "org.social-harness/inbox.pending";
 const STORE_LOCK = 1;
 
 /**
- * Opens the daemon on the database at `url` until the scope closes, and
- * returns its MCP handler: for an admitted request, whose `authInfo` names
- * its owner in `extra.issuer` and `extra.subject`, the web handler that
- * answers as the owner's agent. The owner `server.issuer` and
- * `server.subject` name has the server agent, called `server.name`; every
- * other owner has a client, named from its issuer and subject. No MCP server
- * outlives a request, and an aborted request ends a call in flight.
+ * Connects to the database at `url` until the scope closes, prepares the
+ * tables, and returns the factory the MCP SDK builds each request's server
+ * with. A request's `authInfo` names its owner in `extra.issuer` and
+ * `extra.subject`: the owner `server.issuer` and `server.subject` name has
+ * the server agent, called `server.name`, and every other owner has a client,
+ * named from its issuer and subject. A tool call runs on the runtime this
+ * effect ran in and is interrupted when its request is aborted.
  */
 // eslint-disable-next-line max-lines-per-function -- This function is the scope the tools share: the database client, the firewall, the locks and the wake signal. Each function inside it is under the limit.
-export const openDaemon = Effect.fn("openDaemon")(function* (
+export const serverFactory = Effect.fn("serverFactory")(function* (
   url: Redacted.Redacted,
   server: {
     readonly issuer: string;
@@ -702,6 +692,70 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     Effect.withSpan("conversationsOf"),
   );
 
+  /**
+   * Registers a tool whose calls `execute` answers. A call runs with `run` and
+   * is interrupted when its request is aborted. Its value is the result's structured content. A typed failure is a result
+   * marked as an error. A call that ends any other way is logged and answered
+   * with a fixed text that says nothing of what went wrong.
+   */
+  const register = <
+    A,
+    I,
+    B extends object,
+    J extends object,
+    E extends Failure,
+  >(
+    mcp: McpServer,
+    name: string,
+    tool: {
+      readonly description: string;
+      readonly input: Schema.Schema<A, I>;
+      readonly output: Schema.Schema<B, J>;
+      readonly readOnly?: true;
+    },
+    execute: (input: A) => Effect.Effect<B, E>,
+  ) => {
+    const outputSchema: StandardSchemaWithJSON<object, object> = standard(
+      tool.output,
+    );
+    mcp.registerTool(
+      name,
+      {
+        description: tool.description,
+        inputSchema: standard(tool.input),
+        outputSchema,
+        annotations: tool.readOnly && {
+          readOnlyHint: true,
+          openWorldHint: false,
+        },
+      },
+      (input, ctx) =>
+        run(
+          execute(input).pipe(
+            Effect.flatMap((value) =>
+              Effect.orDie(Schema.encode(tool.output)(value)),
+            ),
+            Effect.map((structuredContent) => ({ structuredContent })),
+            Effect.catchAll((failure) => Effect.succeed(failed(failure))),
+            Effect.catchAllDefect((defect) =>
+              Effect.logError("A tool call ended unexpectedly", defect).pipe(
+                Effect.as({
+                  isError: true as const,
+                  content: [
+                    {
+                      type: "text" as const,
+                      text: "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+                    },
+                  ],
+                }),
+              ),
+            ),
+          ),
+          { signal: ctx.mcpReq.signal },
+        ),
+    );
+  };
+
   const registerSharedTools = (mcp: McpServer, caller: AgentName) => {
     register(
       mcp,
@@ -870,75 +924,10 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
     return mcp;
   };
 
-  const mcp = createMcpHandler(({ authInfo }) =>
-    requestServer(callerOf(authInfo)),
-  );
-  const answerIn =
-    (authInfo: AuthInfo, runtime: Runtime.Runtime<never>) =>
-    (request: Request) =>
-      requestRuntime.run(runtime, () => mcp.fetch(request, { authInfo }));
-  return (authInfo: AuthInfo) =>
-    Effect.map(Effect.runtime(), (runtime) => answerIn(authInfo, runtime));
+  const factory: McpServerFactory = ({ authInfo }) =>
+    requestServer(callerOf(authInfo));
+  return factory;
 });
-
-/**
- * Registers a tool whose calls `execute` answers. A call runs in the runtime
- * of the HTTP request's fiber and is interrupted when the request is aborted.
- * Its value is the result's structured content. A typed failure is a result
- * marked as an error. A call that ends any other way is logged and answered
- * with a fixed text that says nothing of what went wrong.
- */
-function register<A, I, B extends object, J extends object, E extends Failure>(
-  mcp: McpServer,
-  name: string,
-  tool: {
-    readonly description: string;
-    readonly input: Schema.Schema<A, I>;
-    readonly output: Schema.Schema<B, J>;
-    readonly readOnly?: true;
-  },
-  execute: (input: A) => Effect.Effect<B, E>,
-) {
-  const outputSchema: StandardSchemaWithJSON<object, object> = standard(
-    tool.output,
-  );
-  mcp.registerTool(
-    name,
-    {
-      description: tool.description,
-      inputSchema: standard(tool.input),
-      outputSchema,
-      annotations: tool.readOnly && {
-        readOnlyHint: true,
-        openWorldHint: false,
-      },
-    },
-    (input, ctx) =>
-      inRequest(
-        execute(input).pipe(
-          Effect.flatMap((value) =>
-            Effect.orDie(Schema.encode(tool.output)(value)),
-          ),
-          Effect.map((structuredContent) => ({ structuredContent })),
-          Effect.catchAll((failure) => Effect.succeed(failed(failure))),
-          Effect.catchAllDefect((defect) =>
-            Effect.logError("A tool call ended unexpectedly", defect).pipe(
-              Effect.as({
-                isError: true as const,
-                content: [
-                  {
-                    type: "text" as const,
-                    text: "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-                  },
-                ],
-              }),
-            ),
-          ),
-        ),
-        ctx.mcpReq.signal,
-      ),
-  );
-}
 
 /** A typed failure of a tool: what a model reads of it, and its own fields, which a host reads. */
 interface Failure {
@@ -983,18 +972,4 @@ function standard<A, I>(
       jsonSchema: { input: json, output: json },
     },
   };
-}
-
-/**
- * Runs `work` for the MCP SDK in the runtime of the HTTP request's fiber, so
- * its spans keep their parent, and interrupts it when `signal` aborts.
- */
-function inRequest<A>(work: Effect.Effect<A>, signal?: AbortSignal) {
-  return Effect.runPromise(
-    Effect.fromNullable(requestRuntime.getStore()).pipe(
-      Effect.flatMap((runtime) => Effect.provide(work, runtime)),
-      Effect.orDie,
-    ),
-    { signal },
-  );
 }

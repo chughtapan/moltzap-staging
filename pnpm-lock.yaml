@@ -36,6 +36,9 @@ catalogs:
     '@modelcontextprotocol/client':
       specifier: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589
       version: 2.4.0
+    '@modelcontextprotocol/node':
+      specifier: https://pkg.pr.new/@modelcontextprotocol/node@5ebb589
+      version: 2.1.2
     '@modelcontextprotocol/server':
       specifier: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589
       version: 2.4.0
@@ -130,6 +133,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
         version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)
+      '@modelcontextprotocol/node':
+        specifier: 'catalog:'
+        version: https://pkg.pr.new/@modelcontextprotocol/node@5ebb589(@modelcontextprotocol/server@https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1))
       '@modelcontextprotocol/server':
         specifier: 'catalog:'
         version: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1)
@@ -619,6 +625,12 @@ packages:
 
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
+
+  '@hono/node-server@2.1.11':
+    resolution: {integrity: sha512-KzKz9vl4vvr1vgLHamj+g5uonbrj5NwAdO3yzOS6cd2HjALVeOgTgeZOyAzNxejbkfOOPIcvuf/Tg8l1pEFLog==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4 || ^5.0.0-0
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1123,6 +1135,13 @@ packages:
     resolution: {tarball: https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589}
     version: 2.4.0
     engines: {node: '>=20'}
+
+  '@modelcontextprotocol/node@https://pkg.pr.new/@modelcontextprotocol/node@5ebb589':
+    resolution: {tarball: https://pkg.pr.new/@modelcontextprotocol/node@5ebb589}
+    version: 2.1.2
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@modelcontextprotocol/server': ^2.4.0
 
   '@modelcontextprotocol/server@https://pkg.pr.new/@modelcontextprotocol/server@5ebb589':
     resolution: {tarball: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589}
@@ -4012,6 +4031,10 @@ packages:
   hastscript@9.0.1:
     resolution: {integrity: sha512-g7df9rMFX/SPi34tyGCyUBREQoKkapwdY/T04Qn9TDWfHhAYt4/I0gMVirzK5wEzeUqIjEB+LXC/ypb7Aqno5w==}
 
+  hono@4.13.19:
+    resolution: {integrity: sha512-KmXvQAXwcAHV+muzbIwoJ23niEB5nMoDVr9WcRkU8mvjUECm/1+7v4Jgp7P7a+H6MLFrh+vXrGonGrGS+RQfkA==}
+    engines: {node: '>=16.9.0'}
+
   html-entities@2.6.0:
     resolution: {integrity: sha512-kig+rMn/QOVRvr7c86gQ8lWXq+Hkv6CbAH1hLu+RG338StTpE8Z0b44SDVaqVu7HGKf27frdmUYEs9hTUX/cLQ==}
 
@@ -6784,6 +6807,10 @@ snapshots:
 
   '@floating-ui/utils@0.2.11': {}
 
+  '@hono/node-server@2.1.11(hono@4.13.19)':
+    dependencies:
+      hono: 4.13.19
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -7492,6 +7519,12 @@ snapshots:
   '@modelcontextprotocol/core@https://pkg.pr.new/modelcontextprotocol/typescript-sdk/@modelcontextprotocol/core@5ebb589':
     dependencies:
       zod: 4.6.7
+
+  '@modelcontextprotocol/node@https://pkg.pr.new/@modelcontextprotocol/node@5ebb589(@modelcontextprotocol/server@https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1))':
+    dependencies:
+      '@hono/node-server': 2.1.11(hono@4.13.19)
+      '@modelcontextprotocol/server': https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1)
+      hono: 4.13.19
 
   '@modelcontextprotocol/server@https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -10428,6 +10461,8 @@ snapshots:
       hast-util-parse-selector: 4.0.0
       property-information: 7.1.0
       space-separated-tokens: 2.0.2
+
+  hono@4.13.19: {}
 
   html-entities@2.6.0: {}
 

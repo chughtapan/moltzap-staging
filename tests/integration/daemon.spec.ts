@@ -1,13 +1,21 @@
 /** @file How the `sharnessd` binary starts and refuses to start and what it keeps across a restart. */
 
-import { Command, FileSystem } from "@effect/platform";
+import {
+  Command,
+  FetchHttpClient,
+  FileSystem,
+  HttpClient,
+  HttpClientRequest,
+} from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { Effect, Schedule, Stream } from "effect";
+import { Effect, identity, Redacted, Schedule, Stream } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { callTool, send, type SignedIn } from "../../src/__tests__/daemon.js";
+import { issuerFixture } from "../../src/__tests__/test.js";
 import {
+  inboxStream,
   processTrace,
   SERVER_AGENT_NAME,
   SERVER_AGENT_OWNER,
@@ -101,28 +109,146 @@ it.for(runs)(
     )(context),
 );
 
+/** A norm document with no English rule. */
+const unruledNorm = `(norm ping :initiator Asker :participant Answerer)
+(content ask :by Asker :starts true :ends true)
+`;
+
+/** The same norm with an English rule, which needs a decision provider. */
+const ruledNorm = `${unruledNorm}(rule :act ask "The question is polite.")
+`;
+
 it(
-  "rejects an invalid message policy file and starts again once the settings no longer name it",
+  "refuses each settings file it cannot serve and an occupied port, saying which, and starts with a policy and norms named relative to the settings file",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
-      const original = yield* daemon.start();
-      const { name } = yield* daemon.signInAs("carol");
-      yield* stopProcess(original);
       const fs = yield* FileSystem.FileSystem;
-      const messagePolicyFile = join(daemon.directory, "invalid-policy.json");
-      yield* fs.writeFileString(
-        messagePolicyFile,
-        JSON.stringify({
-          mode: "off",
-        }),
+      const write = (path: string, content: string) =>
+        fs
+          .makeDirectory(dirname(join(daemon.directory, path)), {
+            recursive: true,
+          })
+          .pipe(
+            Effect.zipRight(
+              fs.writeFileString(join(daemon.directory, path), content),
+            ),
+            Effect.as(path),
+          );
+      const unjudged = yield* write("unjudged.json", "{}");
+      const judged = yield* write(
+        "nested/policy.json",
+        JSON.stringify({ decisionProvider: { model: "configured-model" } }),
       );
-      yield* daemon.configure({ messagePolicyFile });
-      expect((yield* daemon.startupFailure()).exitCode).not.toBe(0);
-      yield* daemon.configure({ messagePolicyFile: undefined });
+      yield* write("nested/norms/ping.lisp", ruledNorm);
+      yield* write("broken/ping.lisp", "(norm ping :initiator Asker)");
+      const refusals: ReadonlyArray<
+        readonly [Readonly<Record<string, unknown>>, string]
+      > = [
+        [{ port: 65_536 }, "settings file"],
+        [{ port: 0.5 }, "settings file"],
+        [{ unknownSetting: 1 }, "settings file"],
+        [
+          { serverAgent: { name: "Front Desk", subject: SERVER_AGENT_OWNER } },
+          "settings file",
+        ],
+        [{ maximumHistoryRecords: 0 }, "settings file"],
+        [{ maximumHistoryRecords: 1025 }, "settings file"],
+        [{ messagePolicyFile: "absent.json" }, ""],
+        [{ normsDirectory: "nested/norms" }, "configured norms"],
+        [
+          { normsDirectory: "nested/norms", messagePolicyFile: unjudged },
+          "configured norms",
+        ],
+        [
+          { normsDirectory: "broken", messagePolicyFile: unjudged },
+          "norms directory",
+        ],
+      ];
+      const settings = yield* fs.readFileString(
+        join(daemon.directory, "settings.json"),
+      );
+      for (const [changes, said] of refusals) {
+        yield* fs.writeFileString(
+          join(daemon.directory, "settings.json"),
+          JSON.stringify({ ...JSON.parse(settings), ...changes }),
+        );
+        const refused = yield* daemon.startupFailure();
+        expect([changes, refused.exitCode]).toEqual([changes, 1]);
+        expect(refused.logs).toContain(said);
+      }
+
+      yield* fs.writeFileString(
+        join(daemon.directory, "settings.json"),
+        settings,
+      );
+      yield* daemon.configure({
+        maximumHistoryRecords: 1024,
+        messagePolicyFile: judged,
+        normsDirectory: "nested/norms",
+      });
       yield* daemon.start();
-      expect((yield* daemon.signInAs("carol")).name).toBe(name);
+      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+      const shown = yield* Effect.tryPromise(() =>
+        server.mcp.callTool({ name: "read_norms", arguments: {} }),
+      );
+      expect(shown.structuredContent).toMatchObject({
+        norms: [{ name: "ping", document: ruledNorm }],
+      });
+
+      const occupied = yield* daemon.startupFailure();
+      expect(occupied.exitCode).toBe(1);
+      expect(occupied.logs).toContain(`could not listen on ${daemon.host}`);
     }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
+it(
+  "admits a token granted the scope as the agent of its subject, refuses every other request with the SDK's answer, and stops promptly with a stream open",
+  processTrace(
+    Effect.gen(function* () {
+      const daemon = yield* sharedDaemon();
+      const running = yield* daemon.start();
+      const other = yield* issuerFixture();
+      const client = yield* HttpClient.HttpClient;
+      const statusOf = (path: string, bearer: string) =>
+        HttpClientRequest.post(new URL(path, daemon.endpoint)).pipe(
+          bearer === "" ? identity : HttpClientRequest.bearerToken(bearer),
+          client.execute,
+          Effect.map((response) => response.status),
+        );
+      const issued = (
+        owner: string,
+        claims: Parameters<typeof daemon.bearer>[1],
+      ) => Effect.map(daemon.bearer(owner, claims), Redacted.value);
+
+      expect(yield* statusOf("/mcp", "")).toBe(401);
+      expect(yield* statusOf("/other", yield* issued("bob", {}))).toBe(404);
+      const good = yield* issued("bob", {});
+      for (const defective of [
+        yield* other.token("bob", daemon.resource),
+        `${good.slice(0, -4)}AAAA`,
+        yield* issued("bob", { secondsLeft: -1 }),
+        yield* issued("", {}),
+      ]) {
+        expect(yield* statusOf("/mcp", defective)).toBe(401);
+      }
+      expect(
+        yield* statusOf("/mcp", yield* issued("bob", { scope: "other:scope" })),
+      ).toBe(403);
+
+      const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
+      expect(server.name).toBe(SERVER_AGENT_NAME);
+      const bob = yield* daemon.signInAs("bob");
+      expect(bob.name).toMatch(/^agent-[0-9a-f]{24}$/u);
+      expect((yield* daemon.signInAs("bob")).name).toBe(bob.name);
+
+      yield* Effect.forkScoped(Stream.runDrain(inboxStream(bob, "0", "push")));
+      yield* callTool(bob, "receive_messages");
+      yield* stopProcess(running);
+      expect(running.child.signalCode).toBeNull();
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),
   PROCESS_TEST_TIMEOUT_MS,
 );
