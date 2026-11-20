@@ -1,12 +1,6 @@
 /** @file Fixtures of one daemon's agents: the server agent behind real policy over stored messages in a test database, with the clients that message it. */
 
 import { Effect, PubSub, Schema } from "effect";
-import type {
-  DecisionProvider,
-  DecisionRequest,
-  DecisionResponse,
-  LoadedMessagePolicy,
-} from "../firewall/index.js";
 import {
   AgentAddress,
   conversationsOf,
@@ -18,7 +12,14 @@ import {
   type SendRequest,
 } from "../daemon/agent.js";
 import { readDecisions } from "../daemon/store.js";
-import { type Firewall, makeFirewall } from "../firewall/service.js";
+import {
+  type DecisionProvider,
+  type DecisionRequest,
+  type DecisionResponse,
+  type Firewall,
+  type LoadedMessagePolicy,
+  makeFirewall,
+} from "../firewall/firewall.js";
 import { type AgentCard, Message } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";

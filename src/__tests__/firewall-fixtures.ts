@@ -1,20 +1,19 @@
 /** @file Shared fixtures for firewall tests: an agent's firewall, messages, rules and a test provider. */
 
 import { Effect, Encoding } from "effect";
-import type { DecisionProvider } from "../check.js";
+import {
+  type DecisionProvider,
+  type LoadedMessagePolicy,
+  makeFirewall,
+  type TextRule,
+} from "../firewall/firewall.js";
 import {
   AgentCard,
   AgentId,
   AgentName,
   Message,
   PrincipalId,
-} from "../../messages.js";
-import {
-  decodeMessagePolicy,
-  type LoadedMessagePolicy,
-  type TextRule,
-} from "../rules.js";
-import { makeFirewall } from "../service.js";
+} from "../messages.js";
 
 /** A fixed rule the test provider always finds broken. */
 export const privacy = {
@@ -91,18 +90,11 @@ export function policy(
   return {
     provider,
     source: {
-      policy: Effect.runSync(
-        decodeMessagePolicy(
-          JSON.stringify({
-            decisionProvider: { model: "test" },
-            rules,
-            settings: {
-              minimumProbability: 0.5,
-              timeoutMilliseconds: 5_000,
-            },
-          }),
-        ),
-      ),
+      policy: {
+        decisionProvider: { model: "test" },
+        rules,
+        settings: { minimumProbability: 0.5, timeoutMilliseconds: 5_000 },
+      },
     },
   };
 }

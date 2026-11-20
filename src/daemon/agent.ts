@@ -7,13 +7,13 @@
 
 import { Data, Duration, Effect, Order, PubSub, Queue, Schema } from "effect";
 import { randomBytes } from "node:crypto";
-import type { Firewall } from "../firewall/service.js";
 import type { InstalledNorms } from "../norms/index.js";
 import {
   type CheckRecord,
+  type Firewall,
   type FirewallRefusalReason,
   LocalGuidance,
-} from "../firewall/index.js";
+} from "../firewall/firewall.js";
 import {
   AGENT_NAME_RULE,
   type AgentCard,

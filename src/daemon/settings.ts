@@ -10,7 +10,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
-} from "../firewall/index.js";
+} from "../firewall/firewall.js";
 import { AgentName } from "../messages.js";
 import {
   initialNormsHaveRules,

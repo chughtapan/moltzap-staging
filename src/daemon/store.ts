@@ -21,7 +21,7 @@ import {
   type CheckRecord,
   checkRecordSchema,
   type EarlierMessage,
-} from "../firewall/index.js";
+} from "../firewall/firewall.js";
 import { AgentCard, AgentName, Message } from "../messages.js";
 /**
  * The rejected database URL remains private because PostgreSQL URLs can contain credentials.

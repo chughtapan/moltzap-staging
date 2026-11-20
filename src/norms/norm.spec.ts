@@ -2,7 +2,7 @@
 
 import { Effect, Either, FastCheck as fc, Struct } from "effect";
 import { expect, it } from "vitest";
-import { peer } from "../firewall/__tests__/firewall-fixtures.js";
+import { peer } from "../__tests__/firewall-fixtures.js";
 import { Message } from "../messages.js";
 import { form, normOf } from "./__tests__/norms-fixtures.js";
 import {

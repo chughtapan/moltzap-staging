@@ -26,8 +26,7 @@
         "src/firewall"
       ],
       "entrypoints": [
-        "src/firewall/index.ts",
-        "src/firewall/service.ts"
+        "src/firewall/firewall.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },
