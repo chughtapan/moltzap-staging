@@ -18,6 +18,7 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { DecisionProvider, Firewall } from "./firewall.js";
+import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
 import {
   callTool,
   decisionState,
@@ -26,7 +27,6 @@ import {
   send,
   type SignedIn,
 } from "./__tests__/server.js";
-import { answersTo, type TestPolicy } from "./__tests__/firewall-fixtures.js";
 import { openTestDatabase } from "./__tests__/test.js";
 import { AgentName } from "./messages.js";
 import { compileNorm } from "./norms/compiler.js";
