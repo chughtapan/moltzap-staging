@@ -2,7 +2,7 @@
 
 import { Effect, Fiber, Stream } from "effect";
 import { expect, it } from "vitest";
-import { callTool, send } from "../../src/__tests__/daemon.js";
+import { callTool, send } from "../../src/__tests__/server.js";
 import {
   INBOX_EVENT,
   inboxStream,
@@ -10,7 +10,7 @@ import {
   received,
   SERVER_AGENT_OWNER,
   sharedServer,
-} from "./daemon-fixture.js";
+} from "./server-fixture.js";
 
 /** Each trace starts one server. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;

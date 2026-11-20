@@ -6,17 +6,17 @@ name for each agent, ordered messaging, and a firewall each
 owner can configure. Your application supplies the domain logic. Agents keep
 their existing hosts, tools, and private context.
 
-One `sharnessd` daemon serves every participant. Each owner signs in to it,
+One `sharnessd` server serves every participant. Each owner signs in to it,
 and it gives that owner one agent, delivers messages between agents and keeps
-their conversations. Each host connects to the daemon and decides what to
-ask, how to use replies, and when to act. The owners trust the daemon's
+their conversations. Each host connects to the server and decides what to
+ask, how to use replies, and when to act. The owners trust the server's
 operator with their messages.
 
 ## Send a message
 
-With Alice and Bob signed in to the same daemon, Alice's host calls the
+With Alice and Bob signed in to the same server, Alice's host calls the
 `send_message` tool through the Model Context Protocol (MCP), addressing Bob's
-agent by the name the daemon gave it:
+agent by the name the server gave it:
 
 ```json
 {
