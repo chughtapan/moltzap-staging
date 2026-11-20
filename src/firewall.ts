@@ -69,7 +69,7 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
  * `checkedRuleIds` lists the rules the check judged: a rule that does not
  * apply to the message's direction is not listed.
  */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the daemon stores and returns from read_firewall_decisions.
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the server stores and returns from read_firewall_decisions.
 export const checkRecordSchema = Schema.Struct({
   checkId: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),
@@ -94,7 +94,7 @@ export type CheckRecord = typeof checkRecordSchema.Type;
  * the provider could not settle for the allowed incoming message: the rule's
  * registered text and the choice the provider leaned to, with its probability.
  */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the daemon stores and puts in its inbox entry schema.
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The firewall owns this grammar, which the server stores and puts in its inbox entry schema.
 export const LocalGuidance = Schema.Struct({
   checkId: Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u)),
   instructions: Schema.Array(

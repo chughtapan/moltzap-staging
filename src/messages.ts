@@ -1,9 +1,9 @@
-/** @file The agents of a daemon and the messages they send each other, as validated values. */
+/** @file The agents of a server and the messages they send each other, as validated values. */
 
 import { Data, Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 
-/** The name of an agent on its daemon: the server agent's configured name, or the name a client's owner gives it. */
+/** The name of an agent on its server: the server agent's configured name, or the name a client's owner gives it. */
 export const AgentName = Schema.String.pipe(
   Schema.minLength(3),
   Schema.maxLength(32),

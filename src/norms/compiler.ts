@@ -36,7 +36,7 @@ const attributes: Readonly<Record<string, readonly string[]>> = {
   "multi-select": [":choices", ":min-items", ":max-items"],
 };
 
-/** A norms directory the daemon cannot use, and why. */
+/** A norms directory the server cannot use, and why. */
 export class NormsConfigurationError extends Data.TaggedError(
   "NormsConfigurationError",
 )<{ readonly reason: string }> {

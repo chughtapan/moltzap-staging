@@ -56,7 +56,7 @@ import {
 } from "../../src/__tests__/test.js";
 import { makeFirewall } from "../../src/firewall.js";
 import { AgentName } from "../../src/messages.js";
-import { openDaemon } from "../../src/server.js";
+import { serverFactory } from "../../src/server.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
@@ -311,7 +311,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
  * may not.
  */
 const preparedBy = (url: Redacted.Redacted, issuer: string) =>
-  openDaemon(url, {
+  serverFactory(url, {
     issuer,
     subject: SERVER_AGENT_OWNER,
     name: AgentName.make(SERVER_AGENT_NAME),
@@ -346,6 +346,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
     SHARNESS_DATABASE_URL: Redacted.value(restrictedUrl),
+    SHARNESS_DECISION_PROVIDER_KEY: "private-decision-provider-key",
   };
   const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
     port,
@@ -358,15 +359,22 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
     serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
   });
   const spawned = managedProcess(...DAEMON_COMMAND, environment);
-  const bearer = (owner: string) =>
+  const bearer = (
+    owner: string,
+    claims: Parameters<typeof issuer.token>[2] = {},
+  ) =>
     issuer
-      .token(owner, resource)
+      .token(owner, resource, claims)
       .pipe(
         Effect.map(Redacted.make),
         Effect.mapError(failed(`could not issue a token for ${owner}`)),
       );
   return {
     directory,
+    endpoint,
+    resource,
+    host: `${LOOPBACK_HOST}:${port}`,
+    bearer,
     start: () =>
       spawned.pipe(
         Effect.tap((running) => awaitListening(running, endpoint)),

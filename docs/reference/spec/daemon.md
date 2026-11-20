@@ -60,8 +60,8 @@ header when it sends one.
 The exact issuer and subject select one agent. A host
 that runs unattended presents a token the identity provider issued to it, and
 the daemon treats it like any other.
-An admitted stream closes when its token expires; hosts renew their
-authorization before reconnecting.
+A token is checked when its request arrives; hosts renew their
+authorization before the next request.
 
 ## Firewalls
 
