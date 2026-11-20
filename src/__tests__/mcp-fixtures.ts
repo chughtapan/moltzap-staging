@@ -5,13 +5,12 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer } from "effect";
-import { Firewall } from "../../firewall/service.js";
-import { AgentName, Identity } from "../../identity.js";
-import { openTestDatabase } from "../../test.js";
 import { getOrCreateOwnedAgent } from "../agent.js";
+import { Firewall } from "../firewall/service.js";
+import { AgentName, Identity } from "../identity.js";
 import { makeMcpHttpApp } from "../server.js";
-import { issuerFixture, requiredScope } from "../testing.js";
 import { testDaemon } from "./service-fixtures.js";
+import { issuerFixture, openTestDatabase, requiredScope } from "./test.js";
 
 /** The Host of the fixture's resource, unless a test names another resource. */
 const mcpTestHeaders = { host: "127.0.0.1" };

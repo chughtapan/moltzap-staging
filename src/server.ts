@@ -44,28 +44,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
 import {
-  Cursor,
-  Message,
-  MsgId,
-  Page,
-  PAGE_SIZE,
-  PaginatedRequest,
-  wellFormedString,
-} from "../communication/index.js";
-import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
-import {
-  firewallDecisionsRequestSchema,
-  firewallDecisionsSchema,
-  LocalGuidance,
-} from "../firewall/index.js";
-import { AgentId, AgentName } from "../identity.js";
-import { packageVersion } from "../version.js";
-import {
+  AgentAddress,
   conversationsOf,
   type Daemon,
   getOrCreateOwnedAgent,
   historyRecords,
   type HostedAgent,
+  InboxEntry,
   readInboxEntries,
   receive,
   send,
@@ -73,7 +58,23 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
-import { AgentAddress, INBOX_EVENT, InboxEntry } from "./values.js";
+import {
+  Cursor,
+  Message,
+  MsgId,
+  Page,
+  PAGE_SIZE,
+  PaginatedRequest,
+  wellFormedString,
+} from "./communication/index.js";
+import { compareAscii, exactStruct, isStrictlyAscending } from "./encoding.js";
+import {
+  firewallDecisionsRequestSchema,
+  firewallDecisionsSchema,
+  LocalGuidance,
+} from "./firewall/index.js";
+import { AgentId, AgentName } from "./identity.js";
+import { packageVersion } from "./version.js";
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
@@ -575,6 +576,9 @@ function standard<A, I>(
     },
   };
 }
+
+/** The name of the event whose occurrences are an agent's inbox entries, in read order. */
+const INBOX_EVENT = "org.social-harness/inbox.pending";
 
 /**
  * The daemon's Events extension, which every request's server is built with.
