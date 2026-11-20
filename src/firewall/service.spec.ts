@@ -1,208 +1,154 @@
-/** @file The firewall retains safe decisions across transactions and restart. */
+/** @file A firewall concludes each check as plain data: what it decided, what to save of it and what to reply. */
 
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
-import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import {
-  type Context,
-  Duration,
-  Effect,
-  FastCheck as fc,
-  Schema,
-} from "effect";
+import { Effect, FastCheck as fc, Schema } from "effect";
 import { describe, expect } from "vitest";
-import type { AgentCard } from "../identity.js";
-import type {
-  DecisionProvider,
-  EarlierMessage,
-  StructureCheck,
-} from "./check.js";
-import { openTestDatabase } from "../__tests__/test.js";
 import {
+  alice,
   certainProvider,
-  evidence,
-  firewallLayer,
+  firewallOf,
   incoming,
   outgoing,
   peer,
   policy,
   privacy,
-  withFirewall,
 } from "./__tests__/firewall-fixtures.js";
-import { type Direction, FirewallPolicyError, TextRule } from "./rules.js";
-import { Firewall } from "./service.js";
+import {
+  type DecisionProvider,
+  DecisionProviderError,
+  type StructureCheck,
+} from "./check.js";
+import { type Direction, TextRule } from "./rules.js";
+import { makeFirewall } from "./service.js";
 
-/** Checks the fixtures' draft from `self`, or their peer message to it, with `firewall`. */
+const bob = peer("bob", 2);
+const notice = "Your message was not accepted.";
+
+/** Checks the fixtures' draft from Alice, or their peer message to her, with `firewall`. */
 function check(
-  firewall: Context.Tag.Service<typeof Firewall>,
-  self: AgentCard,
+  firewall: ReturnType<typeof makeFirewall>,
   direction: Direction,
 ) {
   return Effect.gen(function* () {
     return direction === "outgoing"
-      ? yield* firewall.checkOutgoing(yield* outgoing(self), evidence)
-      : yield* firewall.checkIncoming(yield* incoming(self), evidence);
+      ? yield* firewall.checkOutgoing(yield* outgoing(alice), [])
+      : yield* firewall.checkIncoming(yield* incoming(alice), []);
   });
 }
 
-it("isolates saved decisions between agents sharing a database", () =>
-  Effect.gen(function* () {
-    const database = yield* openTestDatabase();
-    const first = { database, agentKey: "first" };
-    const second = { database, agentKey: "second" };
-    const saved = yield* withFirewall(
-      first,
-      (firewall, self) =>
-        Effect.gen(function* () {
-          const decision = yield* firewall.checkOutgoing(
-            yield* outgoing(self),
-            evidence,
-          );
-          yield* decision.save;
-          return yield* firewall.readDecisions({});
-        }),
-      (agentKey) => firewallLayer(agentKey, policy([privacy])),
-    );
-    yield* withFirewall(
-      second,
-      (firewall) =>
-        Effect.gen(function* () {
-          expect(yield* firewall.readDecisions({})).toEqual({ decisions: [] });
-        }),
-      (agentKey) => firewallLayer(agentKey, policy([privacy])),
-    );
-    yield* withFirewall(
-      first,
-      (firewall) =>
-        Effect.gen(function* () {
-          expect(yield* firewall.readDecisions({})).toEqual(saved);
-        }),
-      (agentKey) => firewallLayer(agentKey, policy([privacy])),
-    );
-  }));
+describe("Firewall checks", () => {
+  it.each(["incoming", "outgoing"] as const)(
+    "allows every %s message of an agent without a message policy, with nothing to save",
+    (direction) =>
+      Effect.gen(function* () {
+        const result = yield* check(
+          makeFirewall({ me: alice, historyLimit: 256 }),
+          direction,
+        );
 
-describe("Firewall.readDecisions", () => {
-  it("reads a refused message's saved policy and advice after restart without configuration", () =>
-    Effect.gen(function* () {
-      const database = yield* openTestDatabase();
-      const saved = yield* withFirewall(
-        { database },
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            expect(decision.kind).toBe("refused");
-            yield* decision.save;
-            return (yield* firewall.readDecisions({})).decisions;
-          }),
-        (agentKey) => firewallLayer(agentKey, policy([privacy])),
-      );
-      expect(saved).toMatchObject([
-        {
+        expect(result).toEqual({ kind: "allowed" });
+      }),
+  );
+
+  it.each(["incoming", "outgoing"] as const)(
+    "refuses an %s message that breaks a rule, with the record of that decision for its peer",
+    (direction) =>
+      Effect.gen(function* () {
+        const result = yield* check(firewallOf(policy([privacy])), direction);
+
+        expect(result).toMatchObject({
+          kind: "refused",
           reason: "rule-violation",
-          decision: "refused",
-          peer: peer("bob", 2),
-          decidedBy: [
-            {
-              ruleId: privacy.id,
-              advice: privacy.feedback,
-            },
-          ],
-        },
-      ]);
-      const reopened = yield* withFirewall(
-        { database },
-        (firewall) =>
-          firewall
-            .readDecisions({})
-            .pipe(Effect.map(({ decisions }) => decisions)),
-        Firewall.layer,
-      );
-      expect(reopened).toEqual(saved);
-    }));
+          feedback: [privacy.feedback],
+          record: {
+            direction,
+            decision: direction === "outgoing" ? "refused" : "withheld",
+            peers: [bob],
+            reason: "rule-violation",
+            decidedBy: [{ ruleId: privacy.id, advice: privacy.feedback }],
+            checkedRuleIds: [privacy.id],
+          },
+        });
+      }),
+  );
 
-  it("keeps the original summary and save time across concurrent and repeated saves", () =>
-    Effect.gen(function* () {
-      yield* withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            yield* Effect.all([decision.save, decision.save], {
-              concurrency: 2,
-            });
-            const before = yield* firewall.readDecisions({});
-            yield* Effect.sleep(Duration.millis(5));
-            yield* decision.save;
-            expect(yield* firewall.readDecisions({})).toEqual(before);
-          }),
-        (agentKey) => firewallLayer(agentKey, policy([privacy])),
-      );
-    }));
-});
+  it.each(["incoming", "outgoing"] as const)(
+    "refuses an %s message whose check could not run, with nothing to save",
+    (direction) =>
+      Effect.gen(function* () {
+        const result = yield* check(
+          firewallOf(
+            policy([privacy], {
+              decide: () =>
+                Effect.fail(new DecisionProviderError({ transient: false })),
+            }),
+            { notice },
+          ),
+          direction,
+        );
 
-describe("Firewall.checkOutgoing", () => {
-  it("allows every message of an agent without a message policy without reading its evidence", () =>
-    withFirewall(
-      {},
-      (firewall, self) =>
-        Effect.gen(function* () {
-          const unread = () => Effect.dieMessage("Evidence was read");
-          const sent = yield* firewall.checkOutgoing(
-            yield* outgoing(self),
-            unread,
-          );
-          const received = yield* firewall.checkIncoming(
-            yield* incoming(self),
-            unread,
-          );
+        expect(result).toMatchObject({
+          kind: "refused",
+          reason: "check-unavailable",
+        });
+        expect(result).not.toHaveProperty("record");
+      }),
+  );
 
-          expect([sent.kind, received.kind]).toEqual(["allowed", "allowed"]);
-        }),
-      (agentKey) => Firewall.layer(agentKey),
-    ));
-
-  it("rolls back a completed decision with the enclosing handoff transaction", () =>
-    Effect.gen(function* () {
-      yield* withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const sql = yield* SqlClient.SqlClient;
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            const aborted = yield* sql
-              .withTransaction(
-                decision.save.pipe(
-                  Effect.zipRight(
-                    Effect.fail(
-                      new FirewallPolicyError({ reason: "persistence-failed" }),
+  it.prop(
+    "shows the provider the latest earlier messages up to its history limit, each visible to the agent only if allowed or its own",
+    [fc.integer({ min: 1, max: 4 }), fc.array(fc.boolean(), { maxLength: 6 })],
+    ([historyLimit, allowed]) =>
+      Effect.gen(function* () {
+        const states: unknown[] = [];
+        const recording: DecisionProvider = {
+          decide: (request) => {
+            states.push(
+              Schema.decodeUnknownSync(
+                Schema.parseJson(
+                  Schema.Struct({
+                    history: Schema.Array(
+                      Schema.Struct({ visibleToAgent: Schema.Boolean }),
                     ),
-                  ),
+                    earlierHistoryOmitted: Schema.Boolean,
+                  }),
                 ),
-              )
-              .pipe(Effect.either);
-            expect(aborted._tag).toBe("Left");
-            expect((yield* firewall.readDecisions({})).decisions).toEqual([]);
-            yield* decision.save;
-            expect((yield* firewall.readDecisions({})).decisions).toHaveLength(
-              1,
+              )(request.state),
             );
-          }),
-        (agentKey) => firewallLayer(agentKey, policy([privacy])),
-      );
-    }));
+            return certainProvider.decide(request);
+          },
+        };
+        const earlier = yield* Effect.forEach(
+          allowed,
+          (wasAllowed) =>
+            Effect.map(incoming(alice), (message) => ({
+              message,
+              allowed: wasAllowed,
+              checkedAt: 1,
+            })),
+          { concurrency: 1 },
+        );
+
+        yield* firewallOf(policy([privacy], recording), {
+          historyLimit,
+        }).checkIncoming(yield* incoming(alice), earlier);
+
+        expect(states).toEqual([
+          {
+            history: allowed
+              .slice(-historyLimit)
+              .map((visibleToAgent) => ({ visibleToAgent })),
+            earlierHistoryOmitted: allowed.length > historyLimit,
+          },
+        ]);
+      }),
+    { fastCheck: { numRuns: 20 } },
+  );
 });
 
 describe("Firewall check activity", () => {
@@ -217,16 +163,14 @@ describe("Firewall check activity", () => {
     ([directions]) =>
       Effect.gen(function* () {
         const exporter = new InMemorySpanExporter();
-        const exported = yield* withFirewall(
-          {},
-          (firewall, self) =>
-            Effect.forEach(
-              directions,
-              (direction) => check(firewall, self, direction),
-              { concurrency: 1 },
-            ).pipe(Effect.map(() => exporter.getFinishedSpans())),
-          (agentKey) => firewallLayer(agentKey, policy([privacy])),
+        const firewall = firewallOf(policy([privacy]));
+        const exported = yield* Effect.forEach(
+          directions,
+          (direction) => check(firewall, direction),
+          { concurrency: 1 },
         ).pipe(
+          Effect.map(() => exporter.getFinishedSpans()),
+          Effect.withSpan("checks"),
           Effect.provide(
             NodeSdk.layer(() => ({
               spanProcessor: new SimpleSpanProcessor(exporter),
@@ -254,221 +198,147 @@ describe("Firewall check activity", () => {
   );
 });
 
-describe("Firewall text rule replies", () => {
-  it.each(["deny", "reply"] as const)(
-    "answers the sender of a message that breaks a %s rule with the rule's feedback only when the rule replies",
-    (action) =>
-      withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkIncoming(
-              yield* incoming(self),
-              evidence,
-            );
-
-            expect(decision.kind).toBe("withheld");
-            expect("reply" in decision ? decision.reply : undefined).toBe(
-              action === "reply" ? privacy.feedback : undefined,
-            );
-          }),
-        (agentKey) => firewallLayer(agentKey, policy([{ ...privacy, action }])),
-      ),
-  );
-});
-
-/** The firewall of the agent `agentKey` names under `configured`, with `structureCheck` before its text rules. */
-function checkedLayer(
-  agentKey: string,
-  configured: ReturnType<typeof policy>,
-  structureCheck: StructureCheck,
-) {
-  return Firewall.layer(
-    agentKey,
-    configured.source,
-    structureCheck,
-    configured.provider,
-  );
-}
-
-describe("Firewall structure check refusals", () => {
-  const refuses: StructureCheck = () =>
-    Effect.succeed({
-      kind: "refused",
-      reason: "rule-violation",
-      ruleId: "shape",
-      feedback: "Send a greeting first.",
-      detail: { step: 1 },
-      reply: "Greet me first.",
-    });
-
-  it.each(["incoming", "outgoing"] as const)(
-    "refuses an %s message its structure check refuses, under that check's rule, without asking the provider",
-    (direction) =>
-      withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* check(firewall, self, direction);
-            yield* decision.save;
-
-            expect(decision).toMatchObject(
-              direction === "incoming"
-                ? {
-                    kind: "withheld",
-                    reason: "rule-violation",
-                    reply: "Greet me first.",
-                  }
-                : {
-                    kind: "refused",
-                    refusal: {
-                      refusal: "rule-violation",
-                      rule: "shape",
-                      feedback: ["Send a greeting first."],
-                      detail: { step: 1 },
-                    },
-                  },
-            );
-            expect((yield* firewall.readDecisions({})).decisions).toMatchObject(
-              [{ decidedBy: [{ ruleId: "shape" }], checkedRuleIds: ["shape"] }],
-            );
-          }),
-        (agentKey) =>
-          checkedLayer(
-            agentKey,
-            policy([], { decide: () => Effect.dieMessage("Provider asked") }),
-            refuses,
+describe("Firewall replies", () => {
+  it.each([
+    { action: "reply", given: notice, text: privacy.feedback },
+    { action: "deny", given: notice, text: notice },
+    { action: "deny", given: undefined, text: undefined },
+  ] as const)(
+    "answers a message that breaks a $action rule with $text, and records the reply as a message it allowed",
+    ({ action, given, text }) =>
+      Effect.gen(function* () {
+        const result = yield* check(
+          firewallOf(
+            policy([{ ...privacy, action }]),
+            given === undefined ? {} : { notice: given },
           ),
-      ),
+          "incoming",
+        );
+
+        const reply = "reply" in result ? result.reply : undefined;
+        expect(result).toMatchObject({ kind: "refused" });
+        expect(
+          reply && [
+            reply.text,
+            reply.record.direction,
+            reply.record.decision,
+            reply.record.peers,
+          ],
+        ).toEqual(text && [text, "outgoing", "allowed", [bob]]);
+      }),
   );
 
-  it("allows its own reply to a withheld message without its structure check", () =>
-    withFirewall(
-      {},
-      (firewall, self) =>
-        Effect.gen(function* () {
-          const withheld = yield* incoming(self);
+  it("gives a refused outgoing message no reply", () =>
+    Effect.gen(function* () {
+      const result = yield* check(
+        firewallOf(policy([{ ...privacy, action: "reply" }]), { notice }),
+        "outgoing",
+      );
 
-          const reply = yield* firewall.checkOutgoing(
-            yield* outgoing(self),
-            () =>
-              Effect.succeed({
-                history: [],
-                earlierHistoryOmitted: false,
-                gaps: [],
-                references: [withheld],
-              }),
-          );
-
-          expect(reply.kind).toBe("allowed");
-        }),
-      (agentKey) => checkedLayer(agentKey, policy(), refuses),
-    ));
+      expect(result).toMatchObject({ kind: "refused" });
+      expect(result).not.toHaveProperty("reply");
+    }));
 });
 
-describe("Firewall structure check passes", () => {
-  it("hands its structure check each earlier message with whether its own saved check allowed it", () => {
-    const handed: Array<readonly EarlierMessage[]> = [];
-    const recording: StructureCheck = (...[, earlier]) => {
-      handed.push(earlier);
-      return Effect.succeed({ kind: "passed", textRules: [] });
-    };
-    return withFirewall(
-      {},
-      (firewall, self) =>
-        Effect.gen(function* () {
-          const [allowed, refused, unchecked] = yield* Effect.all([
-            incoming(self),
-            outgoing(self),
-            incoming(self),
-          ]);
-          yield* Effect.flatMap(
-            firewall.checkIncoming(allowed, evidence),
-            ({ save }) => save,
-          );
-          yield* Effect.flatMap(
-            firewall.checkOutgoing(refused, evidence),
-            ({ save }) => save,
-          );
+describe("Firewall structure check", () => {
+  const refusal = {
+    kind: "refused",
+    reason: "rule-violation",
+    ruleId: "shape",
+    feedback: "Send a greeting first.",
+    detail: { step: 1 },
+  } as const;
+  const silent = { decide: () => Effect.dieMessage("Provider asked") };
 
-          yield* firewall.checkIncoming(yield* incoming(self), () =>
-            Effect.succeed({
-              history: [],
-              earlierHistoryOmitted: false,
-              gaps: [],
-              protocolHistory: {
-                messages: [allowed, refused, unchecked],
-                complete: true,
-              },
-            }),
+  it.each([
+    { reply: "Greet me first.", text: "Greet me first." },
+    { reply: undefined, text: `${notice} ${refusal.feedback}` },
+  ])(
+    "refuses what its structure check refuses under that check's rule without asking the provider, and answers with $text",
+    ({ reply, text }) =>
+      Effect.gen(function* () {
+        const structureCheck: StructureCheck = () =>
+          Effect.succeed(reply === undefined ? refusal : { ...refusal, reply });
+        const firewall = firewallOf(policy([], silent), {
+          notice,
+          structureCheck,
+        });
+
+        expect(yield* check(firewall, "outgoing")).toMatchObject({
+          kind: "refused",
+          reason: "rule-violation",
+          rule: "shape",
+          feedback: [refusal.feedback],
+          detail: { step: 1 },
+          record: {
+            decidedBy: [{ ruleId: "shape" }],
+            checkedRuleIds: ["shape"],
+          },
+        });
+        expect(yield* check(firewall, "incoming")).toMatchObject({
+          kind: "refused",
+          reply: { text },
+        });
+      }),
+  );
+
+  it("hands its structure check the earlier messages it was given", () =>
+    Effect.gen(function* () {
+      const handed: unknown[] = [];
+      const earlier = [
+        { message: yield* incoming(alice), allowed: true, checkedAt: 7 },
+        { message: yield* incoming(alice), allowed: false },
+      ];
+
+      yield* firewallOf(policy(), {
+        structureCheck: (...given) => {
+          handed.push(given[1]);
+          return Effect.succeed({ kind: "passed", textRules: [] });
+        },
+      }).checkIncoming(yield* incoming(alice), earlier);
+
+      expect(handed).toEqual([earlier]);
+    }));
+
+  it("judges a message its structure check passes by that check's rules too, and answers a withheld one as the check phrases it", () =>
+    Effect.gen(function* () {
+      const asked: unknown[] = [];
+      const recording: DecisionProvider = {
+        decide: (request) => {
+          asked.push(
+            Schema.decodeUnknownSync(
+              Schema.parseJson(Schema.Struct({ protocol: Schema.Unknown })),
+            )(request.state).protocol,
+            ...Object.values(request.questions).map(({ ruleId }) => ruleId),
           );
+          return certainProvider.decide(request);
+        },
+      };
 
-          expect(
-            handed
-              .at(-1)
-              ?.map((earlier) => [
-                earlier.message.msgId,
-                earlier.allowed,
-                typeof earlier.checkedAt,
-              ]),
-          ).toEqual([
-            [allowed.msgId, true, "number"],
-            [refused.msgId, false, "number"],
-            [unchecked.msgId, false, "undefined"],
-          ]);
-        }),
-      (agentKey) =>
-        checkedLayer(
-          agentKey,
-          policy([{ ...privacy, applies: "outgoing" }]),
-          recording,
-        ),
-    );
-  });
-
-  it("judges a message its structure check passes by that check's rules too, and answers a withheld one as the check phrases it", () => {
-    const asked: unknown[] = [];
-    const recording: DecisionProvider = {
-      decide: (request) => {
-        asked.push(
-          Schema.decodeUnknownSync(
-            Schema.parseJson(Schema.Struct({ protocol: Schema.Unknown })),
-          )(request.state).protocol,
-          ...Object.values(request.questions).map(({ ruleId }) => ruleId),
-        );
-        return certainProvider.decide(request);
-      },
-    };
-    return withFirewall(
-      {},
-      (firewall, self) =>
-        Effect.gen(function* () {
-          const decision = yield* firewall.checkIncoming(
-            yield* incoming(self),
-            evidence,
-          );
-
-          expect(asked).toEqual([{ turn: 2 }, "polite", privacy.id]);
-          expect(decision).toMatchObject({
-            kind: "withheld",
-            reply: `Refused: ${privacy.feedback}`,
-          });
-        }),
-      (agentKey) =>
-        checkedLayer(
-          agentKey,
+      const result = yield* check(
+        firewallOf(
           policy(
             [{ id: "polite", applies: "both", text: "Be polite." }],
             recording,
           ),
-          () =>
-            Effect.succeed({
-              kind: "passed",
-              textRules: [new TextRule(privacy)],
-              protocol: { turn: 2 },
-              replyTo: (feedback) => `Refused: ${feedback}`,
-            }),
+          {
+            notice,
+            structureCheck: () =>
+              Effect.succeed({
+                kind: "passed",
+                textRules: [new TextRule(privacy)],
+                protocol: { turn: 2 },
+                replyTo: (feedback) => `Refused: ${feedback}`,
+              }),
+          },
         ),
-    );
-  });
+        "incoming",
+      );
+
+      expect(asked).toEqual([{ turn: 2 }, "polite", privacy.id]);
+      expect(result).toMatchObject({
+        kind: "refused",
+        reply: { text: `Refused: ${privacy.feedback}` },
+      });
+    }));
 });

@@ -28,8 +28,7 @@ import {
   mcpFixture,
   mcpRequest,
 } from "../__tests__/mcp-fixtures.js";
-import { FirewallRefusal } from "../firewall/index.js";
-import { AgentAddress, SendError } from "./agent.js";
+import { AgentAddress, FirewallRefusal, SendError } from "./agent.js";
 import { serveMcp } from "./server.js";
 
 const response = Schema.parseJson(
@@ -293,11 +292,16 @@ it("answers a failed call with the failure's message and its fields", () =>
     const fixture = yield* mcpFixture({
       firewall: {
         checkOutgoing: () =>
-          Effect.map(Queue.take(refused), (refusal) => ({
-            kind: "refused" as const,
-            refusal,
-            save: Effect.void,
-          })),
+          Effect.map(
+            Queue.take(refused),
+            ({ checkId, refusal, rule, feedback }) => ({
+              kind: "refused" as const,
+              checkId,
+              reason: refusal,
+              ...(rule === undefined ? {} : { rule }),
+              feedback,
+            }),
+          ),
       },
     });
     const refusals = fc.record(
@@ -366,21 +370,20 @@ it("answers a failed call with the failure's message and its fields", () =>
 it("answers a call that dies without the defect's text, and a send that dies as one whose outcome is unknown", () =>
   Effect.gen(function* () {
     const dies = () => Effect.dieMessage("PRIVATE relation does not exist");
-    const fixture = yield* mcpFixture({
-      firewall: { checkOutgoing: dies, readDecisions: dies },
-    });
+    const fixture = yield* mcpFixture({ firewall: { checkOutgoing: dies } });
     expect(yield* toolCall(fixture, send)).toEqual({
       isError: true,
       content: [{ text: new SendError({ reason: "outcome-unknown" }).message }],
       structuredContent: { reason: "outcome-unknown" },
     });
+    yield* fixture.sql`DROP TABLE firewall_checks`;
     const result = yield* toolCall(fixture, {
       name: "read_firewall_decisions",
       arguments: {},
     });
     expect(result?.isError).toBe(true);
     expect(result?.structuredContent).toBeUndefined();
-    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    expect(JSON.stringify(result)).not.toContain("firewall_checks");
   }));
 
 it("interrupts only the aborted HTTP request", () =>

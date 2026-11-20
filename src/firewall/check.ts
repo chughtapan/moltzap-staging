@@ -10,31 +10,6 @@ import type {
 } from "./rules.js";
 import { exactStruct } from "../encoding.js";
 
-/** The evidence a check may read: bounded preceding history and each message's visibility to the agent. */
-export interface FirewallEvidence {
-  /**
-   * Messages the conversation's history does not hold yet that a reply may
-   * name: the incoming message a reply to it answers.
-   */
-  readonly references?: readonly Message[];
-  /**
-   * Every message before the one under check, for the structure check,
-   * apart from the bounded window the text rules read. `complete` is false
-   * when some of it could not be read.
-   */
-  readonly protocolHistory?: {
-    readonly messages: readonly Message[];
-    readonly complete: boolean;
-  };
-  readonly history: ReadonlyArray<{
-    readonly message: Message;
-    readonly visibleToAgent: boolean;
-  }>;
-  readonly earlierHistoryOmitted: boolean;
-  /** What else the history lacks, such as messages beyond the evidence byte limit. */
-  readonly gaps: readonly string[];
-}
-
 /**
  * One instruction of a message's guidance: a rule the provider could not
  * settle for an allowed incoming message, the rule's registered text and the
@@ -65,7 +40,7 @@ export interface AssessmentText {
 }
 
 /** Earlier message text and whether the local agent may read it. */
-export interface HistoryEntry extends AssessmentText {
+interface HistoryEntry extends AssessmentText {
   readonly visibleToAgent: boolean;
 }
 
@@ -413,39 +388,4 @@ function askProvider(
     }
     return answers;
   }).pipe(Effect.withSpan("TextPolicy.check"));
-}
-
-const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
-  "rule-violation": "It breaks a rule of the agent's message policy.",
-  "unresolved-evidence":
-    "The policy check could not settle whether the message is allowed.",
-  "check-unavailable": "The policy check could not complete.",
-};
-
-/**
- * The sender can act on registered feedback without seeing the check's evidence.
- * `rule` and `detail` are those of a structure check that refused or passed
- * the message. The message states each deciding rule's
- * registered feedback as an error, or the reason when there is none, then the
- * check.
- */
-export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
-  readonly reason: "firewall-refused";
-  readonly checkId: string;
-  readonly refusal: FirewallRefusalReason;
-  readonly rule?: string;
-  readonly feedback: readonly string[];
-  readonly detail?: unknown;
-}> {
-  override get message(): string {
-    const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
-    return [
-      ...(this.feedback.length === 0
-        ? [`Error: ${refusalText[this.refusal]}`]
-        : this.feedback.map((text) =>
-            text.startsWith("Error:") ? text : `Error: ${text}`,
-          )),
-      `Check: ${this.checkId}${rule}; ${this.refusal}.`,
-    ].join(" ");
-  }
 }

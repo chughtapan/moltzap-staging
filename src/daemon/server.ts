@@ -53,18 +53,17 @@ import {
   wellFormedString,
 } from "../communication/index.js";
 import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
-import {
-  firewallDecisionsRequestSchema,
-  firewallDecisionsSchema,
-  LocalGuidance,
-} from "../firewall/index.js";
+import { LocalGuidance } from "../firewall/index.js";
 import { AgentId, AgentName } from "../identity.js";
 import { packageVersion } from "../version.js";
 import {
+  addressedAgent,
+  addressOfAgent,
   AgentAddress,
   conversationsOf,
   type Daemon,
   getOrCreateOwnedAgent,
+  HistoryError,
   historyRecords,
   type HostedAgent,
   InboxEntry,
@@ -75,6 +74,11 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
+import {
+  firewallDecisionsRequestSchema,
+  firewallDecisionsSchema,
+  readDecisions,
+} from "./decisions.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 
@@ -92,6 +96,55 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
     }),
   );
   yield* http.serve(app);
+});
+
+/**
+ * Sends the server agent's message to the client its address names. An
+ * address that names no agent, or the server agent, refuses the send.
+ */
+export const sendToAddress = Effect.fn("sendToAddress")(function* (
+  daemon: Daemon,
+  agent: HostedAgent,
+  { to, ...message }: SendRequest,
+) {
+  const recipient = yield* addressedAgent(to);
+  if (recipient === undefined) {
+    return yield* new SendError({
+      reason: "unknown-agent",
+      detail: `This daemon has no agent named ${to}. Check the name with its owner.`,
+    });
+  }
+  if (recipient.agentKey === agent.agentKey) {
+    return yield* new SendError({ reason: "membership-invalid" });
+  }
+  const id = yield* send(daemon, { ...message, author: agent, recipient });
+  return { id, address: to };
+});
+
+/** A page of the server agent's conversation with the client an address names. */
+export const readConversation = Effect.fn("readConversation")(function* (
+  agent: HostedAgent,
+  request: { readonly address: AgentAddress; readonly cursor?: string },
+) {
+  const other = yield* addressedAgent(request.address);
+  if (other === undefined) {
+    return yield* new HistoryError({ reason: "unknown-agent" });
+  }
+  if (other.agentKey === agent.agentKey) {
+    return yield* new HistoryError({ reason: "invalid-address" });
+  }
+  return yield* historyRecords(agent, other, request.cursor);
+});
+
+/** Sends a client's message to the server agent. */
+export const sendToServerAgent = Effect.fn("sendToServerAgent")(function* (
+  daemon: Daemon,
+  agent: HostedAgent,
+  message: Omit<SendRequest, "to">,
+) {
+  const recipient = daemon.serverAgent;
+  const id = yield* send(daemon, { ...message, author: agent, recipient });
+  return { id, address: addressOfAgent(recipient) };
 });
 
 /** The issuer's metadata could not be read, names another issuer or names no key set. */
@@ -390,7 +443,7 @@ function registerServerAgentTools(
       output: SendResult,
       unexpected: sendOutcomeUnknown,
     },
-    (request) => send(daemon, agent, request),
+    (request) => sendToAddress(daemon, agent, request),
   );
   register(
     mcp,
@@ -423,7 +476,7 @@ function registerServerAgentTools(
       output: historyRecordsPage,
       readOnly: true,
     },
-    (request) => historyRecords(agent, request),
+    (request) => readConversation(agent, request),
   );
   register(
     mcp,
@@ -435,7 +488,7 @@ function registerServerAgentTools(
       output: firewallDecisionsSchema,
       readOnly: true,
     },
-    daemon.firewall.readDecisions,
+    (request) => readDecisions(agent.agentKey, request),
   );
 }
 
@@ -445,9 +498,7 @@ function registerClientTools(
   daemon: Daemon,
   agent: HostedAgent,
 ) {
-  const serverAgent = AgentAddress.make(
-    `agent:${daemon.serverAgent.card.agentName}`,
-  );
+  const { serverAgent } = daemon;
   register(
     mcp,
     "send_message",
@@ -463,7 +514,7 @@ function registerClientTools(
       output: SendResult,
       unexpected: sendOutcomeUnknown,
     },
-    (message) => send(daemon, agent, { ...message, to: serverAgent }),
+    (message) => sendToServerAgent(daemon, agent, message),
   );
   register(
     mcp,
@@ -475,7 +526,7 @@ function registerClientTools(
       output: historyRecordsPage,
       readOnly: true,
     },
-    (page) => historyRecords(agent, { ...page, address: serverAgent }),
+    ({ cursor }) => historyRecords(agent, serverAgent, cursor),
   );
 }
 
@@ -519,17 +570,21 @@ function register<A, I, B extends object, J extends object, E extends Failure>(
             Effect.orDie(Schema.encode(tool.output)(value)),
           ),
           Effect.map((structuredContent) => ({ structuredContent })),
-          Effect.catchAll((failure) =>
-            Effect.succeed(failed(failure.message, failure)),
-          ),
+          Effect.catchAll((failure) => Effect.succeed(failed(failure))),
           Effect.catchAllDefect((defect) =>
             Effect.logError("A tool call ended unexpectedly", defect).pipe(
               Effect.as(
                 tool.unexpected === undefined
-                  ? failed(
-                      "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-                    )
-                  : failed(tool.unexpected.message, tool.unexpected),
+                  ? {
+                      isError: true as const,
+                      content: [
+                        {
+                          type: "text" as const,
+                          text: "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+                        },
+                      ],
+                    }
+                  : failed(tool.unexpected),
               ),
             ),
           ),
@@ -539,30 +594,20 @@ function register<A, I, B extends object, J extends object, E extends Failure>(
   );
 }
 
-/** A typed failure of a tool: what a model reads of it and the fields a host reads. */
+/** A typed failure of a tool: what a model reads of it, and its own fields, which a host reads. */
 interface Failure {
   readonly message: string;
   readonly reason: string;
-  readonly detail?: unknown;
-  readonly checkId?: string;
-  readonly refusal?: string;
-  readonly rule?: string;
-  readonly feedback?: readonly string[];
 }
 
-/** The result of a call that failed: `message` as its text, and the failure's fields. */
-function failed(text: string, failure?: Failure) {
+/** The result of a call that failed with `failure`: its message as the text, and its fields without its tag. */
+function failed(failure: Failure) {
   return {
     isError: true as const,
-    content: [{ type: "text" as const, text }],
-    structuredContent: failure && {
-      reason: failure.reason,
-      checkId: failure.checkId,
-      refusal: failure.refusal,
-      rule: failure.rule,
-      feedback: failure.feedback,
-      detail: failure.detail,
-    },
+    content: [{ type: "text" as const, text: failure.message }],
+    structuredContent: Object.fromEntries(
+      Object.entries(failure).filter(([field]) => field !== "_tag"),
+    ),
   };
 }
 

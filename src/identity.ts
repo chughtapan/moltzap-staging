@@ -1,6 +1,6 @@
 /** @file Agent identifiers, names and cards, and the agent a firewall acts for. */
 
-import { Context, Schema } from "effect";
+import { Schema } from "effect";
 import { canonicalIdentifier } from "./encoding.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
@@ -55,9 +55,3 @@ export const AgentCard = Schema.Struct({
  * @useDeclaredType
  */
 export type AgentCard = typeof AgentCard.Type;
-
-/** The agent a firewall acts for. */
-export class Identity extends Context.Tag("SocialHarness/Identity")<
-  Identity,
-  { readonly me: AgentCard }
->() {}

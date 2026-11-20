@@ -1,23 +1,15 @@
-/** @file Shared fixtures for firewall service tests: an agent's firewall, messages, rules and a test provider. */
+/** @file Shared fixtures for firewall tests: an agent's firewall, messages, rules and a test provider. */
 
-import { SqlClient } from "@effect/sql";
-import { type Context, Effect, Encoding, Layer } from "effect";
-import type { DecisionProvider, FirewallEvidence } from "../check.js";
-import { openTestDatabase, type TestDatabase } from "../../__tests__/test.js";
+import { Effect, Encoding } from "effect";
+import type { DecisionProvider } from "../check.js";
 import { Message } from "../../communication/index.js";
-import {
-  AgentCard,
-  AgentId,
-  AgentName,
-  Identity,
-  PrincipalId,
-} from "../../identity.js";
+import { AgentCard, AgentId, AgentName, PrincipalId } from "../../identity.js";
 import {
   decodeMessagePolicy,
   type LoadedMessagePolicy,
   type TextRule,
 } from "../rules.js";
-import { Firewall } from "../service.js";
+import { makeFirewall } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */
 export const privacy = {
@@ -26,13 +18,6 @@ export const privacy = {
   text: "Do not reveal the owner's private records.",
   feedback: "Keep private records private.",
 } satisfies TextRule;
-/** Reads complete evidence with no history or gaps. */
-export const evidence = () =>
-  Effect.succeed<FirewallEvidence>({
-    history: [],
-    earlierHistoryOmitted: false,
-    gaps: [],
-  });
 /** Finds `privacy` broken and every other rule followed, with certainty. */
 export const certainProvider: DecisionProvider = {
   decide: (request) =>
@@ -55,39 +40,6 @@ export const certainProvider: DecisionProvider = {
       ),
     }),
 };
-
-/**
- * Runs `use` with Alice's firewall built by `configure`, over `database` or a
- * new one, with its rows stored under `agentKey`. A property that builds a
- * database on each run bounds its runs.
- */
-export function withFirewall<A, E, R>(
-  storage: { readonly database?: TestDatabase; readonly agentKey?: string },
-  use: (
-    firewall: Context.Tag.Service<typeof Firewall>,
-    self: AgentCard,
-  ) => Effect.Effect<A, E, R>,
-  configure: (agentKey: string) => ReturnType<typeof Firewall.layer>,
-) {
-  const self = peer("alice", 1);
-  const identity = Layer.succeed(Identity, Identity.of({ me: self }));
-  const services = configure(storage.agentKey ?? "alice").pipe(
-    Layer.provideMerge(identity),
-    Layer.provideMerge(
-      Layer.effect(
-        SqlClient.SqlClient,
-        storage.database === undefined
-          ? Effect.map(openTestDatabase(), ({ sql }) => sql)
-          : Effect.succeed(storage.database.sql),
-      ),
-    ),
-  );
-  return Effect.scoped(
-    Effect.gen(function* () {
-      return yield* use(yield* Firewall, self);
-    }).pipe(Effect.provide(services), Effect.withSpan("withFirewall")),
-  );
-}
 
 /** A draft from `self` to a peer that reveals a private record. */
 export function outgoing(self: AgentCard) {
@@ -152,12 +104,19 @@ export function policy(
   };
 }
 
-/** The firewall of the agent `agentKey` names under `configured`. */
-export function firewallLayer(agentKey: string, configured: TestPolicy) {
-  return Firewall.layer(
-    agentKey,
-    configured.source,
-    undefined,
-    configured.provider,
-  );
+/** Alice, whose firewall the tests check messages with. */
+export const alice = peer("alice", 1);
+
+/** Alice's firewall under `configured`, with whatever `installation` adds. */
+export function firewallOf(
+  configured: TestPolicy,
+  installation: Partial<Parameters<typeof makeFirewall>[0]> = {},
+) {
+  return makeFirewall({
+    source: configured.source,
+    me: alice,
+    historyLimit: 256,
+    provider: configured.provider,
+    ...installation,
+  });
 }
