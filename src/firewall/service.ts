@@ -656,10 +656,7 @@ function buildPolicy(
         contract.textRules.map((rule) => Struct.omit(rule, "act")),
       ),
     );
-    const textRules = [
-      ...(configured.text?.fixedRules ?? []),
-      ...contractRules,
-    ];
+    const textRules = [...configured.rules, ...contractRules];
     if (textRules.length > 0 && provider === undefined) {
       return yield* new FirewallPolicyError({ reason: "not-configured" });
     }

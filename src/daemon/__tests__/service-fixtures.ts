@@ -81,20 +81,17 @@ export function composedPolicy(
     provider,
     source: {
       policy: {
-        format: "org.social-harness/message-policy/v2",
         facts: [],
-        text: {
-          fixedRules: [
-            {
-              id: "privacy",
-              applies: "both",
-              text: "Protect the owner's private information.",
-              guidance: "Check before sharing private information.",
-              feedback: "Keep private information private.",
-              ...(action === undefined ? {} : { action }),
-            },
-          ],
-        },
+        rules: [
+          {
+            id: "privacy",
+            applies: "both",
+            text: "Protect the owner's private information.",
+            guidance: "Check before sharing private information.",
+            feedback: "Keep private information private.",
+            ...(action === undefined ? {} : { action }),
+          },
+        ],
         textSettings: {
           minimumProbability: 0.8,
           maximumRequestBytes: 100_000,

@@ -131,7 +131,7 @@ interface TestPolicy {
 
 /** A message policy with the given text rules, judged by `provider`. */
 export function policy(
-  fixedRules: readonly TextRule[] = [],
+  rules: readonly TextRule[] = [],
   provider: DecisionProvider = certainProvider,
 ): TestPolicy {
   return {
@@ -140,9 +140,8 @@ export function policy(
       policy: Effect.runSync(
         decodeMessagePolicy(
           JSON.stringify({
-            format: "org.social-harness/message-policy/v2",
             decisionProvider: { model: "test" },
-            text: { fixedRules },
+            rules,
             textSettings: {
               minimumProbability: 0.5,
               maximumRequestBytes: 60_000,

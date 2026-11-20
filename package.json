@@ -157,8 +157,7 @@
     "ajv": "catalog:",
     "effect": "catalog:",
     "jose": "catalog:",
-    "kysely": "catalog:",
-    "yaml": "catalog:"
+    "kysely": "catalog:"
   },
   "devDependencies": {
     "@chughtapan/safer-architecture-lsp": "catalog:",
@@ -176,6 +175,7 @@
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yaml": "catalog:"
   }
 }

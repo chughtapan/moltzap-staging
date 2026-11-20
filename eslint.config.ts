@@ -242,15 +242,6 @@ export default [
   disableCommentRules,
   ...packageSections(),
   {
-    files: ["src/firewall/rules.spec.ts"],
-    rules: {
-      "max-lines-per-function": [
-        "error",
-        { max: 350, skipBlankLines: true, skipComments: true },
-      ],
-    },
-  },
-  {
     files: [
       "src/daemon/inbox.ts",
       "src/firewall/service.ts",

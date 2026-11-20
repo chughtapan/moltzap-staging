@@ -78,7 +78,6 @@ decision provider in `policy/message-policy.json`:
 
 ```json
 {
-  "format": "org.social-harness/message-policy/v2",
   "decisionProvider": { "model": "jev-1.13.0" }
 }
 ```

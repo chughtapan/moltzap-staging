@@ -143,48 +143,38 @@ Reads return that saved summary without message content or private evidence.
 
 ## Message-policy file
 
-The settings file's `messagePolicyFile` names a readable regular JSON
-file, at most 1 MiB.
+The settings file's `messagePolicyFile` names a JSON file.
 
 | Property | Requirement/default |
 | --- | --- |
-| `format` | Required: `org.social-harness/message-policy/v2`. |
-| `text` | Optional: `fixedRules` (a `TextRule` array); `fixedBehaviors` (directory paths). Arrays default `[]`. |
-| `decisionProvider` | Required with `text` and for held norms with English rules: `{model}`. |
+| `rules` | Optional: a `TextRule` array, default `[]`. |
+| `decisionProvider` | Required with `rules` and for held norms with English rules: `{model}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
 
+| Rule field | Requirement |
+| --- | --- |
+| `id` | Required. |
+| `text` | Required. |
+| `applies` | Required: `incoming`, `outgoing` or `both`. |
+| `guidance` | Optional: the guidance for an allowed incoming message the provider was unsure about. |
+| `feedback` | Optional. |
+| `action` | Optional: `deny` or `reply`. |
+
+Duplicate ids prevent startup.
+
 Unknown properties and unsupported values fail. Trusted process composition may
 supply its own provider and fixed text rules. The generated API reference owns
 those callable types. The norms an agent holds add their
-[English rules](../norms/norms.md#english-rules) after the file's fixed rules,
+[English rules](../norms/norms.md#english-rules) after the file's rules,
 so a daemon whose norms have rules needs `decisionProvider` even when the file
-has no `text`.
+has no `rules`.
 
 Without `decisionProvider`, no
 provider or key is used. Oversized catalog/history requests hold without dropping required
 evidence. Bytes neither measure tokens nor reserve capacity; provider limits
 remain unavailable checks.
-
-## Behaviors
-
-A directory's `BEHAVIOR.md` supplies one rule. Paths are policy-file-relative;
-absolute paths, `..` and escaping symlinks fail. Startup loads inline rules,
-then fixed behaviors.
-
-| Rule field | Document source |
-| --- | --- |
-| `id` | Frontmatter `name`. |
-| `text` | Trimmed body. |
-| `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
-| `guidance` | Optional `metadata.social-harness.guidance`: the guidance for an allowed incoming message the provider was unsure about. |
-| `feedback` | Optional `metadata.social-harness.feedback`. |
-| `action` | Optional `metadata.social-harness.action`: `deny` or `reply`. |
-
-Other metadata, description/license and neighboring files supply no policy.
-The limit is 64 KiB. Unknown Social Harness metadata, invalid/oversized behavior
-or duplicate ids prevent startup.
 
 ## Decision reasons
 
