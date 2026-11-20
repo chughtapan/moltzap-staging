@@ -65,14 +65,10 @@
     {
       "name": "daemon",
       "roots": [
-        "src/server.ts",
-        "src/agent.ts",
-        "src/settings.ts"
+        "src/daemon"
       ],
       "entrypoints": [
-        "src/server.ts",
-        "src/agent.ts",
-        "src/settings.ts"
+        "src/daemon/index.ts"
       ],
       "reason": "What sharnessd serves: its settings, its agents with their inboxes, and the MCP tools served to their hosts"
     },
@@ -98,6 +94,13 @@
     }
   ],
   "layers": [
+    {
+      "name": "daemon",
+      "folders": [
+        "daemon"
+      ],
+      "reason": "Host calls coordinate lower services"
+    },
     {
       "name": "norms",
       "folders": [

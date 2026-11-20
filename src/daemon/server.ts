@@ -44,6 +44,23 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
 import {
+  Cursor,
+  Message,
+  MsgId,
+  Page,
+  PAGE_SIZE,
+  PaginatedRequest,
+  wellFormedString,
+} from "../communication/index.js";
+import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
+import {
+  firewallDecisionsRequestSchema,
+  firewallDecisionsSchema,
+  LocalGuidance,
+} from "../firewall/index.js";
+import { AgentId, AgentName } from "../identity.js";
+import { packageVersion } from "../version.js";
+import {
   AgentAddress,
   conversationsOf,
   type Daemon,
@@ -58,23 +75,6 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
-import {
-  Cursor,
-  Message,
-  MsgId,
-  Page,
-  PAGE_SIZE,
-  PaginatedRequest,
-  wellFormedString,
-} from "./communication/index.js";
-import { compareAscii, exactStruct, isStrictlyAscending } from "./encoding.js";
-import {
-  firewallDecisionsRequestSchema,
-  firewallDecisionsSchema,
-  LocalGuidance,
-} from "./firewall/index.js";
-import { AgentId, AgentName } from "./identity.js";
-import { packageVersion } from "./version.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 

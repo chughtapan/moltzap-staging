@@ -27,9 +27,9 @@ import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
-} from "./__tests__/mcp-fixtures.js";
+} from "../__tests__/mcp-fixtures.js";
+import { FirewallRefusal } from "../firewall/index.js";
 import { AgentAddress, SendError } from "./agent.js";
-import { FirewallRefusal } from "./firewall/index.js";
 import { serveMcp } from "./server.js";
 
 const response = Schema.parseJson(

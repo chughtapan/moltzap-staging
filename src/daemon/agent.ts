@@ -8,7 +8,7 @@
 import { SqlClient } from "@effect/sql";
 import { Data, Duration, Effect, PubSub, Queue, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Firewall, IncomingDecision } from "./firewall/service.js";
+import type { Firewall, IncomingDecision } from "../firewall/service.js";
 import {
   type CommunicationError,
   Message,
@@ -16,7 +16,7 @@ import {
   PAGE_SIZE,
   type PaginatedRequest,
   wellFormedString,
-} from "./communication/index.js";
+} from "../communication/index.js";
 import {
   type HeldMessage,
   listConversations,
@@ -25,17 +25,17 @@ import {
   readLatest,
   type Received,
   sendMessage,
-} from "./communication/service.js";
-import { transaction } from "./database.js";
+} from "../communication/service.js";
+import { transaction } from "../database.js";
 import {
   compareAscii,
   decodeJson,
   encodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "./encoding.js";
-import { type FirewallRefusal, LocalGuidance } from "./firewall/index.js";
-import { AGENT_NAME_RULE, AgentCard, AgentName } from "./identity.js";
+} from "../encoding.js";
+import { type FirewallRefusal, LocalGuidance } from "../firewall/index.js";
+import { AGENT_NAME_RULE, AgentCard, AgentName } from "../identity.js";
 
 /** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
 interface Owner {

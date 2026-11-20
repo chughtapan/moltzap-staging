@@ -60,8 +60,8 @@ import {
   requiredScope,
   restrictedLogin,
 } from "../../src/__tests__/test.js";
-import { AgentAddress, InboxEntry } from "../../src/agent.js";
 import { Message, MsgId } from "../../src/communication/index.js";
+import { AgentAddress, InboxEntry } from "../../src/daemon/agent.js";
 import { AgentId, AgentName } from "../../src/identity.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */

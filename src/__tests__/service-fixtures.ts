@@ -8,6 +8,7 @@ import type {
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../firewall/index.js";
+import { Message } from "../communication/index.js";
 import {
   AgentAddress,
   conversationsOf,
@@ -18,8 +19,7 @@ import {
   receive,
   send,
   type SendRequest,
-} from "../agent.js";
-import { Message } from "../communication/index.js";
+} from "../daemon/agent.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentCard, Identity } from "../identity.js";
 import { createTestAgent } from "./agents.js";

@@ -8,7 +8,14 @@
  */
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { Console, Context, Effect, Layer, PubSub } from "effect";
-import { getOrCreateOwnedAgent } from "./agent.js";
+import {
+  getOrCreateOwnedAgent,
+  loadDaemonSettings,
+  makeMcpHttpApp,
+  refused,
+  serveMcp,
+  spanExport,
+} from "./daemon/index.js";
 import {
   databaseConnection,
   databaseUrl,
@@ -16,8 +23,6 @@ import {
 } from "./database.js";
 import { Firewall } from "./firewall/service.js";
 import { Identity } from "./identity.js";
-import { makeMcpHttpApp, serveMcp } from "./server.js";
-import { loadDaemonSettings, refused, spanExport } from "./settings.js";
 import { packageVersion } from "./version.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */

@@ -6,19 +6,19 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
-import { exactStruct, plainUrl } from "./encoding.js";
+import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
-} from "./firewall/index.js";
-import { AgentName } from "./identity.js";
+} from "../firewall/index.js";
+import { AgentName } from "../identity.js";
 import {
   initialNormsHaveRules,
   type InstalledNorms,
   loadNorms,
   type NormsConfigurationError,
-} from "./norms/index.js";
-import { packageVersion } from "./version.js";
+} from "../norms/index.js";
+import { packageVersion } from "../version.js";
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.

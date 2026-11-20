@@ -5,10 +5,10 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer } from "effect";
-import { getOrCreateOwnedAgent } from "../agent.js";
+import { getOrCreateOwnedAgent } from "../daemon/agent.js";
+import { makeMcpHttpApp } from "../daemon/server.js";
 import { Firewall } from "../firewall/service.js";
 import { AgentName, Identity } from "../identity.js";
-import { makeMcpHttpApp } from "../server.js";
 import { testDaemon } from "./service-fixtures.js";
 import { issuerFixture, openTestDatabase, requiredScope } from "./test.js";
 

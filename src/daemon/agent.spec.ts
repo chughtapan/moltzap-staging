@@ -11,28 +11,28 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import { digest } from "./__tests__/agents.js";
+import { digest } from "../__tests__/agents.js";
 import {
   composedPolicy,
   decisionResponse,
   decisionState,
   makeHarnessFixture,
-} from "./__tests__/service-fixtures.js";
-import { openTestDatabase } from "./__tests__/test.js";
-import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
-import { MsgId } from "./communication/index.js";
-import { compareAscii } from "./encoding.js";
+} from "../__tests__/service-fixtures.js";
+import { openTestDatabase } from "../__tests__/test.js";
+import { MsgId } from "../communication/index.js";
+import { compareAscii } from "../encoding.js";
 import {
   contractOf,
   form,
   noFields,
-} from "./firewall/__tests__/firewall-fixtures.js";
+} from "../firewall/__tests__/firewall-fixtures.js";
 import {
   type DecisionProvider,
   type DecisionRequest,
   FirewallPolicyError,
-} from "./firewall/index.js";
-import { AgentName } from "./identity.js";
+} from "../firewall/index.js";
+import { AgentName } from "../identity.js";
+import { AgentAddress, getOrCreateOwnedAgent } from "./agent.js";
 
 const bobAddress = AgentAddress.make("agent:bob");
 const carolAddress = AgentAddress.make("agent:carol");
