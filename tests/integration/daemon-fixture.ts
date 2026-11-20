@@ -36,7 +36,6 @@ import {
   Exit,
   Fiber,
   Redacted,
-  Schema,
   type Scope,
   Stream,
 } from "effect";
@@ -44,14 +43,20 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { callTool, type SignedIn } from "../../src/__tests__/daemon.js";
+import {
+  callTool,
+  decodeInboxEntry,
+  type SignedIn,
+} from "../../src/__tests__/daemon.js";
 import {
   issuerFixture,
   openTestDatabase,
   requiredScope,
   restrictedLogin,
 } from "../../src/__tests__/test.js";
-import { AgentAddress, InboxEntry } from "../../src/daemon/agent.js";
+import { makeFirewall } from "../../src/firewall.js";
+import { AgentName } from "../../src/messages.js";
+import { openDaemon } from "../../src/server.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
@@ -99,7 +104,7 @@ const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 
 const DAEMON_COMMAND: readonly [string, readonly string[]] = [
   process.execPath,
-  [join(WORKSPACE_ROOT, "dist/daemon/main.js")],
+  [join(WORKSPACE_ROOT, "dist/main.js")],
 ];
 
 const failed =
@@ -295,7 +300,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
     const agent = yield* callTool({ mcp }, "status");
     const subscriber: Subscriber = {
       agent,
-      address: AgentAddress.make(`agent:${agent.agentName}`),
+      address: `agent:${agent.agentName}`,
       mcp,
       events,
     };
@@ -303,6 +308,21 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   }).pipe(
     Effect.mapError(failed("could not sign in to the daemon")),
     Effect.withSpan("signIn"),
+  );
+
+/**
+ * Creates the daemon's tables and its server agent as the login of `url`,
+ * which may create tables, so the daemon serves them through a login that
+ * may not.
+ */
+const preparedBy = (url: Redacted.Redacted, issuer: string) =>
+  openDaemon(url, {
+    owner: { issuer, subject: SERVER_AGENT_OWNER },
+    name: AgentName.make(SERVER_AGENT_NAME),
+    firewall: (me) => makeFirewall({ me, historyLimit: 1 }),
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError(failed("could not prepare the daemon's database")),
   );
 
 /**
@@ -322,6 +342,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
   const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
   const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
   const database = yield* openTestDatabase();
+  yield* preparedBy(database.url, issuer.issuer);
   const restrictedUrl = yield* restrictedLogin(database);
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
@@ -406,7 +427,7 @@ export function inboxStream(
   ).pipe(
     Stream.orDie,
     Stream.mapEffect((event) =>
-      Schema.decodeUnknown(InboxEntry)(event.data).pipe(Effect.orDie),
+      decodeInboxEntry(event.data).pipe(Effect.orDie),
     ),
   );
 }

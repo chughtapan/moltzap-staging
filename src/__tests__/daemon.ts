@@ -1,34 +1,27 @@
 /**
- * @file The daemon in a test's own process: its real HTTP app over a test
- * database and a test OAuth issuer, with the server agent's real firewall.
- * A test signs agents in and calls their tools as a host does. `callTool`
- * and the helpers over it also drive a daemon process.
+ * @file The daemon in a test's own process: `server.ts` opened on a test
+ * database with the server agent's real firewall. A test signs agents in and
+ * calls their tools as a host does, through the daemon's MCP handler.
+ * `callTool` and the helpers over it also drive a daemon process.
  */
 
-import { HttpApp } from "@effect/platform";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { Effect, Schema } from "effect";
 import type { TestPolicy } from "./firewall-fixtures.js";
-import {
-  AgentAddress,
-  getOrCreateOwnedAgent,
-  HistoryRecord,
-  InboxEntry,
-  openDaemon,
-} from "../daemon/agent.js";
-import { makeMcpHttpApp } from "../daemon/server.js";
 import { checkRecordSchema, type Firewall, makeFirewall } from "../firewall.js";
-import { AgentId, AgentName, MsgId } from "../messages.js";
+import { AgentId, AgentName, Message, MsgId } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
-import { issuerFixture, openTestDatabase, requiredScope } from "./test.js";
+import { makeMcpHandler, openDaemon, type Owner } from "../server.js";
+import { openTestDatabase } from "./test.js";
 
-/** The resource every in-process daemon is. */
-const resource = new URL("https://mcp.example.test/mcp");
+/** The issuer of every owner a test signs in by name. */
+const issuer = "urn:social-harness:test";
 
-const protocolVersion = "2026-07-28";
+/** The URL the SDK client addresses; no listener answers it. */
+const endpoint = new URL("http://127.0.0.1/mcp");
 
 /** What a provider reads of the message it judges and the history before it. */
 export const decisionState = Schema.decodeUnknownSync(
@@ -45,17 +38,16 @@ export const decisionState = Schema.decodeUnknownSync(
 /** A signed-in owner: its agent, how the server agent addresses it, and an MCP connection as it. */
 export interface SignedIn {
   readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
-  readonly address: AgentAddress;
+  readonly address: string;
   readonly mcp: Client;
 }
 
 /**
- * A daemon whose server agent is named `alice`, behind a firewall with the
- * given policy, norms, notice and history limit, or one that allows every
- * message. `firewall` replaces operations of that firewall. `signInAs` gives
- * an MCP connection as the agent of the owner a name stands for, created
- * under that name. `request` sends one raw MCP request with the bearer token
- * it is given.
+ * A daemon whose server agent is named `alice` and owned by the owner
+ * `alice`, behind a firewall with the given policy, norms, notice and history
+ * limit, or one that allows every message. `firewall` replaces operations of
+ * that firewall. `signInAs` gives an MCP connection as the agent of an owner:
+ * the owner a name stands for, or the owner given.
  */
 export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
   options: {
@@ -67,54 +59,52 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
   } = {},
 ) {
   const database = yield* openTestDatabase();
-  const issuer = yield* issuerFixture().pipe(Effect.orDie);
-  const join = (name: string) =>
-    getOrCreateOwnedAgent(
-      { issuer: issuer.issuer, subject: name },
-      AgentName.make(name),
-    ).pipe(database.run, Effect.orDie);
-  const serverAgent = yield* join("alice");
-  const firewall = makeFirewall({
-    ...(options.policy ?? {}),
-    me: serverAgent,
-    historyLimit: options.historyLimit ?? 256,
-    ...(options.notice === undefined ? {} : { notice: options.notice }),
-    ...(options.norms === undefined
-      ? {}
-      : { structureCheck: structureCheck(options.norms) }),
-  });
-  const app = yield* makeMcpHttpApp(
-    { resource, issuer: issuer.issuer, scope: requiredScope },
-    yield* openDaemon({
-      serverAgent,
-      firewall: { ...firewall, ...options.firewall },
+  const { norms } = options;
+  const daemon = yield* openDaemon(database.url, {
+    owner: { issuer, subject: "alice" },
+    name: AgentName.make("alice"),
+    firewall: (me) => ({
+      ...makeFirewall({
+        ...(options.policy ?? {}),
+        me,
+        historyLimit: options.historyLimit ?? 256,
+        ...(options.notice === undefined ? {} : { notice: options.notice }),
+        ...(norms === undefined
+          ? {}
+          : { structureCheck: structureCheck(norms) }),
+      }),
+      ...options.firewall,
     }),
-  ).pipe(database.run, Effect.orDie);
-  const handle = HttpApp.toWebHandler(app);
-  const token = (
-    subject: string,
-    claims: Parameters<typeof issuer.token>[2] = {},
-  ) => issuer.token(subject, resource.href, claims).pipe(Effect.orDie);
+    ...(norms === undefined
+      ? {}
+      : {
+          norms: norms.map((norm) => ({
+            name: norm.name,
+            description: norm.description,
+            document: norm.source,
+          })),
+        }),
+  }).pipe(Effect.orDie);
+  const answerAs = yield* makeMcpHandler(daemon);
   return {
     sql: database.sql,
-    issuer,
-    resource,
-    token,
-    request: (
-      bearer: string,
-      method: string,
-      params: Readonly<Record<string, unknown>> = {},
-    ) =>
-      Effect.tryPromise(() => handle(mcpRequest(bearer, method, params))).pipe(
-        Effect.orDie,
-      ),
-    signInAs: (name: string) =>
+    daemon,
+    signInAs: (owner: string | Owner) =>
       Effect.gen(function* () {
-        const agent = yield* join(name);
-        const mcp = yield* connect(handle, yield* token(name));
+        const answer = yield* answerAs({
+          token: "",
+          clientId: "",
+          scopes: [],
+          extra:
+            typeof owner === "string"
+              ? { issuer, subject: owner }
+              : { ...owner },
+        });
+        const mcp = yield* connect(answer);
+        const agent = yield* callTool({ mcp }, "status").pipe(Effect.orDie);
         const signedIn: SignedIn = {
           agent,
-          address: AgentAddress.make(`agent:${name}`),
+          address: `agent:${agent.agentName}`,
           mcp,
         };
         return signedIn;
@@ -126,19 +116,34 @@ const fields = Schema.decodeUnknownSync(
   Schema.Record({ key: Schema.String, value: Schema.Unknown }),
 );
 
+/** An inbox entry as a host reads it. */
+const inboxEntry = Schema.Struct({
+  address: Schema.String,
+  message: Message,
+  guidance: Schema.optional(Schema.Unknown),
+});
+
+/** Reads an inbox entry from what the inbox event delivers. */
+export const decodeInboxEntry = Schema.decodeUnknown(inboxEntry);
+
 /** What tests read of the result of each tool they call. */
 const results = {
   status: Schema.Struct({ agentId: AgentId, agentName: AgentName }),
-  send_message: Schema.Struct({ id: MsgId, address: AgentAddress }),
+  send_message: Schema.Struct({ id: MsgId, address: Schema.String }),
   receive_messages: Schema.Struct({
-    entries: Schema.Array(InboxEntry),
+    entries: Schema.Array(inboxEntry),
     nextCursor: Schema.String,
   }),
   list_conversations: Schema.Struct({
-    addresses: Schema.Array(AgentAddress),
+    addresses: Schema.Array(Schema.String),
   }),
   read_conversation: Schema.Struct({
-    records: Schema.Array(HistoryRecord),
+    records: Schema.Array(
+      Schema.Struct({
+        kind: Schema.Literal("sent", "received"),
+        message: Message,
+      }),
+    ),
     nextCursor: Schema.optional(Schema.String),
   }),
   read_firewall_decisions: Schema.Struct({
@@ -190,7 +195,7 @@ export function callTool(
 export const send = (
   sender: Pick<SignedIn, "mcp">,
   input: {
-    readonly to?: AgentAddress;
+    readonly to?: string;
     readonly text: string;
     readonly replyToMsgId?: MsgId;
   },
@@ -202,56 +207,15 @@ export const inboxOf = (agent: Pick<SignedIn, "mcp">) =>
     page.entries.map((entry) => entry.message),
   );
 
-/** One raw MCP request to the daemon, as the holder of `bearer`. */
-function mcpRequest(
-  bearer: string,
-  method: string,
-  params: Readonly<Record<string, unknown>>,
-) {
-  return new Request(resource, {
-    method: "POST",
-    headers: {
-      host: resource.host,
-      authorization: `Bearer ${bearer}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": protocolVersion,
-      "mcp-method": method,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: {
-        ...params,
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": protocolVersion,
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": {
-            name: "daemon-test",
-            version: "1",
-          },
-        },
-      },
-    }),
-  });
-}
-
-/** An SDK client connected to the daemon `handle` answers for, as the holder of `bearer`. The scope closes it. */
-function connect(
-  handle: ReturnType<typeof HttpApp.toWebHandler>,
-  bearer: string,
-) {
+/** An SDK client whose requests `answer` answers. The scope closes it. */
+function connect(answer: (request: Request) => ReturnType<typeof fetch>) {
   return Effect.gen(function* () {
     const mcp = new Client(
       { name: "daemon-test", version: "1" },
-      { versionNegotiation: { mode: { pin: protocolVersion } } },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
     );
-    const transport = new StreamableHTTPClientTransport(resource, {
-      fetch: (input, init) => handle(new Request(input, init)),
-      requestInit: {
-        headers: { host: resource.host, authorization: `Bearer ${bearer}` },
-      },
+    const transport = new StreamableHTTPClientTransport(endpoint, {
+      fetch: (input, init) => answer(new Request(input, init)),
     });
     yield* Effect.tryPromise(() => mcp.connect(transport)).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
