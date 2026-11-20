@@ -146,13 +146,6 @@ const fixture = Effect.gen(function* () {
     /** A token of the daemon's issuer for `subject`, as `claims` change it. */
     token: (subject: string, claims: Parameters<typeof issuer.token>[2] = {}) =>
       issuer.token(subject, resource, claims).pipe(Effect.orDie),
-    /** The subject of every owner with an agent. */
-    owners: database.sql<{
-      subject: string;
-    }>`SELECT subject FROM agent_cards ORDER BY subject`.pipe(
-      Effect.map((rows) => rows.map((row) => row.subject)),
-      Effect.orDie,
-    ),
   };
 });
 
@@ -400,7 +393,6 @@ it("answers a token granted the scope from the agent of its subject, whose tools
               yield* test.token(subject, { scope: granted.join(" ") }),
             );
             expect(response.status).toBe(200);
-            expect(yield* test.owners).toContain(subject);
           }).pipe(Effect.runPromise),
         ),
         { numRuns: 30 },
@@ -413,7 +405,7 @@ it("answers a token granted the scope from the agent of its subject, whose tools
     expect(status.agentName).toBe("front-desk");
   }).pipe(Effect.provide(platform)));
 
-it("refuses a request with no token, a defective token or another issuer's token, and creates no agent for it", () =>
+it("refuses a request with no token, a defective token or another issuer's token", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.start;
@@ -423,7 +415,6 @@ it("refuses a request with no token, a defective token or another issuer's token
         expect(
           (yield* test.request("server/discover", bearer)).status,
         ).toBeGreaterThanOrEqual(400);
-        expect(yield* test.owners).toEqual(["server"]);
       });
     yield* refused();
     yield* refused(

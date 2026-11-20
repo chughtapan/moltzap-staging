@@ -3,8 +3,7 @@
 import { effect as it } from "@effect/vitest";
 import { Effect, Encoding, FastCheck as fc, Schema } from "effect";
 import { expect, test } from "vitest";
-import { testAgentCard } from "./__tests__/agents.js";
-import { Message, MsgId } from "./messages.js";
+import { AgentName, Message, MsgId } from "./messages.js";
 
 test("accepts a message identifier exactly when it encodes 32 bytes", () => {
   fc.assert(
@@ -27,8 +26,8 @@ it.prop(
   ([text]) =>
     Effect.gen(function* () {
       const created = yield* Message.create({
-        author: testAgentCard("bob"),
-        recipient: testAgentCard("alice"),
+        author: AgentName.make("bob"),
+        recipient: AgentName.make("alice"),
         text,
       }).pipe(Effect.either);
 

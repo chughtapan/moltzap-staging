@@ -63,13 +63,7 @@ import {
   type NormsConfigurationError,
   structureCheck,
 } from "./norms/index.js";
-import {
-  type Daemon,
-  databaseUrl,
-  makeMcpHandler,
-  openDaemon,
-  packageVersion,
-} from "./server.js";
+import { databaseUrl, openDaemon, packageVersion } from "./server.js";
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.
@@ -247,9 +241,8 @@ const serveMcp = Effect.fn("Mcp.serve")(function* (
  */
 const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   { issuer, resource, scope }: DaemonSettings["authentication"],
-  daemon: Daemon,
+  answerAs: Effect.Effect.Success<ReturnType<typeof openDaemon>>,
 ) {
-  const answerAs = yield* makeMcpHandler(daemon);
   const metadata = yield* Effect.tryPromise({
     try: () => discoverAuthorizationServerMetadata(issuer),
     catch: () => new AuthenticationRefused(),
@@ -408,24 +401,19 @@ export const runDaemon = Effect.gen(function* () {
   const url = yield* databaseUrl;
   const settings = yield* loadDaemonSettings();
   const { authentication, norms } = settings;
-  const daemon = yield* openDaemon(url, {
-    owner: {
-      issuer: authentication.issuer,
-      subject: settings.serverAgent.subject,
-    },
+  const answerAs = yield* openDaemon(url, {
+    issuer: authentication.issuer,
+    subject: settings.serverAgent.subject,
     name: settings.serverAgent.name,
-    firewall: (me) =>
-      makeFirewall({
-        ...(settings.messagePolicy === undefined
-          ? {}
-          : { source: settings.messagePolicy }),
-        me,
-        historyLimit: settings.maximumHistoryRecords ?? 256,
-        notice: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
-        ...(norms === undefined
-          ? {}
-          : { structureCheck: structureCheck(norms) }),
-      }),
+    firewall: makeFirewall({
+      ...(settings.messagePolicy === undefined
+        ? {}
+        : { source: settings.messagePolicy }),
+      me: settings.serverAgent.name,
+      historyLimit: settings.maximumHistoryRecords ?? 256,
+      notice: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
+      ...(norms === undefined ? {} : { structureCheck: structureCheck(norms) }),
+    }),
     ...(norms === undefined
       ? {}
       : {
@@ -435,14 +423,8 @@ export const runDaemon = Effect.gen(function* () {
             document: norm.source,
           })),
         }),
-  }).pipe(
-    Effect.catchTag("OwnershipError", () =>
-      refused(
-        "This database's server agent has another name than serverAgent.name in the settings, or another agent has that name. Set serverAgent.name to the name the database was first started with, or prepare a new database.",
-      ),
-    ),
-  );
-  const app = yield* makeMcpHttpApp(authentication, daemon).pipe(
+  });
+  const app = yield* makeMcpHttpApp(authentication, answerAs).pipe(
     Effect.catchTag("AuthenticationRefused", () =>
       refused(
         `The OAuth issuer ${authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,

@@ -187,7 +187,7 @@ function projectProtocol(
   const seen = new Set<string>();
   for (const entry of earlier) {
     const { message } = entry;
-    const key = `${message.author.agentId}/${message.msgId}`;
+    const key = `${message.author}/${message.msgId}`;
     if (seen.has(key)) {
       continue;
     }
@@ -285,7 +285,7 @@ function checkProtocol(
     if (form.starts) {
       return yield* Either.left(invalid);
     }
-    const author = message.author.agentId;
+    const author = message.author;
     const role = roleOf(instance, author);
     const ancestry = referenceAncestry(instance, message.replyToMsgId);
     const anchor =
@@ -328,7 +328,7 @@ function senderPermitted(
     return false;
   }
   return "recipient" in form.by
-    ? anchor?.message.recipient.agentId === author
+    ? anchor?.message.recipient === author
     : form.by.includes(role);
 }
 
@@ -463,8 +463,8 @@ function advance(
   }
   const prior: Instance = view.instance ?? {
     norm,
-    initiator: entry.message.author.agentId,
-    participant: entry.message.recipient.agentId,
+    initiator: entry.message.author,
+    participant: entry.message.recipient,
     facts: new Map(),
     counts: new Map(),
     acts: [],
