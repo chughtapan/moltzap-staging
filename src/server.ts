@@ -304,22 +304,6 @@ class AddressError extends Data.TaggedError("AddressError")<{
   }
 }
 
-/**
- * A send that ended unexpectedly: it may already have happened, so a new send
- * can duplicate it.
- */
-class SendOutcomeUnknown extends Data.TaggedError("SendError")<{
-  readonly reason: "outcome-unknown";
-}> {
-  override get message(): string {
-    return "send failed: the send did not complete; the message may or may not have been sent";
-  }
-}
-
-const sendOutcomeUnknown = new SendOutcomeUnknown({
-  reason: "outcome-unknown",
-});
-
 interface ReceiveRequest {
   readonly cursor?: string;
   readonly wait?: number;
@@ -790,7 +774,7 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
       "send_message",
       {
         description:
-          "Send a message to a client. You can write only to a client that has written to you: any other name fails with unknown-agent. Returns id, the message id. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what clients send.",
+          "Send a message to a client. You can write only to a client that has written to you: any other name fails with unknown-agent. Returns id, the message id. A refusal names the argument or rule to correct. Use receive_messages to read what clients send.",
         input: Schema.Struct({
           to: Schema.propertySignature(AgentName).annotations({
             description:
@@ -799,7 +783,6 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
           ...sentFields,
         }),
         output: SendResult,
-        unexpected: sendOutcomeUnknown,
       },
       ({ to, ...sent }) => send(server.name, to, sent),
     );
@@ -853,10 +836,9 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
       "send_message",
       {
         description:
-          "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
+          "Send a message to the server agent. Returns the message id. Read its reply with receive_messages.",
         input: Schema.Struct(sentFields),
         output: SendResult,
-        unexpected: sendOutcomeUnknown,
       },
       (sent) => send(client, client, sent),
     );
@@ -904,7 +886,7 @@ export const openDaemon = Effect.fn("openDaemon")(function* (
  * of the HTTP request's fiber and is interrupted when the request is aborted.
  * Its value is the result's structured content. A typed failure is a result
  * marked as an error. A call that ends any other way is logged and answered
- * as `unexpected`, or with a fixed text that says nothing of what went wrong.
+ * with a fixed text that says nothing of what went wrong.
  */
 function register<A, I, B extends object, J extends object, E extends Failure>(
   mcp: McpServer,
@@ -914,7 +896,6 @@ function register<A, I, B extends object, J extends object, E extends Failure>(
     readonly input: Schema.Schema<A, I>;
     readonly output: Schema.Schema<B, J>;
     readonly readOnly?: true;
-    readonly unexpected?: Failure;
   },
   execute: (input: A) => Effect.Effect<B, E>,
 ) {
@@ -942,19 +923,15 @@ function register<A, I, B extends object, J extends object, E extends Failure>(
           Effect.catchAll((failure) => Effect.succeed(failed(failure))),
           Effect.catchAllDefect((defect) =>
             Effect.logError("A tool call ended unexpectedly", defect).pipe(
-              Effect.as(
-                tool.unexpected === undefined
-                  ? {
-                      isError: true as const,
-                      content: [
-                        {
-                          type: "text" as const,
-                          text: "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-                        },
-                      ],
-                    }
-                  : failed(tool.unexpected),
-              ),
+              Effect.as({
+                isError: true as const,
+                content: [
+                  {
+                    type: "text" as const,
+                    text: "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+                  },
+                ],
+              }),
             ),
           ),
         ),

@@ -161,7 +161,7 @@ it("answers a failed call with the failure's message and its fields", () =>
     }
   }));
 
-it("answers a call that dies without the defect's text, and a send that dies as one whose outcome is unknown", () =>
+it("answers a call that dies without the defect's text", () =>
   Effect.gen(function* () {
     const daemon = yield* inProcessDaemon({
       firewall: {
@@ -172,13 +172,11 @@ it("answers a call that dies without the defect's text, and a send that dies as 
     const alice = yield* daemon.signInAs("alice");
     const bob = yield* daemon.signInAs("bob");
     yield* send(bob, { text: "hi" });
-    expect(
-      yield* send(alice, { to: bob.name, text: "hello" }).pipe(Effect.flip),
-    ).toEqual({
-      reason: "outcome-unknown",
-      message:
-        "send failed: the send did not complete; the message may or may not have been sent",
-    });
+    const died = yield* send(alice, { to: bob.name, text: "hello" }).pipe(
+      Effect.flip,
+    );
+    expect(Object.keys(died)).toEqual(["message"]);
+    expect(died.message).not.toContain("PRIVATE");
     yield* daemon.sql`DROP TABLE firewall_checks`;
     const failure = yield* callTool(alice, "read_firewall_decisions").pipe(
       Effect.flip,
