@@ -25,7 +25,7 @@
     "NOTICE"
   ],
   "bin": {
-    "sharnessd": "./dist/main.js"
+    "sharnessd": "./dist/daemon/main.js"
   },
   "scripts": {
     "build": "nx run-many -t build",
@@ -139,8 +139,7 @@
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "effect": "catalog:",
-    "jose": "catalog:",
-    "kysely": "catalog:"
+    "jose": "catalog:"
   },
   "devDependencies": {
     "@chughtapan/safer-architecture-lsp": "catalog:",
