@@ -45,7 +45,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 import { Message, MsgId, wellFormedString } from "../communication/index.js";
 import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
-import { checkRecordSchema, LocalGuidance } from "../firewall/index.js";
+import { checkRecordSchema, LocalGuidance } from "../firewall/firewall.js";
 import { AgentCard, AgentId, AgentName } from "../identity.js";
 import {
   addressedAgent,

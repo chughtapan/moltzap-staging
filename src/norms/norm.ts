@@ -6,7 +6,7 @@
 
 import { Either, Schema, Struct } from "effect";
 import type { Message } from "../communication/index.js";
-import { TextRule } from "../firewall/index.js";
+import { TextRule } from "../firewall/firewall.js";
 
 const name = Schema.String.pipe(
   Schema.pattern(/^[a-zA-Z][a-zA-Z0-9-]{0,63}$/u),

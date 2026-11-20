@@ -11,7 +11,7 @@ import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
-} from "../firewall/index.js";
+} from "../firewall/firewall.js";
 import { AgentName } from "../identity.js";
 import {
   initialNormsHaveRules,

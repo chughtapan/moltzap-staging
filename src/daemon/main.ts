@@ -8,7 +8,7 @@
  */
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, PubSub } from "effect";
-import { makeFirewall } from "../firewall/service.js";
+import { makeFirewall } from "../firewall/firewall.js";
 import { structureCheck } from "../norms/index.js";
 import { getOrCreateOwnedAgent } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./server.js";
