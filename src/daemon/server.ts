@@ -363,7 +363,7 @@ function requestServer(
       },
       () =>
         Effect.succeed({
-          norms: norms.contracts.map((norm) => ({
+          norms: norms.map((norm) => ({
             name: norm.name,
             description: norm.description,
             document: norm.source,

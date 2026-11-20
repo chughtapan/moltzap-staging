@@ -131,8 +131,8 @@ export const testDaemon = (
 interface OpenOptions
   extends Partial<Pick<Daemon, "historyLimit" | "withheldReply">> {
   readonly policy?: TestPolicy;
-  /** The contracts the agent starts with. */
-  readonly contracts?: InstalledNorms["contracts"];
+  /** The norms the agent starts with. */
+  readonly norms?: InstalledNorms;
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 
@@ -160,7 +160,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
   });
   const open = Effect.fn(function* ({
     policy,
-    contracts,
+    norms,
     decorateFirewall,
     ...settings
   }: OpenOptions = {}) {
@@ -168,7 +168,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       Firewall.layer(
         alice.agentKey,
         policy?.source,
-        contracts && structureCheck({ contracts }),
+        norms && structureCheck(norms),
         policy?.provider,
       ).pipe(Layer.provide(Layer.succeed(Identity, { me: alice.card }))),
     ).pipe(Effect.map(Context.get(Firewall)));
