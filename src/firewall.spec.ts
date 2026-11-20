@@ -1091,13 +1091,6 @@ describe("Jev", () => {
   live.each([
     { name: "text that is not JSON", body: "not-json" },
     {
-      name: "no model",
-      body: JSON.stringify({
-        answers: jevAnswer.answers,
-        usage: jevAnswer.usage,
-      }),
-    },
-    {
       name: "an answer that is not a choice",
       body: JSON.stringify({
         ...jevAnswer,

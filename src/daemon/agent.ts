@@ -37,7 +37,6 @@ import {
   saveMessage,
   type StoredMessage,
   transaction,
-  withDecisions,
 } from "./store.js";
 
 /**
@@ -157,18 +156,11 @@ export const SendResult = Schema.Struct({
   address: AgentAddress,
 }).annotations({ identifier: "SendResult" });
 
-/** What a send and a history read both say of an address they cannot use. */
-const addressFailureText = {
-  "unknown-agent": "an agent the address names is not a known agent",
-} as const;
-
 /**
  * What the agent is told for each reason a send fails with. A send with an
  * unknown outcome may already have happened, so a new send can duplicate it.
  */
 const sendFailureText = {
-  ...addressFailureText,
-  "membership-invalid": "the address names only you",
   "content-invalid": "the message content is invalid",
   "outcome-unknown":
     "the send did not complete; the message may or may not have been sent",
@@ -181,17 +173,26 @@ const sendFailureText = {
  */
 export class SendError extends Data.TaggedError("SendError")<{
   readonly reason: keyof typeof sendFailureText;
-  readonly detail?: string;
 }> {
   override get message(): string {
-    return `send failed: ${this.detail ?? sendFailureText[this.reason]}`;
+    return `send failed: ${sendFailureText[this.reason]}`;
   }
 }
 
-const historyFailureText = {
-  ...addressFailureText,
-  "invalid-address": "the address names you, not another agent",
-} as const;
+/**
+ * An address a send or a history read cannot use: it names no agent of this
+ * daemon (`unknown-agent`) or the calling agent itself (`invalid-address`).
+ */
+export class AddressError extends Data.TaggedError("AddressError")<{
+  readonly reason: "unknown-agent" | "invalid-address";
+  readonly address: string;
+}> {
+  override get message(): string {
+    return this.reason === "unknown-agent"
+      ? `This daemon has no agent named ${this.address}. Check the name with its owner.`
+      : `The address ${this.address} names you, not another agent.`;
+  }
+}
 
 const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
   "rule-violation": "It breaks a rule of the agent's message policy.",
@@ -225,18 +226,6 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
           )),
       `Check: ${this.checkId}${rule}; ${this.refusal}.`,
     ].join(" ");
-  }
-}
-
-/** History failure never exposes private protocol or persistence diagnostics. */
-export class HistoryError extends Schema.TaggedError<HistoryError>()(
-  "HistoryError",
-  {
-    reason: Schema.Literal("invalid-address", "unknown-agent"),
-  },
-) {
-  override get message(): string {
-    return `reading failed: ${historyFailureText[this.reason]}`;
   }
 }
 
@@ -340,9 +329,20 @@ function takeTurn(daemon: Daemon, client: AgentCard) {
   );
 }
 
-/** The agent an address names, or none when no agent has the name. */
-export const addressedAgent = (address: AgentAddress) =>
-  agentNamed(address.slice(AGENT_ADDRESS_PREFIX.length));
+/** The other agent `address` names for `self`. */
+export const addressedAgent = Effect.fn("addressedAgent")(function* (
+  self: AgentCard,
+  address: AgentAddress,
+) {
+  const agent = yield* agentNamed(address.slice(AGENT_ADDRESS_PREFIX.length));
+  if (agent === undefined) {
+    return yield* new AddressError({ reason: "unknown-agent", address });
+  }
+  if (agent.agentId === self.agentId) {
+    return yield* new AddressError({ reason: "invalid-address", address });
+  }
+  return agent;
+});
 
 /**
  * Sends one message between the server agent and a client, whichever of the
@@ -380,10 +380,14 @@ export const send = Effect.fn("send")(
       ),
     );
     yield* takeTurn(daemon, outgoing ? recipient : author);
-    const earlier = yield* Effect.flatMap(
-      readConversation([author.agentId, recipient.agentId]),
-      (stored) => withDecisions(stored.map((row) => row.message)),
-    );
+    const earlier = (yield* readConversation([
+      author.agentId,
+      recipient.agentId,
+    ])).map((stored) => ({
+      message: stored.message,
+      allowed: stored.readNumber !== null,
+      ...(stored.checkedAt === null ? {} : { checkedAt: stored.checkedAt }),
+    }));
     const result = outgoing
       ? yield* daemon.firewall.checkOutgoing(message, earlier)
       : yield* daemon.firewall.checkIncoming(message, earlier);
@@ -392,7 +396,7 @@ export const send = Effect.fn("send")(
       (outgoing || result.reason === "check-unavailable")
     ) {
       if (result.record !== undefined) {
-        yield* saveDecision(message, result.record);
+        yield* saveDecision(result.record);
       }
       return yield* new FirewallRefusal({
         reason: "firewall-refused",
@@ -416,13 +420,19 @@ export const send = Effect.fn("send")(
         yield* saveMessage(message, {
           readable: result.kind === "allowed",
           ...(guidance === undefined ? {} : { guidance }),
+          ...(result.record === undefined
+            ? {}
+            : { checkedAt: result.record.time }),
         });
         if (result.record !== undefined) {
-          yield* saveDecision(message, result.record);
+          yield* saveDecision(result.record);
         }
         if (reply !== undefined) {
-          yield* saveMessage(reply.message, { readable: true });
-          yield* saveDecision(reply.message, reply.record);
+          yield* saveMessage(reply.message, {
+            readable: true,
+            checkedAt: reply.record.time,
+          });
+          yield* saveDecision(reply.record);
         }
       }),
     ).pipe(Effect.orDie);
