@@ -42,19 +42,9 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { InstalledNorms } from "../norms/index.js";
 import type { DaemonSettings } from "./settings.js";
 import packageJson from "../../package.json" with { type: "json" };
-import { checkRecordSchema, LocalGuidance } from "../firewall.js";
-import {
-  AGENT_NAME_RULE,
-  type AgentCard,
-  AgentId,
-  AgentName,
-  Message,
-  MsgId,
-  wellFormedString,
-} from "../messages.js";
-import type { InstalledNorms } from "../norms/index.js";
 import {
   agentNamed,
   agentOf,
@@ -68,6 +58,16 @@ import {
   receive,
   send,
 } from "../conversations.js";
+import { checkRecordSchema, LocalGuidance } from "../firewall.js";
+import {
+  AGENT_NAME_RULE,
+  type AgentCard,
+  AgentId,
+  AgentName,
+  Message,
+  MsgId,
+  wellFormedString,
+} from "../messages.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
 
@@ -305,7 +305,11 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   const mcp = createMcpHandler(({ authInfo }) =>
     inRequest(
       Effect.map(admittedAgent(conversations, authInfo), (agent) =>
-        requestServer(agent, { conversations, events, norms }),
+        requestServer(agent, {
+          conversations,
+          events,
+          ...(norms === undefined ? {} : { norms }),
+        }),
       ),
     ),
   );
@@ -412,7 +416,7 @@ function requestServer(
   served: {
     readonly conversations: Conversations;
     readonly events: EventsExtension;
-    readonly norms: InstalledNorms | undefined;
+    readonly norms?: InstalledNorms;
   },
 ) {
   const { conversations, norms } = served;

@@ -104,36 +104,6 @@ export class DatabasePreparationError extends Data.TaggedError(
 export class OwnershipError extends Data.TaggedError("OwnershipError") {}
 
 /**
- * Opens the conversations in the database at `url` until the scope closes:
- * connects, prepares the tables, and finds or creates the server agent, whose
- * card `server.firewall` builds its firewall from. A URL that reaches no
- * PostgreSQL server fails the connection.
- */
-export const openConversations = Effect.fn("openConversations")(function* (
-  url: Redacted.Redacted,
-  server: {
-    readonly owner: Owner;
-    readonly name: AgentName;
-    readonly firewall: (me: AgentCard) => Firewall;
-  },
-) {
-  const sql = Context.get(
-    yield* Layer.build(PgClient.layer({ url })),
-    SqlClient.SqlClient,
-  );
-  yield* prepareTables(sql);
-  const serverAgent = yield* ownedAgent(sql, server.owner, server.name);
-  const opened: Conversations = {
-    serverAgent,
-    firewall: server.firewall(serverAgent),
-    sql,
-    locks: new Map(),
-    readable: yield* PubSub.unbounded<string>(),
-  };
-  return opened;
-});
-
-/**
  * Creates the tables in an empty database, in one transaction, and leaves a
  * database that already holds them as it is, so a login that cannot create
  * tables serves a database another login prepared. A database that holds
@@ -217,8 +187,8 @@ const agentsWith = (
  * `agentName`, the agent is created under that name and an existing agent
  * must already have it.
  */
-const ownedAgent = Effect.fn("getOrCreateOwnedAgent")(function* (
-  sql: SqlClient.SqlClient,
+export const agentOf = Effect.fn("getOrCreateOwnedAgent")(function* (
+  { sql }: Pick<Conversations, "sql">,
   owner: Owner,
   agentName?: AgentName,
 ) {
@@ -238,12 +208,35 @@ const ownedAgent = Effect.fn("getOrCreateOwnedAgent")(function* (
   return saved;
 });
 
-/** The agent of `owner`, created on first use, under `agentName` when one is given. */
-export const agentOf = (
-  conversations: Conversations,
-  owner: Owner,
-  agentName?: AgentName,
-) => ownedAgent(conversations.sql, owner, agentName);
+/**
+ * Opens the conversations in the database at `url` until the scope closes:
+ * connects, prepares the tables, and finds or creates the server agent, whose
+ * card `server.firewall` builds its firewall from. A URL that reaches no
+ * PostgreSQL server fails the connection.
+ */
+export const openConversations = Effect.fn("openConversations")(function* (
+  url: Redacted.Redacted,
+  server: {
+    readonly owner: Owner;
+    readonly name: AgentName;
+    readonly firewall: (me: AgentCard) => Firewall;
+  },
+) {
+  const sql = Context.get(
+    yield* Layer.build(PgClient.layer({ url })),
+    SqlClient.SqlClient,
+  );
+  yield* prepareTables(sql);
+  const serverAgent = yield* agentOf({ sql }, server.owner, server.name);
+  const opened: Conversations = {
+    serverAgent,
+    firewall: server.firewall(serverAgent),
+    sql,
+    locks: new Map(),
+    readable: yield* PubSub.unbounded<string>(),
+  };
+  return opened;
+});
 
 /** The agent named `name`, if there is one. */
 export const agentNamed = (conversations: Conversations, name: string) =>
@@ -330,109 +323,6 @@ const entryOf = ({ message, guidance }: StoredMessage): InboxEntry => ({
   message,
   ...(guidance === null ? {} : { guidance }),
 });
-
-/**
- * Sends one message between the server agent and a client, whichever of the
- * two is `author`, under their conversation's lock: a check reads the
- * conversation's earlier messages, so its messages are checked and stored one
- * at a time, while other conversations do not wait. The server agent's
- * firewall checks the message as one its agent sends or is sent. A message
- * the server agent may not send, or one whose check could not run, fails the
- * send and is not stored. Otherwise one transaction stores the message with
- * the decision and, for a message withheld from the server agent, the
- * firewall's reply to its sender with the decision that allows it. No
- * transaction is open while a check runs. A waiting read wakes once a message
- * it may read is stored. Each call creates a new message, so retrying an
- * uncertain send can duplicate it.
- */
-export const send = Effect.fn("send")(
-  function* (
-    conversations: Conversations,
-    sent: {
-      readonly author: AgentCard;
-      readonly recipient: AgentCard;
-      readonly text: string;
-      readonly replyToMsgId?: MsgId;
-    },
-  ) {
-    const { author, recipient } = sent;
-    const { serverAgent, firewall, sql } = conversations;
-    const outgoing = author.agentId === serverAgent.agentId;
-    const message = yield* Message.create(sent).pipe(
-      Effect.catchTag(
-        "CommunicationError",
-        ({ reason }: CommunicationError) => new SendError({ reason }),
-      ),
-    );
-    yield* lockConversation(conversations, outgoing ? recipient : author);
-    const earlier = (yield* conversationRows(sql, author, recipient)).map(
-      ({ message: stored, readNumber, checkedAt }) => ({
-        message: stored,
-        allowed: readNumber !== null,
-        ...(checkedAt === null ? {} : { checkedAt }),
-      }),
-    );
-    const result = outgoing
-      ? yield* firewall.checkOutgoing(message, earlier)
-      : yield* firewall.checkIncoming(message, earlier);
-    if (
-      result.kind === "refused" &&
-      (outgoing || result.reason === "check-unavailable")
-    ) {
-      if (result.record !== undefined) {
-        yield* storeDecision(sql, result.record);
-      }
-      return yield* new FirewallRefusal({
-        reason: "firewall-refused",
-        checkId: result.checkId,
-        refusal: result.reason,
-        ...(result.rule === undefined ? {} : { rule: result.rule }),
-        feedback: result.feedback,
-        ...(result.detail === undefined ? {} : { detail: result.detail }),
-      });
-    }
-    const reply =
-      result.kind === "refused" && result.reply !== undefined
-        ? yield* replyWith(serverAgent, message, result.reply)
-        : undefined;
-    yield* sql
-      .withTransaction(
-        Effect.gen(function* () {
-          yield* storeMessage(sql, message, {
-            readable: result.kind === "allowed",
-            ...(result.kind === "allowed" && result.guidance !== undefined
-              ? { guidance: result.guidance }
-              : {}),
-            ...(result.record === undefined ? {} : { record: result.record }),
-          });
-          if (reply !== undefined) {
-            yield* storeMessage(sql, reply.message, {
-              readable: true,
-              record: reply.record,
-            });
-          }
-        }),
-      )
-      .pipe(Effect.orDie);
-    if (result.kind === "allowed") {
-      yield* PubSub.publish(conversations.readable, recipient.agentId);
-    } else if (reply !== undefined) {
-      yield* PubSub.publish(conversations.readable, author.agentId);
-    }
-    return message.msgId;
-  },
-  Effect.scoped,
-  (effect, ...[, { author }]) =>
-    Effect.tapError(effect, (error) =>
-      Effect.logWarning("Send failed").pipe(
-        Effect.annotateLogs({
-          agentId: author.agentId,
-          error: error._tag,
-          reason: error.message,
-        }),
-      ),
-    ),
-);
 
 /** Holds the conversation of the server agent with `client` until the scope closes. */
 function lockConversation(conversations: Conversations, client: AgentCard) {
@@ -546,6 +436,109 @@ const conversationRows = Effect.fn("readConversation")(function* (
     ORDER BY sequence LIMIT ${page?.limit ?? null}`;
   return yield* Schema.decodeUnknown(storedMessages)(rows);
 }, Effect.orDie);
+
+/**
+ * Sends one message between the server agent and a client, whichever of the
+ * two is `author`, under their conversation's lock: a check reads the
+ * conversation's earlier messages, so its messages are checked and stored one
+ * at a time, while other conversations do not wait. The server agent's
+ * firewall checks the message as one its agent sends or is sent. A message
+ * the server agent may not send, or one whose check could not run, fails the
+ * send and is not stored. Otherwise one transaction stores the message with
+ * the decision and, for a message withheld from the server agent, the
+ * firewall's reply to its sender with the decision that allows it. No
+ * transaction is open while a check runs. A waiting read wakes once a message
+ * it may read is stored. Each call creates a new message, so retrying an
+ * uncertain send can duplicate it.
+ */
+export const send = Effect.fn("send")(
+  function* (
+    conversations: Conversations,
+    sent: {
+      readonly author: AgentCard;
+      readonly recipient: AgentCard;
+      readonly text: string;
+      readonly replyToMsgId?: MsgId;
+    },
+  ) {
+    const { author, recipient } = sent;
+    const { serverAgent, firewall, sql } = conversations;
+    const outgoing = author.agentId === serverAgent.agentId;
+    const message = yield* Message.create(sent).pipe(
+      Effect.catchTag(
+        "CommunicationError",
+        ({ reason }: CommunicationError) => new SendError({ reason }),
+      ),
+    );
+    yield* lockConversation(conversations, outgoing ? recipient : author);
+    const earlier = (yield* conversationRows(sql, author, recipient)).map(
+      (stored) => ({
+        message: stored.message,
+        allowed: stored.readNumber !== null,
+        ...(stored.checkedAt === null ? {} : { checkedAt: stored.checkedAt }),
+      }),
+    );
+    const result = outgoing
+      ? yield* firewall.checkOutgoing(message, earlier)
+      : yield* firewall.checkIncoming(message, earlier);
+    if (
+      result.kind === "refused" &&
+      (outgoing || result.reason === "check-unavailable")
+    ) {
+      if (result.record !== undefined) {
+        yield* storeDecision(sql, result.record);
+      }
+      return yield* new FirewallRefusal({
+        reason: "firewall-refused",
+        checkId: result.checkId,
+        refusal: result.reason,
+        ...(result.rule === undefined ? {} : { rule: result.rule }),
+        feedback: result.feedback,
+        ...(result.detail === undefined ? {} : { detail: result.detail }),
+      });
+    }
+    const reply =
+      result.kind === "refused" && result.reply !== undefined
+        ? yield* replyWith(serverAgent, message, result.reply)
+        : undefined;
+    yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* storeMessage(sql, message, {
+            readable: result.kind === "allowed",
+            ...(result.kind === "allowed" && result.guidance !== undefined
+              ? { guidance: result.guidance }
+              : {}),
+            ...(result.record === undefined ? {} : { record: result.record }),
+          });
+          if (reply !== undefined) {
+            yield* storeMessage(sql, reply.message, {
+              readable: true,
+              record: reply.record,
+            });
+          }
+        }),
+      )
+      .pipe(Effect.orDie);
+    if (result.kind === "allowed") {
+      yield* PubSub.publish(conversations.readable, recipient.agentId);
+    } else if (reply !== undefined) {
+      yield* PubSub.publish(conversations.readable, author.agentId);
+    }
+    return message.msgId;
+  },
+  Effect.scoped,
+  (effect, ...[, { author }]) =>
+    Effect.tapError(effect, (error) =>
+      Effect.logWarning("Send failed").pipe(
+        Effect.annotateLogs({
+          agentId: author.agentId,
+          error: error._tag,
+          reason: error.message,
+        }),
+      ),
+    ),
+);
 
 /**
  * At most `limit` of the inbox entries of the agent after `cursor`, in read

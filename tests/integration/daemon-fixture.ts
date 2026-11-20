@@ -36,7 +36,6 @@ import {
   Exit,
   Fiber,
   Redacted,
-  Schema,
   type Scope,
   Stream,
 } from "effect";
@@ -44,14 +43,17 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { callTool, type SignedIn } from "../../src/__tests__/daemon.js";
+import {
+  callTool,
+  decodeInboxEntry,
+  type SignedIn,
+} from "../../src/__tests__/daemon.js";
 import {
   issuerFixture,
   openTestDatabase,
   requiredScope,
   restrictedLogin,
 } from "../../src/__tests__/test.js";
-import { AgentAddress, InboxEntry } from "../../src/daemon/agent.js";
 
 /** The name of the event whose occurrences are an agent's inbox entries. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
@@ -295,7 +297,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
     const agent = yield* callTool({ mcp }, "status");
     const subscriber: Subscriber = {
       agent,
-      address: AgentAddress.make(`agent:${agent.agentName}`),
+      address: `agent:${agent.agentName}`,
       mcp,
       events,
     };
@@ -406,7 +408,7 @@ export function inboxStream(
   ).pipe(
     Stream.orDie,
     Stream.mapEffect((event) =>
-      Schema.decodeUnknown(InboxEntry)(event.data).pipe(Effect.orDie),
+      decodeInboxEntry(event.data).pipe(Effect.orDie),
     ),
   );
 }

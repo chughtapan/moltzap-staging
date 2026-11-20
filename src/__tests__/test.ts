@@ -3,6 +3,7 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
+import * as PgClient from "@effect/sql-pg/PgClient";
 import { Config, Context, Effect, Layer, Redacted } from "effect";
 import {
   calculateJwkThumbprint,
@@ -13,7 +14,6 @@ import {
 import { randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer owns the issuer listener's lifetime.
 import { createServer } from "node:http";
-import { databaseConnection, prepareDatabase } from "../daemon/store.js";
 
 const serverUrl = Config.redacted("SHARNESS_PG_TEST_URL").pipe(
   Effect.catchTag("ConfigError", () =>
@@ -24,14 +24,11 @@ const serverUrl = Config.redacted("SHARNESS_PG_TEST_URL").pipe(
 );
 
 /**
- * Creates a schema that only the caller's scope uses and connects to it as the
- * login of `SHARNESS_PG_TEST_URL`; closing the scope drops the schema. The
- * schema holds the daemon's tables unless `prepared` is false. `url` reaches
- * the same schema from another connection or process.
+ * Creates an empty schema that only the caller's scope uses and connects to
+ * it as the login of `SHARNESS_PG_TEST_URL`; closing the scope drops the
+ * schema. `url` reaches the same schema from another connection or process.
  */
-export const openTestDatabase = Effect.fn("openTestDatabase")(function* (
-  options: { readonly prepared?: boolean } = {},
-) {
+export const openTestDatabase = Effect.fn("openTestDatabase")(function* () {
   const schema = `test_${randomBytes(8).toString("hex")}`;
   const located = new URL(Redacted.value(yield* serverUrl));
   located.searchParams.set(
@@ -40,25 +37,14 @@ export const openTestDatabase = Effect.fn("openTestDatabase")(function* (
   );
   const url = Redacted.make(located.href);
   const sql = Context.get(
-    yield* Layer.build(databaseConnection(url)),
+    yield* Layer.build(PgClient.layer({ url })),
     SqlClient.SqlClient,
   );
   yield* sql`CREATE SCHEMA ${sql(schema)}`;
   yield* Effect.addFinalizer(() =>
     sql`DROP SCHEMA ${sql(schema)} CASCADE`.pipe(Effect.orDie),
   );
-  if (options.prepared !== false) {
-    yield* prepareDatabase.pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
-    );
-  }
-  return {
-    schema,
-    url,
-    sql,
-    run: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
-  };
+  return { schema, url, sql };
 }, Effect.orDie);
 
 /** A test's database. A fixture given one serves it again, as a restart does. */

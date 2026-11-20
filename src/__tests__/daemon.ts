@@ -12,16 +12,10 @@ import {
 } from "@modelcontextprotocol/client";
 import { Effect, Schema } from "effect";
 import type { TestPolicy } from "./firewall-fixtures.js";
-import {
-  AgentAddress,
-  getOrCreateOwnedAgent,
-  HistoryRecord,
-  InboxEntry,
-  openDaemon,
-} from "../daemon/agent.js";
+import { agentOf, openConversations } from "../conversations.js";
 import { makeMcpHttpApp } from "../daemon/server.js";
 import { checkRecordSchema, type Firewall, makeFirewall } from "../firewall.js";
-import { AgentId, AgentName, MsgId } from "../messages.js";
+import { AgentId, AgentName, Message, MsgId } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { issuerFixture, openTestDatabase, requiredScope } from "./test.js";
 
@@ -45,7 +39,7 @@ export const decisionState = Schema.decodeUnknownSync(
 /** A signed-in owner: its agent, how the server agent addresses it, and an MCP connection as it. */
 export interface SignedIn {
   readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
-  readonly address: AgentAddress;
+  readonly address: string;
   readonly mcp: Client;
 }
 
@@ -68,28 +62,32 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
 ) {
   const database = yield* openTestDatabase();
   const issuer = yield* issuerFixture().pipe(Effect.orDie);
+  const owner = (name: string) => ({ issuer: issuer.issuer, subject: name });
+  const conversations = yield* openConversations(database.url, {
+    owner: owner("alice"),
+    name: AgentName.make("alice"),
+    firewall: (me) => ({
+      ...makeFirewall({
+        ...(options.policy ?? {}),
+        me,
+        historyLimit: options.historyLimit ?? 256,
+        ...(options.notice === undefined ? {} : { notice: options.notice }),
+        ...(options.norms === undefined
+          ? {}
+          : { structureCheck: structureCheck(options.norms) }),
+      }),
+      ...options.firewall,
+    }),
+  }).pipe(Effect.orDie);
   const join = (name: string) =>
-    getOrCreateOwnedAgent(
-      { issuer: issuer.issuer, subject: name },
-      AgentName.make(name),
-    ).pipe(database.run, Effect.orDie);
-  const serverAgent = yield* join("alice");
-  const firewall = makeFirewall({
-    ...(options.policy ?? {}),
-    me: serverAgent,
-    historyLimit: options.historyLimit ?? 256,
-    ...(options.notice === undefined ? {} : { notice: options.notice }),
-    ...(options.norms === undefined
-      ? {}
-      : { structureCheck: structureCheck(options.norms) }),
-  });
+    agentOf(conversations, owner(name), AgentName.make(name)).pipe(
+      Effect.orDie,
+    );
   const app = yield* makeMcpHttpApp(
     { resource, issuer: issuer.issuer, scope: requiredScope },
-    yield* openDaemon({
-      serverAgent,
-      firewall: { ...firewall, ...options.firewall },
-    }),
-  ).pipe(database.run, Effect.orDie);
+    conversations,
+    options.norms,
+  ).pipe(Effect.orDie);
   const handle = HttpApp.toWebHandler(app);
   const token = (
     subject: string,
@@ -114,7 +112,7 @@ export const inProcessDaemon = Effect.fn("inProcessDaemon")(function* (
         const mcp = yield* connect(handle, yield* token(name));
         const signedIn: SignedIn = {
           agent,
-          address: AgentAddress.make(`agent:${name}`),
+          address: `agent:${name}`,
           mcp,
         };
         return signedIn;
@@ -126,19 +124,34 @@ const fields = Schema.decodeUnknownSync(
   Schema.Record({ key: Schema.String, value: Schema.Unknown }),
 );
 
+/** An inbox entry as a host reads it. */
+const inboxEntry = Schema.Struct({
+  address: Schema.String,
+  message: Message,
+  guidance: Schema.optional(Schema.Unknown),
+});
+
+/** Reads an inbox entry from what the inbox event delivers. */
+export const decodeInboxEntry = Schema.decodeUnknown(inboxEntry);
+
 /** What tests read of the result of each tool they call. */
 const results = {
   status: Schema.Struct({ agentId: AgentId, agentName: AgentName }),
-  send_message: Schema.Struct({ id: MsgId, address: AgentAddress }),
+  send_message: Schema.Struct({ id: MsgId, address: Schema.String }),
   receive_messages: Schema.Struct({
-    entries: Schema.Array(InboxEntry),
+    entries: Schema.Array(inboxEntry),
     nextCursor: Schema.String,
   }),
   list_conversations: Schema.Struct({
-    addresses: Schema.Array(AgentAddress),
+    addresses: Schema.Array(Schema.String),
   }),
   read_conversation: Schema.Struct({
-    records: Schema.Array(HistoryRecord),
+    records: Schema.Array(
+      Schema.Struct({
+        kind: Schema.Literal("sent", "received"),
+        message: Message,
+      }),
+    ),
     nextCursor: Schema.optional(Schema.String),
   }),
   read_firewall_decisions: Schema.Struct({
@@ -190,7 +203,7 @@ export function callTool(
 export const send = (
   sender: Pick<SignedIn, "mcp">,
   input: {
-    readonly to?: AgentAddress;
+    readonly to?: string;
     readonly text: string;
     readonly replyToMsgId?: MsgId;
   },
