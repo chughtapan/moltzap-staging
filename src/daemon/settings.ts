@@ -1,12 +1,7 @@
 /** @file Reads the settings file and the files it names into the daemon's settings. */
-import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { FileSystem } from "@effect/platform";
-import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
+import { Config, Data, Effect, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
-import packageJson from "../../package.json" with { type: "json" };
 import { type LoadedMessagePolicy, loadMessagePolicy } from "../firewall.js";
 import { AgentName } from "../messages.js";
 import {
@@ -15,9 +10,6 @@ import {
   loadNorms,
   type NormsConfigurationError,
 } from "../norms/index.js";
-
-/** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
-export const packageVersion: string = packageJson.version;
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.
@@ -133,7 +125,13 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   const norms =
     file.normsDirectory === undefined
       ? undefined
-      : yield* configuredNorms(resolve(settingsDirectory, file.normsDirectory));
+      : yield* loadNorms(resolve(settingsDirectory, file.normsDirectory)).pipe(
+          Effect.mapError((error: NormsConfigurationError) =>
+            refused(
+              `The configured norms directory is invalid: ${error.reason}`,
+            ),
+          ),
+        );
   if (norms !== undefined && file.messagePolicyFile === undefined) {
     return yield* refused(
       "The configured norms need a messagePolicyFile: the message policy checks them",
@@ -160,50 +158,3 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   };
   return settings;
 });
-
-/** The settings file's norms directory, read and checked. */
-function configuredNorms(directory: string) {
-  return loadNorms(directory).pipe(
-    Effect.mapError((error: NormsConfigurationError) =>
-      refused(`The configured norms directory is invalid: ${error.reason}`),
-    ),
-  );
-}
-
-/**
- * Installs a process-global stderr logger for OpenTelemetry warnings and failures.
- * The logger remains installed after export closes.
- */
-const exportDiagnostics = Layer.effectDiscard(
-  Effect.sync(() =>
-    diag.setLogger(new DiagConsoleLogger(), {
-      logLevel: DiagLogLevel.WARN,
-      suppressOverrideMessage: true,
-    }),
-  ),
-);
-
-/**
- * Exports spans as OTLP/HTTP protobuf when `OTEL_EXPORTER_OTLP_ENDPOINT` is
- * set, under the service name `OTEL_SERVICE_NAME` gives, or `sharnessd`.
- * OpenTelemetry reads the endpoint and its remaining exporter, batch and
- * resource settings from the standard variables, and warns of one it cannot use.
- */
-// eslint-disable-next-line agent-code-guard/require-span-on-exported-effect -- The exporter installs tracing; tracing its acquisition changes the daemon's exported spans.
-export const spanExport = Layer.unwrapEffect(
-  Effect.gen(function* () {
-    const endpoint = yield* Config.option(
-      Config.nonEmptyString("OTEL_EXPORTER_OTLP_ENDPOINT"),
-    );
-    if (Option.isNone(endpoint)) {
-      return Layer.empty;
-    }
-    const serviceName = yield* Config.nonEmptyString("OTEL_SERVICE_NAME").pipe(
-      Config.withDefault("sharnessd"),
-    );
-    return NodeSdk.layer(() => ({
-      resource: { serviceName, serviceVersion: packageVersion },
-      spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
-    })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
-  }).pipe(Effect.orDie),
-);

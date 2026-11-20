@@ -1,4 +1,4 @@
-/** @file Shared test agents and deterministic identifiers. */
+/** @file Shared test agents. */
 
 import { Effect, Encoding, Schema } from "effect";
 import { createHash } from "node:crypto";
@@ -24,16 +24,6 @@ export function testAgentCard(address: string): AgentCard {
     agentName: name,
     principalId: `prn_${suffix}`,
   });
-}
-
-/**
- * A prefixed identifier over 32 repeated bytes, the form of MsgId.
- * @param prefix Identifier prefix, such as `msg_`.
- * @param byte Value repeated across all 32 bytes.
- * @returns The identifier text, before schema decoding.
- */
-export function digest(prefix: string, byte: number): string {
-  return `${prefix}${Encoding.encodeBase64Url(new Uint8Array(32).fill(byte))}`;
 }
 
 /** Creates an agent named `name` the way the daemon does for a new owner. */

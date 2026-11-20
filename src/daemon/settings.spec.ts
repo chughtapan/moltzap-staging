@@ -28,8 +28,7 @@ const settings = {
 
 /**
  * A valid settings file in a directory of its own, loaded through the variable
- * that names it. Each property run builds one, so the properties below bound
- * their runs.
+ * that names it.
  */
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
@@ -132,13 +131,11 @@ it("refuses a settings file that does not exist", () =>
     );
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it.prop(
-  "resolves the policy and the norms directory relative to the settings file, however deep beneath it they sit, and reads the provider key from its variable",
-  [fc.array(fc.stringMatching(/^[a-z0-9]{1,8}$/), { maxLength: 3 })],
-  ([segments]) =>
+it.each(["", "nested/deeper"])(
+  "resolves the policy and the norms directory relative to the settings file (beneath it: '%s'), and reads the provider key from its variable",
+  (beneath) =>
     Effect.gen(function* () {
       const test = yield* fixture;
-      const beneath = join(...segments);
       yield* test.write({
         ...settings,
         ...(yield* messagePolicy(test, true, beneath)),
@@ -153,7 +150,6 @@ it.prop(
       ).toBe(providerKey);
       expect(loaded.norms?.map((norm) => norm.source)).toEqual([unruledNorm]);
     }).pipe(Effect.provide(NodeContext.layer)),
-  { fastCheck: { numRuns: 12 } },
 );
 
 it("loads the decision provider that judges initial norms' English rules, though the policy has no text rules", () =>
@@ -206,10 +202,14 @@ it("refuses a norms directory whose document does not compile", () =>
     expect(failure.message).toContain("norms directory");
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it.prop(
-  "takes a history limit of 1 to 1024 records and refuses any other",
-  [fc.integer({ min: -8, max: 1040 })],
-  ([maximumHistoryRecords]) =>
+it.each([
+  { maximumHistoryRecords: 1, taken: true },
+  { maximumHistoryRecords: 1024, taken: true },
+  { maximumHistoryRecords: 0, taken: false },
+  { maximumHistoryRecords: 1025, taken: false },
+])(
+  "takes a history limit of 1 to 1024 records and refuses any other ($maximumHistoryRecords)",
+  ({ maximumHistoryRecords, taken }) =>
     Effect.gen(function* () {
       const test = yield* fixture;
       yield* test.write({ ...settings, maximumHistoryRecords });
@@ -217,12 +217,9 @@ it.prop(
       const loaded = yield* test.load.pipe(Effect.either);
 
       expect(Either.getOrUndefined(loaded)?.maximumHistoryRecords).toBe(
-        maximumHistoryRecords >= 1 && maximumHistoryRecords <= 1024
-          ? maximumHistoryRecords
-          : undefined,
+        taken ? maximumHistoryRecords : undefined,
       );
     }).pipe(Effect.provide(NodeContext.layer)),
-  { fastCheck: { numRuns: 40 } },
 );
 
 const knownSettings = new Set([

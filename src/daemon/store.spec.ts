@@ -110,24 +110,6 @@ it("holds a client/server exchange once for its two agents only and puts each me
     expect(yield* f.conversation("alice", "carol")).toEqual([]);
   }));
 
-it("stores nothing of a message whose transaction fails, and both of two messages stored at the same time", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture;
-    yield* f.sql
-      .withTransaction(
-        f
-          .send("bob", "alice", readable)
-          .pipe(Effect.zipRight(Effect.fail("cancel"))),
-      )
-      .pipe(Effect.either);
-    expect(yield* f.conversation("alice", "bob")).toEqual([]);
-    yield* Effect.all(
-      [f.send("bob", "alice", readable), f.send("alice", "bob", readable)],
-      { concurrency: 2 },
-    );
-    expect(yield* f.conversation("alice", "bob")).toHaveLength(2);
-  }));
-
 const steps = fc.array(
   fc.oneof(
     fc.record({

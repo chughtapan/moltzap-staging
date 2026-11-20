@@ -21,9 +21,8 @@ import {
   AgentName,
   type CommunicationError,
   Message,
-  MsgId,
+  type MsgId,
   PrincipalId,
-  wellFormedString,
 } from "../messages.js";
 import {
   agentNamed,
@@ -55,11 +54,24 @@ export interface Daemon {
   readonly firewall: Firewall;
   /** The norms the server agent holds, which every agent then reads with `read_norms`. */
   readonly norms?: InstalledNorms;
-  /** The turn of each conversation a message was sent in, by its client's agent id. */
-  readonly turns: Map<string, Effect.Semaphore>;
+  /** The lock of each conversation a message was sent in, by its client's agent id. */
+  readonly conversationLocks: Map<string, Effect.Semaphore>;
   /** Published with an agent's id each time a message becomes readable for it. */
   readonly readable: PubSub.PubSub<string>;
 }
+
+/** What the agents of a daemon share, when no message has been sent yet. */
+export const openDaemon = (
+  served: Pick<Daemon, "serverAgent" | "firewall" | "norms">,
+) =>
+  Effect.map(
+    PubSub.unbounded<string>(),
+    (readable): Daemon => ({
+      ...served,
+      conversationLocks: new Map(),
+      readable,
+    }),
+  );
 
 /**
  * The owner's agent, created on first use with a new identifier and
@@ -91,20 +103,14 @@ const AGENT_ADDRESS_PREFIX = "agent:";
 
 const isAgentName = Schema.is(AgentName);
 
-/** The agent name an `agent:` address names, or undefined when the value is not an agent address. */
-const parseAgentAddress = (value: string): AgentName | undefined => {
-  if (!value.startsWith(AGENT_ADDRESS_PREFIX)) {
-    return undefined;
-  }
-  const name = value.slice(AGENT_ADDRESS_PREFIX.length);
-  return isAgentName(name) ? name : undefined;
-};
-
 /** The address of one agent. */
 export const AgentAddress = Schema.String.pipe(
-  Schema.filter((value) => parseAgentAddress(value) !== undefined, {
-    description: `agent:<name>; a name is ${AGENT_NAME_RULE}`,
-  }),
+  Schema.filter(
+    (value) =>
+      value.startsWith(AGENT_ADDRESS_PREFIX) &&
+      isAgentName(value.slice(AGENT_ADDRESS_PREFIX.length)),
+    { description: `agent:<name>; a name is ${AGENT_NAME_RULE}` },
+  ),
   Schema.brand("AgentAddress"),
   Schema.annotations({ identifier: "AgentAddress" }),
 );
@@ -131,30 +137,25 @@ export const InboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/** What `send` takes: the recipient's address, the text and the message it answers. */
-export const SendRequest = Schema.Struct({
-  to: Schema.propertySignature(AgentAddress).annotations({
-    description: "The recipient: agent:<name>.",
-  }),
-  text: Schema.propertySignature(wellFormedString).annotations({
-    description: "The message text.",
-  }),
-  replyToMsgId: Schema.optional(MsgId).annotations({
-    description:
-      "The ID of the message this replies to. Omit when starting a new norm interaction.",
-  }),
-}).annotations({ identifier: "SendRequest" });
-/** @useDeclaredType */
-export type SendRequest = typeof SendRequest.Type;
-
 /**
- * What a send returns: the message id and the conversation's canonical
- * address. Accepted work continues independently of the caller's lifetime.
+ * One record of a conversation's history: a message this agent sent, or the
+ * stored inbox entry of a message it received.
  */
-export const SendResult = Schema.Struct({
-  id: MsgId,
-  address: AgentAddress,
-}).annotations({ identifier: "SendResult" });
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- History owns this grammar, which the read_conversation tool lists as its result.
+export const HistoryRecord = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("sent"),
+    message: Schema.typeSchema(Message),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("received"),
+    address: AgentAddress,
+    message: Schema.typeSchema(Message),
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+  }),
+);
+/** @useDeclaredType */
+export type HistoryRecord = typeof HistoryRecord.Type;
 
 /**
  * What the agent is told for each reason a send fails with. A send with an
@@ -229,14 +230,6 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   }
 }
 
-/**
- * One record of a conversation's history: a message this agent sent, or the
- * stored inbox entry of a message it received.
- */
-type HistoryRecord =
-  | { readonly kind: "sent"; readonly message: Message }
-  | ({ readonly kind: "received" } & InboxEntry);
-
 /** One inbox read: the cursor to read after and, in seconds, how long to wait for an entry when none follows it. */
 interface ReceiveRequest {
   readonly cursor?: string;
@@ -280,9 +273,10 @@ function entryOf({ message, guidance }: StoredMessage) {
 
 /**
  * A page of an agent's inbox entries after `cursor`, in the order they were
- * allowed, with the cursor that reads on from the last of them. Without a cursor the read starts from now. With `wait` and no entry to
- * return, it reads once more when an entry becomes readable or `wait` seconds
- * pass; a waiting read subscribes before it reads, so an entry that becomes
+ * allowed, with the cursor that reads on from the last of them. Without a
+ * cursor the read starts from now. With `wait` seconds and no entry to
+ * return, it reads once more when an entry becomes readable or the wait
+ * ends; a waiting read subscribes before it reads, so an entry that becomes
  * readable after the read is not missed.
  */
 export const receive = Effect.fn("receive")(function* (
@@ -315,15 +309,16 @@ export const receive = Effect.fn("receive")(function* (
  * of one conversation are checked and stored one at a time. Other
  * conversations do not wait.
  */
-function takeTurn(daemon: Daemon, client: AgentCard) {
+function lockConversation(daemon: Daemon, client: AgentCard) {
   return Effect.sync(() => {
-    const turn =
-      daemon.turns.get(client.agentId) ?? Effect.unsafeMakeSemaphore(1);
-    daemon.turns.set(client.agentId, turn);
-    return turn;
+    const lock =
+      daemon.conversationLocks.get(client.agentId) ??
+      Effect.unsafeMakeSemaphore(1);
+    daemon.conversationLocks.set(client.agentId, lock);
+    return lock;
   }).pipe(
-    Effect.flatMap((turn) =>
-      Effect.acquireReleaseInterruptible(turn.take(1), () => turn.release(1)),
+    Effect.flatMap((lock) =>
+      Effect.acquireReleaseInterruptible(lock.take(1), () => lock.release(1)),
     ),
     Effect.asVoid,
   );
@@ -346,7 +341,7 @@ export const addressedAgent = Effect.fn("addressedAgent")(function* (
 
 /**
  * Sends one message between the server agent and a client, whichever of the
- * two is `author`, in their conversation's turn. The server agent's firewall
+ * two is `author`, under their conversation's lock. The server agent's firewall
  * checks it as a message its agent sends or is sent. A message the server
  * agent may not send, or one whose check could not run, fails the send and is
  * not stored. Otherwise one transaction stores the message with the decision
@@ -379,15 +374,8 @@ export const send = Effect.fn("send")(
         ({ reason }: CommunicationError) => new SendError({ reason }),
       ),
     );
-    yield* takeTurn(daemon, outgoing ? recipient : author);
-    const earlier = (yield* readConversation([
-      author.agentId,
-      recipient.agentId,
-    ])).map((stored) => ({
-      message: stored.message,
-      allowed: stored.readNumber !== null,
-      ...(stored.checkedAt === null ? {} : { checkedAt: stored.checkedAt }),
-    }));
+    yield* lockConversation(daemon, outgoing ? recipient : author);
+    const earlier = yield* earlierMessages(author, recipient);
     const result = outgoing
       ? yield* daemon.firewall.checkOutgoing(message, earlier)
       : yield* daemon.firewall.checkIncoming(message, earlier);
@@ -455,6 +443,21 @@ export const send = Effect.fn("send")(
       ),
     ),
 );
+
+/**
+ * The messages two agents have exchanged, oldest first, as the firewall
+ * reads them: each allowed if its recipient may read it, with the time of its
+ * check when it had one.
+ */
+function earlierMessages(one: AgentCard, other: AgentCard) {
+  return Effect.map(readConversation([one.agentId, other.agentId]), (stored) =>
+    stored.map(({ message, readNumber, checkedAt }) => ({
+      message,
+      allowed: readNumber !== null,
+      ...(checkedAt === null ? {} : { checkedAt }),
+    })),
+  );
+}
 
 /**
  * The firewall's reply to a message it withheld, as an ordinary message from

@@ -42,12 +42,13 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import { checkRecordSchema, LocalGuidance } from "../firewall.js";
+import type { DaemonSettings } from "./settings.js";
+import packageJson from "../../package.json" with { type: "json" };
+import { checkRecordSchema } from "../firewall.js";
 import {
   type AgentCard,
   AgentId,
   AgentName,
-  Message,
   MsgId,
   wellFormedString,
 } from "../messages.js";
@@ -59,6 +60,7 @@ import {
   conversationsOf,
   type Daemon,
   getOrCreateOwnedAgent,
+  HistoryRecord,
   historyRecords,
   InboxEntry,
   PAGE_SIZE,
@@ -66,13 +68,100 @@ import {
   receive,
   send,
   SendError,
-  SendRequest,
-  SendResult,
 } from "./agent.js";
-import { type DaemonSettings, packageVersion } from "./settings.js";
 import { readDecisions } from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
+
+/** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
+export const packageVersion: string = packageJson.version;
+
+/** A place in an ordered read, as decimal text. A read returns what follows it. */
+const Cursor = Schema.String.pipe(Schema.pattern(/^\d{1,15}$/u)).annotations({
+  description: "the nextCursor of an earlier result",
+});
+
+/** Omit cursor to begin and pass the returned nextCursor unchanged. */
+const PaginatedRequest = Schema.Struct({
+  cursor: Schema.optional(Cursor),
+});
+
+/** Absence of nextCursor marks the end of the listing. */
+const Page = Schema.Struct({
+  nextCursor: Schema.optional(Cursor),
+});
+
+const noArguments = Schema.Record({
+  key: Schema.String,
+  value: Schema.Never,
+}).annotations({
+  jsonSchema: { type: "object", properties: {}, additionalProperties: false },
+});
+
+/** What `send` takes: the recipient's address, the text and the message it answers. */
+const SendRequest = Schema.Struct({
+  to: Schema.propertySignature(AgentAddress).annotations({
+    description: "The recipient: agent:<name>.",
+  }),
+  text: Schema.propertySignature(wellFormedString).annotations({
+    description: "The message text.",
+  }),
+  replyToMsgId: Schema.optional(MsgId).annotations({
+    description:
+      "The ID of the message this replies to. Omit when starting a new norm interaction.",
+  }),
+}).annotations({ identifier: "SendRequest" });
+/** @useDeclaredType */
+type SendRequest = typeof SendRequest.Type;
+
+/**
+ * What a send returns: the message id and the conversation's canonical
+ * address. Accepted work continues independently of the caller's lifetime.
+ */
+const SendResult = Schema.Struct({
+  id: MsgId,
+  address: AgentAddress,
+}).annotations({ identifier: "SendResult" });
+
+/** A page of one conversation's records. Absence of nextCursor marks its end. */
+const historyRecordsPage = Schema.Struct({
+  records: Schema.Array(HistoryRecord).pipe(Schema.maxItems(PAGE_SIZE)),
+  ...Page.fields,
+});
+
+/**
+ * The longest a receive_messages call may wait. It stays under the time after
+ * which hosts and proxies give up on a tool call.
+ */
+const MAXIMUM_WAIT_SECONDS = 50;
+
+/** A send that ends unexpectedly may have been sent. */
+const sendOutcomeUnknown = new SendError({ reason: "outcome-unknown" });
+
+/** How a message states one act of a norm, as every reader of the norms needs it. */
+const ACT_SYNTAX =
+  "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
+
+/**
+ * The runtime of the fiber that carries the HTTP request the MCP SDK is
+ * answering. The SDK builds the request's server and calls its tools from
+ * promises, which this storage follows.
+ */
+const requestRuntime = new AsyncLocalStorage<
+  Runtime.Runtime<SqlClient.SqlClient>
+>();
+
+/** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
+const INBOX_CHECK_MILLISECONDS = 1000;
+
+/** The longest a webhook subscription lives without a refresh. */
+const WEBHOOK_TTL_MILLISECONDS = 30 * 60_000;
+
+/** The name of the event whose occurrences are an agent's inbox entries, in read order. */
+const INBOX_EVENT = "org.social-harness/inbox.pending";
+
+/** The issuer's metadata could not be read, names another issuer or names no key set. */
+class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
@@ -90,32 +179,33 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
   yield* http.serve(app);
 });
 
-/** A place in an ordered read, as decimal text. A read returns what follows it. */
-const Cursor = Schema.String.pipe(Schema.pattern(/^\d{1,15}$/u)).annotations({
-  description: "the nextCursor of an earlier result",
-});
-
-/** Omit cursor to begin and pass the returned nextCursor unchanged. */
-const PaginatedRequest = Schema.Struct({
-  cursor: Schema.optional(Cursor),
-});
-
-/** Absence of nextCursor marks the end of the listing. */
-const Page = Schema.Struct({
-  nextCursor: Schema.optional(Cursor),
-});
-
-/** The issuer's metadata could not be read, names another issuer or names no key set. */
-class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
-
 /**
- * The runtime of the fiber that carries the HTTP request the MCP SDK is
- * answering. The SDK builds the request's server and calls its tools from
- * promises, which this storage follows.
+ * The daemon's Events extension, which every request's server is built with.
+ * Its one event type is the inbox of the agent a request is admitted as: an
+ * occurrence is an inbox entry, and a subscription's cursor is the read
+ * number of the last entry it was sent. The SDK delivers by poll, push and
+ * webhook, and keeps every subscription in memory.
  */
-const requestRuntime = new AsyncLocalStorage<
-  Runtime.Runtime<SqlClient.SqlClient>
->();
+const makeInboxEvents = Effect.fn("makeInboxEvents")(function* () {
+  const run = Runtime.runPromise(yield* Effect.runtime<SqlClient.SqlClient>());
+  const events = new EventsExtension({
+    getPrincipal: ({ http }) =>
+      inRequest(
+        Effect.map(admittedAgent(http?.authInfo), ({ agentId }) => agentId),
+      ),
+    checkIntervalMs: INBOX_CHECK_MILLISECONDS,
+    webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
+    webhookSender: nodeWebhookSender(),
+  });
+  events.registerEvent(INBOX_EVENT, {
+    description:
+      "An inbox entry: its conversation address, its message and any guidance.",
+    payloadSchema: standard(InboxEntry),
+    check: (...[{ principal, maxEvents, signal }, , cursor]) =>
+      run(inboxOccurrences(principal, cursor, maxEvents), { signal }),
+  });
+  return events;
+});
 
 /**
  * The app the listener serves. The MCP SDK validates the Host and Origin
@@ -239,62 +329,6 @@ function admittedAgent(authInfo?: AuthInfo) {
   }).pipe(Effect.orDie);
 }
 
-/**
- * Runs `work` for the MCP SDK in the runtime of the HTTP request's fiber, so
- * its spans keep their parent, and interrupts it when `signal` aborts.
- */
-function inRequest<A>(
-  work: Effect.Effect<A, never, SqlClient.SqlClient>,
-  signal?: AbortSignal,
-) {
-  return Effect.runPromise(
-    Effect.fromNullable(requestRuntime.getStore()).pipe(
-      Effect.flatMap((runtime) => Effect.provide(work, runtime)),
-      Effect.orDie,
-    ),
-    { signal },
-  );
-}
-
-const noArguments = Schema.Record({
-  key: Schema.String,
-  value: Schema.Never,
-}).annotations({
-  jsonSchema: { type: "object", properties: {}, additionalProperties: false },
-});
-
-/** A page of one conversation's records: each a message the agent sent, or the stored inbox entry of one it received. */
-const historyRecordsPage = Schema.Struct({
-  records: Schema.Array(
-    Schema.Union(
-      Schema.Struct({
-        kind: Schema.Literal("sent"),
-        message: Schema.typeSchema(Message),
-      }),
-      Schema.Struct({
-        kind: Schema.Literal("received"),
-        address: AgentAddress,
-        message: Schema.typeSchema(Message),
-        guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-      }),
-    ),
-  ).pipe(Schema.maxItems(PAGE_SIZE)),
-  ...Page.fields,
-});
-
-/**
- * The longest a receive_messages call may wait. It stays under the time after
- * which hosts and proxies give up on a tool call.
- */
-const MAXIMUM_WAIT_SECONDS = 50;
-
-/** A send that ends unexpectedly may have been sent. */
-const sendOutcomeUnknown = new SendError({ reason: "outcome-unknown" });
-
-/** How a message states one act of a norm, as every reader of the norms needs it. */
-const ACT_SYNTAX =
-  "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
-
 /** The MCP server for one request, with the inbox event and the tools of `agent`'s role. */
 function requestServer(
   daemon: Daemon,
@@ -305,7 +339,6 @@ function requestServer(
     { name: "sharnessd", version: packageVersion },
     { extensions: [events] },
   );
-  const card = agent;
   const isServerAgent = agent.agentId === daemon.serverAgent.agentId;
   register(
     mcp,
@@ -317,7 +350,8 @@ function requestServer(
       output: Schema.Struct({ agentId: AgentId, agentName: AgentName }),
       readOnly: true,
     },
-    () => Effect.succeed({ agentId: card.agentId, agentName: card.agentName }),
+    () =>
+      Effect.succeed({ agentId: agent.agentId, agentName: agent.agentName }),
   );
   register(
     mcp,
@@ -383,6 +417,23 @@ function requestServer(
     );
   }
   return mcp;
+}
+
+/**
+ * Runs `work` for the MCP SDK in the runtime of the HTTP request's fiber, so
+ * its spans keep their parent, and interrupts it when `signal` aborts.
+ */
+function inRequest<A>(
+  work: Effect.Effect<A, never, SqlClient.SqlClient>,
+  signal?: AbortSignal,
+) {
+  return Effect.runPromise(
+    Effect.fromNullable(requestRuntime.getStore()).pipe(
+      Effect.flatMap((runtime) => Effect.provide(work, runtime)),
+      Effect.orDie,
+    ),
+    { signal },
+  );
 }
 
 /** The server agent's tools: it addresses any client and reads its firewall's decisions. */
@@ -633,47 +684,6 @@ function standard<A, I>(
       jsonSchema: { input: json, output: json },
     },
   };
-}
-
-/** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
-const INBOX_CHECK_MILLISECONDS = 1000;
-
-/** The longest a webhook subscription lives without a refresh. */
-const WEBHOOK_TTL_MILLISECONDS = 30 * 60_000;
-
-/** The name of the event whose occurrences are an agent's inbox entries, in read order. */
-const INBOX_EVENT = "org.social-harness/inbox.pending";
-
-/**
- * The daemon's Events extension, which every request's server is built with.
- * Its one event type is the inbox of the agent a request is admitted as: an
- * occurrence is an inbox entry, and a subscription's cursor is the read
- * number of the last entry it was sent. The SDK delivers by poll, push and
- * webhook, and keeps every subscription in memory.
- */
-function makeInboxEvents() {
-  return Effect.gen(function* () {
-    const run = Runtime.runPromise(
-      yield* Effect.runtime<SqlClient.SqlClient>(),
-    );
-    const events = new EventsExtension({
-      getPrincipal: ({ http }) =>
-        inRequest(
-          Effect.map(admittedAgent(http?.authInfo), ({ agentId }) => agentId),
-        ),
-      checkIntervalMs: INBOX_CHECK_MILLISECONDS,
-      webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
-      webhookSender: nodeWebhookSender(),
-    });
-    events.registerEvent(INBOX_EVENT, {
-      description:
-        "An inbox entry: its conversation address, its message and any guidance.",
-      payloadSchema: standard(InboxEntry),
-      check: (...[{ principal, maxEvents, signal }, , cursor]) =>
-        run(inboxOccurrences(principal, cursor, maxEvents), { signal }),
-    });
-    return events;
-  }).pipe(Effect.withSpan("makeInboxEvents"));
 }
 
 /**

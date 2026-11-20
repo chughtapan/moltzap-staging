@@ -6,18 +6,17 @@
  * firewall and serves every owner's agent. A startup failure prints one line.
  * Every outcome but the usage and a stopped daemon exits unsuccessfully.
  */
+import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
-import { Console, Effect, Layer, PubSub } from "effect";
+import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { Config, Console, Effect, Layer, Option } from "effect";
 import { makeFirewall } from "../firewall.js";
 import { structureCheck } from "../norms/index.js";
-import { getOrCreateOwnedAgent } from "./agent.js";
-import { makeMcpHttpApp, serveMcp } from "./server.js";
-import {
-  loadDaemonSettings,
-  packageVersion,
-  refused,
-  spanExport,
-} from "./settings.js";
+import { getOrCreateOwnedAgent, openDaemon } from "./agent.js";
+import { makeMcpHttpApp, packageVersion, serveMcp } from "./server.js";
+import { loadDaemonSettings, refused } from "./settings.js";
 import { databaseConnection, databaseUrl, prepareDatabase } from "./store.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
@@ -45,6 +44,43 @@ const exitUnsuccessfully = (line: string) =>
   );
 
 /**
+ * Installs a process-global stderr logger for OpenTelemetry warnings and failures.
+ * The logger remains installed after export closes.
+ */
+const exportDiagnostics = Layer.effectDiscard(
+  Effect.sync(() =>
+    diag.setLogger(new DiagConsoleLogger(), {
+      logLevel: DiagLogLevel.WARN,
+      suppressOverrideMessage: true,
+    }),
+  ),
+);
+
+/**
+ * Exports spans as OTLP/HTTP protobuf when `OTEL_EXPORTER_OTLP_ENDPOINT` is
+ * set, under the service name `OTEL_SERVICE_NAME` gives, or `sharnessd`.
+ * OpenTelemetry reads the endpoint and its remaining exporter, batch and
+ * resource settings from the standard variables, and warns of one it cannot use.
+ */
+const spanExport = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const endpoint = yield* Config.option(
+      Config.nonEmptyString("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    );
+    if (Option.isNone(endpoint)) {
+      return Layer.empty;
+    }
+    const serviceName = yield* Config.nonEmptyString("OTEL_SERVICE_NAME").pipe(
+      Config.withDefault("sharnessd"),
+    );
+    return NodeSdk.layer(() => ({
+      resource: { serviceName, serviceVersion: packageVersion },
+      spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
+    })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
+  }).pipe(Effect.orDie),
+);
+
+/**
  * Runs the daemon until it is interrupted: installs the server agent's
  * firewall and answers each authenticated request from its owner's agent.
  * Fails if it cannot start.
@@ -65,7 +101,7 @@ const runDaemon = Effect.gen(function* () {
         ),
       ),
     );
-    const app = yield* makeMcpHttpApp(authentication, {
+    const daemon = yield* openDaemon({
       serverAgent,
       firewall: makeFirewall({
         ...(settings.messagePolicy === undefined
@@ -79,9 +115,8 @@ const runDaemon = Effect.gen(function* () {
           : { structureCheck: structureCheck(norms) }),
       }),
       ...(norms === undefined ? {} : { norms }),
-      turns: new Map(),
-      readable: yield* PubSub.unbounded<string>(),
-    }).pipe(
+    });
+    const app = yield* makeMcpHttpApp(authentication, daemon).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
         refused(
           `The OAuth issuer ${authentication.issuer} did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.`,

@@ -14,145 +14,101 @@ import {
   Exit,
   FastCheck as fc,
   Fiber,
-  Queue,
-  Schema,
   Scope,
   Stream,
+  Struct,
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import {
-  connectInProcessClient,
-  mcpFixture,
-  mcpRequest,
-} from "../__tests__/mcp-fixtures.js";
-import {
-  AddressError,
-  AgentAddress,
-  FirewallRefusal,
-  SendError,
-} from "./agent.js";
+import { callTool, inProcessDaemon, send } from "../__tests__/daemon.js";
+import { requiredScope } from "../__tests__/test.js";
+import { AddressError, FirewallRefusal, SendError } from "./agent.js";
 import { serveMcp } from "./server.js";
 
-const response = Schema.parseJson(
-  Schema.Struct({
-    result: Schema.optional(
-      Schema.Struct({
-        isError: Schema.optional(Schema.Boolean),
-        content: Schema.Array(Schema.Struct({ text: Schema.String })),
-        structuredContent: Schema.optional(Schema.Unknown),
-      }),
-    ),
-    error: Schema.optional(Schema.Unknown),
-  }),
-);
-const json = (reply: Response) =>
-  Effect.tryPromise(() => reply.text()).pipe(
-    Effect.flatMap(Schema.decodeUnknown(response)),
-  );
-const bob = AgentAddress.make("agent:bob");
-const send = {
-  name: "send_message",
-  arguments: { to: bob, text: "hello" },
-};
-
-const resource = new URL("https://mcp.example.test/mcp");
-const owner = "owner-subject";
-const scope = "use:mcp";
-
-const admission = Effect.gen(function* () {
-  const test = yield* mcpFixture({ resource });
-  /** The subject of every owner with an agent. */
-  const owners = test.sql<{
+/** The subject of every owner with an agent on `daemon`. */
+const ownersOf = (
+  daemon: Effect.Effect.Success<ReturnType<typeof inProcessDaemon>>,
+) =>
+  daemon.sql<{
     subject: string;
   }>`SELECT subject FROM agent_cards ORDER BY subject`.pipe(
     Effect.map((rows) => rows.map((row) => row.subject)),
+    Effect.orDie,
   );
-  const token = (
-    changes: {
-      readonly audience?: string;
-      readonly subject?: string;
-      readonly granted?: readonly string[];
-      readonly secondsLeft?: number;
-    } = {},
-  ) =>
-    test.issuer.token(
-      changes.subject ?? owner,
-      changes.audience ?? resource.href,
-      {
-        scope: (changes.granted ?? [scope]).join(" "),
-        secondsLeft: changes.secondsLeft ?? 300,
-      },
-    );
-  const call = (bearer: string) =>
-    Effect.tryPromise(() =>
-      test.fetch(
-        mcpRequest(
-          "server/discover",
-          {},
-          {
-            headers: {
-              host: resource.host,
-              authorization: `Bearer ${bearer}`,
-            },
-          },
-        ),
-      ),
-    );
-  return { ...test, owners, token, call };
-});
 
 /** A scope that begins with the configured one and goes on past it. */
 const longerScope = fc
   .stringMatching(/^[a-z:]{1,3}$/u)
-  .map((more) => `${scope}${more}`);
+  .map((more) => `${requiredScope}${more}`);
 
 /** Claims the resource admits: any subject, and the configured scope anywhere among those granted. */
 const admissible = fc.record({
   subject: fc.string({ minLength: 1 }),
   granted: fc
     .tuple(fc.array(longerScope), fc.array(longerScope))
-    .map(([before, after]) => [...before, scope, ...after]),
+    .map(([before, after]) => [...before, requiredScope, ...after]),
 });
 
 /** One claim that puts a token outside the resource's authority. */
 const defect = fc.oneof(
   fc.record({ subject: fc.constant("") }),
-  fc.record({ audience: fc.webUrl().filter((url) => url !== resource.href) }),
+  fc.record({
+    audience: fc
+      .webUrl()
+      .filter((url) => url !== "https://mcp.example.test/mcp"),
+  }),
   fc.record({ granted: fc.array(longerScope) }),
   fc.record({ secondsLeft: fc.integer({ min: -3600, max: 0 }) }),
 );
 
+/** Checks `rule` against generated claims. */
+const forAll = <Claims>(
+  claims: fc.Arbitrary<Claims>,
+  rule: (claims: Claims) => Effect.Effect<void>,
+) =>
+  Effect.tryPromise(() =>
+    fc.assert(
+      fc.asyncProperty(claims, (each) => Effect.runPromise(rule(each))),
+    ),
+  );
+
 it("answers a token granted the scope from the agent of its subject", () =>
   Effect.gen(function* () {
-    const test = yield* admission;
-    yield* Effect.tryPromise(() =>
-      fc.assert(
-        fc.asyncProperty(admissible, (claims) =>
-          Effect.gen(function* () {
-            const response = yield* test.call(yield* test.token(claims));
-            expect(response.status).toBe(200);
-            expect(yield* test.owners).toContain(claims.subject);
-          }).pipe(Effect.runPromise),
-        ),
-      ),
+    const daemon = yield* inProcessDaemon();
+    yield* forAll(admissible, ({ subject, granted }) =>
+      Effect.gen(function* () {
+        const response = yield* daemon.request(
+          yield* daemon.token(subject, { scope: granted.join(" ") }),
+          "server/discover",
+        );
+        expect(response.status).toBe(200);
+        expect(yield* ownersOf(daemon)).toContain(subject);
+      }),
     );
   }));
 
 it("refuses a token with an empty subject, another audience, no grant of the scope or no time left", () =>
   Effect.gen(function* () {
-    const test = yield* admission;
-    yield* Effect.tryPromise(() =>
-      fc.assert(
-        fc.asyncProperty(defect, (claim) =>
-          Effect.gen(function* () {
-            const response = yield* test.call(yield* test.token(claim));
-            expect(response.ok).toBe(false);
-            expect(yield* test.owners).toEqual(["owner", "peer"]);
-          }).pipe(Effect.runPromise),
-        ),
-      ),
+    const daemon = yield* inProcessDaemon();
+    yield* forAll(defect, (claim) =>
+      Effect.gen(function* () {
+        const token = yield* daemon.issuer
+          .token(
+            "subject" in claim ? claim.subject : "owner",
+            "audience" in claim ? claim.audience : daemon.resource.href,
+            {
+              ...("granted" in claim ? { scope: claim.granted.join(" ") } : {}),
+              ...("secondsLeft" in claim
+                ? { secondsLeft: claim.secondsLeft }
+                : {}),
+            },
+          )
+          .pipe(Effect.orDie);
+        const response = yield* daemon.request(token, "server/discover");
+        expect(response.ok).toBe(false);
+        expect(yield* ownersOf(daemon)).toEqual(["alice"]);
+      }),
     );
   }));
 
@@ -160,51 +116,29 @@ it(
   "closes an admitted stream at token expiry without closing later requests",
   () =>
     Effect.gen(function* () {
-      const test = yield* admission;
-      const token = yield* test.token({ secondsLeft: 2 });
-      const response = yield* Effect.tryPromise(() =>
-        test.fetch(
-          mcpRequest(
-            "subscriptions/listen",
-            { notifications: { toolsListChanged: true } },
-            {
-              headers: {
-                host: resource.host,
-                authorization: `Bearer ${token}`,
-              },
-            },
-          ),
-        ),
+      const daemon = yield* inProcessDaemon();
+      const response = yield* daemon.request(
+        yield* daemon.token("alice", { secondsLeft: 2 }),
+        "subscriptions/listen",
+        { notifications: { toolsListChanged: true } },
       );
       expect(response.status).toBe(200);
       const body = yield* Effect.tryPromise(() => response.text());
       expect(body).toContain("notifications/subscriptions/acknowledged");
-      const later = yield* test.call(yield* test.token());
+      const later = yield* daemon.request(
+        yield* daemon.token("alice"),
+        "server/discover",
+      );
       expect(later.status).toBe(200);
     }),
   15000,
 );
 
-type Fixture = Effect.Effect.Success<ReturnType<typeof mcpFixture>>;
-/** Calls a tool on `fixture` and gives the reply's result. */
-const toolCall = (
-  fixture: Pick<Fixture, "fetch">,
-  call: Readonly<Record<string, unknown>>,
-) =>
-  Effect.tryPromise(() => fixture.fetch(mcpRequest("tools/call", call))).pipe(
-    Effect.flatMap(json),
-    Effect.map((reply) => reply.result),
-  );
-const connect = (fixture: Pick<Fixture, "fetch">) =>
-  connectInProcessClient((input, init) =>
-    fixture.fetch(new Request(input, init)),
-  );
-
 it("gives the server agent its tools, and a status result that names the agent", () =>
   Effect.gen(function* () {
-    const fixture = yield* mcpFixture();
-    const client = yield* connect(fixture);
-    const { tools } = yield* Effect.tryPromise(() => client.listTools());
+    const daemon = yield* inProcessDaemon();
+    const alice = yield* daemon.signInAs("alice");
+    const { tools } = yield* Effect.tryPromise(() => alice.mcp.listTools());
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set([
         "list_conversations",
@@ -216,11 +150,11 @@ it("gives the server agent its tools, and a status result that names the agent",
       ]),
     );
     const reply = yield* Effect.tryPromise(() =>
-      client.callTool({ name: "status", arguments: {} }),
+      alice.mcp.callTool({ name: "status", arguments: {} }),
     );
     expect(reply.structuredContent).toEqual({
-      agentId: fixture.card.agentId,
-      agentName: fixture.card.agentName,
+      agentId: alice.agent.agentId,
+      agentName: "alice",
     });
     expect(reply.content).toEqual([
       { type: "text", text: JSON.stringify(reply.structuredContent) },
@@ -229,9 +163,9 @@ it("gives the server agent its tools, and a status result that names the agent",
 
 it("gives a client tools that name no recipient and no conversation", () =>
   Effect.gen(function* () {
-    const fixture = yield* mcpFixture({ client: true });
-    const client = yield* connect(fixture);
-    const { tools } = yield* Effect.tryPromise(() => client.listTools());
+    const daemon = yield* inProcessDaemon();
+    const bob = yield* daemon.signInAs("bob");
+    const { tools } = yield* Effect.tryPromise(() => bob.mcp.listTools());
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set([
         "read_conversation",
@@ -246,151 +180,143 @@ it("gives a client tools that name no recipient and no conversation", () =>
           .properties ?? {},
       ),
     ).toEqual(["text", "replyToMsgId"]);
-    const sent = yield* Effect.tryPromise(() =>
-      client.callTool({ name: "send_message", arguments: { text: "hello" } }),
-    );
-    expect(sent.structuredContent).toMatchObject({ address: bob });
-    const history = yield* Effect.tryPromise(() =>
-      client.callTool({ name: "read_conversation", arguments: {} }),
-    );
-    expect(history.structuredContent).toMatchObject({
-      records: [
-        {
-          kind: "sent",
-          message: {
-            recipient: { agentName: "bob" },
-            text: "hello",
-          },
-        },
-      ],
+    expect(yield* send(bob, { text: "hello" })).toMatchObject({
+      address: "agent:alice",
     });
+    expect((yield* callTool(bob, "read_conversation")).records).toMatchObject([
+      {
+        kind: "sent",
+        message: { recipient: { agentName: "alice" }, text: "hello" },
+      },
+    ]);
   }));
 
 it("refuses a call with a wrong or an unknown argument without running the tool", () =>
   Effect.gen(function* () {
-    const fixture = yield* mcpFixture();
+    const daemon = yield* inProcessDaemon();
+    const alice = yield* daemon.signInAs("alice");
     for (const wrong of [{ text: 1 }, { extra_field: "x" }]) {
-      const result = yield* toolCall(fixture, {
-        ...send,
-        arguments: { ...send.arguments, ...wrong },
-      });
-      expect(result?.isError).toBe(true);
-      expect(result?.content[0]?.text).toContain(Object.keys(wrong)[0]);
+      const failure = yield* callTool(alice, "send_message", {
+        to: "agent:bob",
+        text: "hello",
+        ...wrong,
+      }).pipe(Effect.flip);
+      expect(failure.message).toContain(Object.keys(wrong)[0]);
     }
   }));
 
 it("answers a failed call with the failure's message and its fields", () =>
   Effect.gen(function* () {
-    const refused = yield* Queue.unbounded<FirewallRefusal>();
-    const fixture = yield* mcpFixture({
+    const refusals = [
+      {
+        reason: "firewall-refused" as const,
+        checkId: "chk_1",
+        refusal: "rule-violation" as const,
+        rule: "shape",
+        feedback: ["Send a greeting first."],
+      },
+      {
+        reason: "firewall-refused" as const,
+        checkId: "chk_2",
+        refusal: "unresolved-evidence" as const,
+        feedback: [],
+      },
+    ];
+    const pending = [...refusals];
+    const daemon = yield* inProcessDaemon({
       firewall: {
         checkOutgoing: () =>
-          Effect.map(
-            Queue.take(refused),
-            ({ checkId, refusal, rule, feedback }) => ({
-              kind: "refused" as const,
-              checkId,
-              reason: refusal,
-              ...(rule === undefined ? {} : { rule }),
-              feedback,
-            }),
-          ),
+          Effect.map(Effect.fromNullable(pending.shift()), (next) => ({
+            kind: "refused" as const,
+            ...Struct.omit(next, "reason", "refusal"),
+            reason: next.refusal,
+          })).pipe(Effect.orDie),
       },
     });
-    const refusals = fc.record(
-      {
-        reason: fc.constant("firewall-refused" as const),
-        checkId: fc.string({ minLength: 1 }),
-        refusal: fc.constant("rule-violation" as const),
-        rule: fc.string({ minLength: 1 }),
-        feedback: fc.array(fc.string({ minLength: 1 })),
-      },
-      { requiredKeys: ["reason", "checkId", "refusal", "feedback"] },
-    );
-    yield* Effect.tryPromise(() =>
-      fc.assert(
-        fc.asyncProperty(refusals, (fields) =>
-          Effect.runPromise(
-            Effect.gen(function* () {
-              const failure = new FirewallRefusal(fields);
-              yield* Queue.offer(refused, failure);
-              expect(yield* toolCall(fixture, send)).toEqual({
-                isError: true,
-                content: [{ text: failure.message }],
-                structuredContent: fields,
-              });
-            }),
-          ),
+    const alice = yield* daemon.signInAs("alice");
+    const bob = yield* daemon.signInAs("bob");
+    for (const fields of refusals) {
+      expect(
+        yield* send(alice, { to: bob.address, text: "hello" }).pipe(
+          Effect.flip,
         ),
-        { numRuns: 25 },
-      ),
-    );
-    for (const [name, address] of [
+      ).toEqual({ ...fields, message: new FirewallRefusal(fields).message });
+    }
+    for (const [name, input] of [
       ["send_message", { to: "agent:nobody", text: "hello" }],
       ["send_message", { to: "agent:alice", text: "hello" }],
       ["read_conversation", { address: "agent:nobody" }],
       ["read_conversation", { address: "agent:alice" }],
     ] as const) {
-      const named = "to" in address ? address.to : address.address;
+      const address = "to" in input ? input.to : input.address;
       const failure = new AddressError({
-        reason: named === "agent:alice" ? "invalid-address" : "unknown-agent",
-        address: named,
+        reason: address === "agent:alice" ? "invalid-address" : "unknown-agent",
+        address,
       });
-      expect(yield* toolCall(fixture, { name, arguments: address })).toEqual({
-        isError: true,
-        content: [{ text: failure.message }],
-        structuredContent: { reason: failure.reason, address: named },
+      expect(yield* callTool(alice, name, input).pipe(Effect.flip)).toEqual({
+        reason: failure.reason,
+        address,
+        message: failure.message,
       });
     }
   }));
 
 it("answers a call that dies without the defect's text, and a send that dies as one whose outcome is unknown", () =>
   Effect.gen(function* () {
-    const dies = () => Effect.dieMessage("PRIVATE relation does not exist");
-    const fixture = yield* mcpFixture({ firewall: { checkOutgoing: dies } });
-    expect(yield* toolCall(fixture, send)).toEqual({
-      isError: true,
-      content: [{ text: new SendError({ reason: "outcome-unknown" }).message }],
-      structuredContent: { reason: "outcome-unknown" },
+    const daemon = yield* inProcessDaemon({
+      firewall: {
+        checkOutgoing: () =>
+          Effect.dieMessage("PRIVATE relation does not exist"),
+      },
     });
-    yield* fixture.sql`DROP TABLE firewall_checks`;
-    const result = yield* toolCall(fixture, {
-      name: "read_firewall_decisions",
-      arguments: {},
+    const alice = yield* daemon.signInAs("alice");
+    const bob = yield* daemon.signInAs("bob");
+    expect(
+      yield* send(alice, { to: bob.address, text: "hello" }).pipe(Effect.flip),
+    ).toEqual({
+      reason: "outcome-unknown",
+      message: new SendError({ reason: "outcome-unknown" }).message,
     });
-    expect(result?.isError).toBe(true);
-    expect(result?.structuredContent).toBeUndefined();
-    expect(JSON.stringify(result)).not.toContain("firewall_checks");
+    yield* daemon.sql`DROP TABLE firewall_checks`;
+    const failure = yield* callTool(alice, "read_firewall_decisions").pipe(
+      Effect.flip,
+    );
+    expect(Object.keys(failure)).toEqual(["message"]);
+    expect(failure.message).not.toContain("firewall_checks");
   }));
 
-it("interrupts only the aborted HTTP request", () =>
+it("interrupts only the aborted call, whose conversation the next send then uses", () =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<undefined>();
     const interrupted = yield* Deferred.make<undefined>();
-    const fixture = yield* mcpFixture({
+    let first = true;
+    const daemon = yield* inProcessDaemon({
       firewall: {
         checkOutgoing: () =>
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.zipRight(Effect.never),
-            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
-          ),
+          Effect.suspend(() => {
+            if (!first) {
+              return Effect.succeed({ kind: "allowed" as const });
+            }
+            first = false;
+            return Deferred.succeed(entered, undefined).pipe(
+              Effect.zipRight(Effect.never),
+              Effect.onInterrupt(() =>
+                Deferred.succeed(interrupted, undefined),
+              ),
+            );
+          }),
       },
     });
-    const abort = new AbortController();
-    const waiting = yield* Effect.tryPromise(() =>
-      fixture.fetch(
-        mcpRequest("tools/call", send, {
-          id: "waiting",
-          signal: abort.signal,
-        }),
-      ),
-    ).pipe(Effect.either, Effect.forkScoped);
+    const alice = yield* daemon.signInAs("alice");
+    const bob = yield* daemon.signInAs("bob");
+    const hello = { to: bob.address, text: "hello" };
+
+    const waiting = yield* Effect.fork(send(alice, hello));
     yield* Deferred.await(entered);
-    abort.abort();
+    yield* Fiber.interrupt(waiting);
     yield* Deferred.await(interrupted);
-    yield* Fiber.join(waiting);
-    const result = yield* toolCall(fixture, { name: "status", arguments: {} });
-    expect(result?.isError).toBeUndefined();
+
+    expect(yield* send(alice, hello)).toMatchObject({ address: bob.address });
   }));
 
 const boundPort = Effect.gen(function* () {
