@@ -3,6 +3,8 @@
 import { Effect, Encoding } from "effect";
 import {
   type DecisionProvider,
+  type DecisionRequest,
+  type DecisionResponse,
   type LoadedMessagePolicy,
   makeFirewall,
   type TextRule,
@@ -22,28 +24,58 @@ export const privacy = {
   text: "Do not reveal the owner's private records.",
   feedback: "Keep private records private.",
 } satisfies TextRule;
+/** One answer exactly as a provider reports it. */
+export type Answer = DecisionResponse["answers"][string];
+
+/**
+ * A provider's answer to each question of `request`: the choice `choices`
+ * gives the question's rule, with certainty unless it is a full answer, and
+ * `otherwise` for every other rule.
+ */
+export function answersTo(
+  request: DecisionRequest,
+  choices: Readonly<Record<string, string | Answer>> = {},
+  otherwise = "compliant",
+): DecisionResponse {
+  return {
+    answers: Object.fromEntries(
+      Object.entries(request.questions).map(([id, question]) => {
+        const selected = choices[question.ruleId] ?? otherwise;
+        return [
+          id,
+          typeof selected === "string"
+            ? {
+                choice: selected,
+                probabilities: Object.fromEntries(
+                  Object.keys(question.criteria).map((choice) => [
+                    choice,
+                    Number(choice === selected),
+                  ]),
+                ),
+              }
+            : selected,
+        ];
+      }),
+    ),
+  };
+}
+
+/** A provider that answers every request with `answersTo` and adds it to `requests`. */
+export function answering(
+  choices: Readonly<Record<string, string | Answer>> = {},
+  requests: DecisionRequest[] = [],
+): DecisionProvider {
+  return {
+    decide: (request) =>
+      Effect.sync(() => {
+        requests.push(request);
+        return answersTo(request, choices);
+      }),
+  };
+}
+
 /** Finds `privacy` broken and every other rule followed, with certainty. */
-export const certainProvider: DecisionProvider = {
-  decide: (request) =>
-    Effect.succeed({
-      answers: Object.fromEntries(
-        Object.entries(request.questions).map(([id, question]) => {
-          const choices = Object.keys(question.criteria);
-          const selected =
-            question.ruleId === privacy.id ? "violation" : "compliant";
-          return [
-            id,
-            {
-              choice: selected,
-              probabilities: Object.fromEntries(
-                choices.map((choice) => [choice, Number(choice === selected)]),
-              ),
-            },
-          ];
-        }),
-      ),
-    }),
-};
+export const certainProvider = answering({ [privacy.id]: "violation" });
 
 /** A draft from `self` to a peer that reveals a private record. */
 export function outgoing(self: AgentCard) {
@@ -77,7 +109,7 @@ export function peer(name: string, byte: number): AgentCard {
 }
 
 /** A message policy and the provider that judges its text rules in place of Jev. */
-interface TestPolicy {
+export interface TestPolicy {
   readonly source: LoadedMessagePolicy;
   readonly provider: DecisionProvider;
 }

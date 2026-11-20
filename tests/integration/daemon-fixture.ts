@@ -1,25 +1,18 @@
 /**
  * @file One `sharnessd` process that hosts every agent of a test.
  *
- * `sharedDaemon(options)` prepares a daemon's settings, database and OAuth
- * issuer and returns it without starting it:
+ * `sharedDaemon()` prepares a daemon's settings, database and OAuth issuer
+ * and returns it without starting it:
  *
- * - `endpoint`, `directory`, `environment`: where the daemon listens, the
- *   directory holding its settings file, and the
- *   environment its process reads.
- * - `start(environment?)`: runs the process until its scope closes or
- *   `stopProcess` stops it. Starting again serves the same database.
- * - `startupFailure(environment?)`: runs a process that must exit before it
- *   listens, and returns its exit code and output.
+ * - `directory`: the directory holding its settings file.
+ * - `start()`: runs the process until its scope closes or `stopProcess` stops
+ *   it. Starting again serves the same database.
+ * - `startupFailure()`: runs a process that must exit before it listens, and
+ *   returns its exit code and output.
  * - `configure(changes)`: changes the settings the next start reads.
- * - `bearer(owner)`: what the host of a named owner presents. The owner
- *   `SERVER_AGENT_OWNER` is the server agent's, and any other is a client's.
  * - `signInAs(owner)`: an MCP connection as the owner's agent, and the agent
- *   `status` reports for it.
- *
- * The options are settings that replace the fixture's. `managedProcess`,
- * `awaitReady` and `daemonListening` start and await a daemon that runs some
- * other way, such as in a container.
+ *   `status` reports for it. The owner `SERVER_AGENT_OWNER` is the server
+ *   agent's, and any other is a client's.
  *
  * A suite drives the signed-in agents as their hosts do, through the official
  * MCP client: `callTool` calls one tool, `send` sends a message,
@@ -84,12 +77,6 @@ export interface RunningProcess {
   readonly logs: () => string;
 }
 
-/** What `sharedDaemon` prepares differently from its defaults. */
-export interface DaemonOptions {
-  /** Settings that replace the fixture's: a message policy, norms. */
-  readonly settings?: Readonly<Record<string, unknown>>;
-}
-
 /** A signed-in owner: its agent and an MCP connection as that agent. */
 export interface SignedIn {
   /** The agent as `status` reports it and as messages name it. */
@@ -104,15 +91,13 @@ export interface SignedIn {
 
 /** A prepared daemon. The file comment lists what each member is for. */
 export interface Daemon {
-  readonly endpoint: URL;
   readonly directory: string;
-  readonly environment: Readonly<Record<string, string>>;
-  readonly start: (
-    environment?: Readonly<Record<string, string>>,
-  ) => Effect.Effect<RunningProcess, ProcessTestError, Scope.Scope>;
-  readonly startupFailure: (
-    environment?: Readonly<Record<string, string>>,
-  ) => Effect.Effect<
+  readonly start: () => Effect.Effect<
+    RunningProcess,
+    ProcessTestError,
+    Scope.Scope
+  >;
+  readonly startupFailure: () => Effect.Effect<
     { readonly exitCode: number | null; readonly logs: string },
     ProcessTestError,
     Scope.Scope
@@ -120,9 +105,6 @@ export interface Daemon {
   readonly configure: (
     changes: Readonly<Record<string, unknown>>,
   ) => Effect.Effect<void, ProcessTestError>;
-  readonly bearer: (
-    owner: string,
-  ) => Effect.Effect<Redacted.Redacted, ProcessTestError>;
   readonly signInAs: (
     owner: string,
   ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
@@ -225,7 +207,7 @@ export const stopProcess = Effect.fn("stopProcess")(function* (
 const managedProcess = Effect.fn("managedProcess")(function* (
   executable: string,
   processArguments: readonly string[],
-  environment: Readonly<Record<string, string>> = {},
+  environment: Readonly<Record<string, string>>,
 ) {
   const child = spawn(executable, processArguments, {
     cwd: WORKSPACE_ROOT,
@@ -385,9 +367,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
  * with tokens from its own test issuer. The scope removes its directory and
  * stops its issuer and every process and connection it started.
  */
-export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
-  options: DaemonOptions = {},
-) {
+export const sharedDaemon = Effect.fn("sharedDaemon")(function* () {
   const filesystem = yield* FileSystem.FileSystem;
   const directory = yield* filesystem
     .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
@@ -413,10 +393,8 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
       scope: requiredScope,
     },
     serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
-    ...options.settings,
   });
-  const spawned = (changes: Readonly<Record<string, string>>) =>
-    managedProcess(...DAEMON_COMMAND, { ...environment, ...changes });
+  const spawned = managedProcess(...DAEMON_COMMAND, environment);
   const bearer = (owner: string) =>
     issuer
       .token(owner, resource)
@@ -425,20 +403,16 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
         Effect.mapError(failed(`could not issue a token for ${owner}`)),
       );
   const daemon: Daemon = {
-    endpoint,
     directory,
-    environment,
-    start: (changes = {}) =>
-      spawned(changes).pipe(
+    start: () =>
+      spawned.pipe(
         Effect.tap((running) =>
           awaitReady(running, daemonListening(running, endpoint), "listening"),
         ),
         Effect.withSpan("start"),
       ),
-    startupFailure: (changes = {}) =>
-      startupFailure(spawned(changes), endpoint),
+    startupFailure: () => startupFailure(spawned, endpoint),
     configure,
-    bearer,
     signInAs: (owner) =>
       Effect.flatMap(bearer(owner), (presented) => signIn(endpoint, presented)),
   };
@@ -459,7 +433,6 @@ const results = {
   }),
   list_conversations: Schema.Struct({
     addresses: Schema.Array(AgentAddress),
-    nextCursor: Schema.optional(Schema.String),
   }),
   read_conversation: Schema.Struct({
     records: Schema.Array(

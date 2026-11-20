@@ -127,8 +127,7 @@ allows ten.
 ## Change the server
 
 Edit the norms or the policy in the folder and deploy again. The daemon
-reads them at every start, and conversations already under way continue
-under the norm they opened with. To remove an agent's access, delete its
+reads them at every start. To remove an agent's access, delete its
 application in Auth0.
 
 ## When it fails

@@ -8,7 +8,7 @@ read_when:
 
 A host reads its inbox in order from a cursor it keeps. The daemon stores no
 read position. This applies
-to every host, native channels included. The daemon retains the entries and their
+to every host. The daemon retains the entries and their
 guidance in history. Hosts own subsequent processing, scheduling and replies.
 
 ## Inbox entries

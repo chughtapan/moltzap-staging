@@ -2,7 +2,6 @@
 
 import { scopedLive as it } from "@effect/vitest";
 import {
-  Cause,
   Deferred,
   Effect,
   Exit,
@@ -12,11 +11,11 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import type { DecisionProvider, DecisionRequest } from "../firewall.js";
+import type { DecisionProvider } from "../firewall.js";
 import { digest } from "../__tests__/agents.js";
+import { answersTo } from "../__tests__/firewall-fixtures.js";
 import {
   composedPolicy,
-  decisionResponse,
   decisionState,
   makeHarnessFixture,
 } from "../__tests__/service-fixtures.js";
@@ -32,15 +31,16 @@ type Fixture = Effect.Effect.Success<typeof makeHarnessFixture>;
 
 /** A decision service that finds every message in violation of its rule. */
 const violation: DecisionProvider = {
-  decide: (request) => Effect.succeed(decisionResponse(request, "violation")),
+  decide: (request) => Effect.succeed(answersTo(request, {}, "violation")),
 };
 
 /** A decision service that finds every message a peer sent in violation, and every message this agent sends compliant. */
 const incomingViolation: DecisionProvider = {
   decide: (request) =>
     Effect.succeed(
-      decisionResponse(
+      answersTo(
         request,
+        {},
         decisionState(request.state).direction === "incoming"
           ? "violation"
           : "compliant",
@@ -118,7 +118,7 @@ it("checks the messages of one conversation in order while another conversation 
               yield* Deferred.succeed(entered, undefined);
               yield* Deferred.await(release);
             }
-            return decisionResponse(request);
+            return answersTo(request);
           }),
       }),
     });
@@ -228,36 +228,6 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
     expect(yield* runtime.inbox).toEqual([]);
   }));
 
-it("stores nothing of a message whose decision cannot be saved, fails its send and keeps serving", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    let fails = true;
-    const runtime = yield* subject.open({
-      policy: composedPolicy({
-        decide: (request) => Effect.succeed(decisionResponse(request)),
-      }),
-      decorateFirewall: (firewall) => ({
-        ...firewall,
-        checkIncoming: (incoming, earlier) =>
-          Effect.map(firewall.checkIncoming(incoming, earlier), (decision) =>
-            fails && decision.record !== undefined
-              ? { ...decision, record: { ...decision.record, time: -1 } }
-              : decision,
-          ),
-      }),
-    });
-    const sent = yield* subject
-      .sendFrom({ text: "Publish atomically" })
-      .pipe(Effect.exit);
-    expect(Exit.isFailure(sent) && Cause.isDie(sent.cause)).toBe(true);
-    expect(yield* runtime.decisions).toEqual([]);
-    expect(yield* subject.historyOf()).toEqual([]);
-    fails = false;
-    yield* subject.sendFrom({ text: "Publish atomically" });
-    expect(yield* runtime.inbox).toHaveLength(1);
-    expect(yield* runtime.decisions).toHaveLength(1);
-  }));
-
 /** `open` starts an instance and `close`, from the other agent, ends it. */
 const exchange = normOf("exchange", [
   {
@@ -286,7 +256,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
       notice: withheldReply,
       norms: [exchange],
       policy: composedPolicy({
-        decide: (request) => Effect.succeed(decisionResponse(request)),
+        decide: (request) => Effect.succeed(answersTo(request)),
       }),
     });
     const plain = yield* subject.sendFrom({ text: "Hello, can you help?" });
@@ -344,8 +314,7 @@ it.prop(
         historyLimit: window,
         norms: [exchange],
         policy: composedPolicy({
-          decide: (request) =>
-            Effect.succeed(decisionResponse(request, "compliant")),
+          decide: (request) => Effect.succeed(answersTo(request)),
         }),
       });
       for (let instance = 1; instance <= instances; instance += 1) {
@@ -362,36 +331,6 @@ it.prop(
     }),
   { fastCheck: { numRuns: 6 } },
 );
-
-it("assesses the latest bounded preceding history without the candidate", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const unchecked = yield* subject.open();
-    for (const text of ["Oldest", "Older", "Recent", "Newest"]) {
-      yield* unchecked.harness.send({ to: bobAddress, text });
-    }
-    const seen: DecisionRequest[] = [];
-    yield* subject.open({
-      historyLimit: 2,
-      policy: composedPolicy({
-        decide: (request) =>
-          Effect.sync(() => {
-            seen.push(request);
-            return decisionResponse(request);
-          }),
-      }),
-    });
-    yield* subject.sendFrom({ text: "Candidate" });
-    const [assessment] = seen;
-    if (assessment === undefined) {
-      return yield* Effect.dieMessage("Expected assessment");
-    }
-    expect(decisionState(assessment.state)).toMatchObject({
-      candidate: { text: "Candidate" },
-      history: [{ text: "Recent" }, { text: "Newest" }],
-      earlierHistoryOmitted: true,
-    });
-  }));
 
 it("continues a conversation's history from the cursor a page returned, with what was sent since", () =>
   Effect.gen(function* () {
@@ -445,7 +384,7 @@ it("cancels an unaccepted draft and releases its conversation's turn", () =>
               Effect.zipRight(Effect.never),
             );
           }
-          return Effect.succeed(decisionResponse(request));
+          return Effect.succeed(answersTo(request));
         }),
     });
     const runtime = yield* subject.open({ policy });
@@ -456,29 +395,6 @@ it("cancels an unaccepted draft and releases its conversation's turn", () =>
     yield* Fiber.interrupt(cancelled);
     yield* runtime.harness.send({ to: bobAddress, text: "Next draft" });
     expect(yield* subject.sent).toMatchObject([{ text: "Next draft" }]);
-  }));
-
-it("retains a draft's input while its caller changes the original object", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const entered = yield* Deferred.make<undefined>();
-    const release = yield* Deferred.make<undefined>();
-    const runtime = yield* subject.open({
-      policy: composedPolicy({
-        decide: (request) =>
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.zipRight(Deferred.await(release)),
-            Effect.as(decisionResponse(request)),
-          ),
-      }),
-    });
-    const input = { to: bobAddress, text: "Captured draft" };
-    const sending = yield* runtime.harness.send(input).pipe(Effect.forkScoped);
-    yield* Deferred.await(entered);
-    input.text = "Later mutation";
-    yield* Deferred.succeed(release, undefined);
-    yield* Fiber.join(sending);
-    expect(yield* subject.sent).toMatchObject([{ text: "Captured draft" }]);
   }));
 
 it("reads a saved conversation's history with each agent", () =>

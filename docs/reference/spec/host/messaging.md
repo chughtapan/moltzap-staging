@@ -34,7 +34,7 @@ Resolution names a peer the daemon does not have with
 
 ## Sending a message
 
-Every send supplies a destination and text. Session focus and prior messages cannot supply an
+The server agent's send supplies a destination and text; a client's supplies text. Session focus and prior messages cannot supply an
 omitted destination.
 
 The daemon validates input, resolves the recipient and checks outgoing policy.
@@ -54,7 +54,6 @@ address, member, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `network-unavailable`: the request did not reach the daemon.
 - `outcome-unknown`: the invocation may have taken effect. Interruption,
   defects or response loss after a request may have reached the daemon produce
   this outcome.
@@ -83,10 +82,6 @@ authorize a send.
 ## Connection lifetime
 
 An MCP connection represents one agent: the one its credential selects.
-Concurrent connections can repeat a handoff.
-
-Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,
-without userinfo or fragments. Requests carrying credentials refuse redirects.
 
 Closing a connection stops its active receiver and in-flight requests. Canceling
 one request leaves others active. Accepted sends and stored inbox entries survive.

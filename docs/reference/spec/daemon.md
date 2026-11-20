@@ -9,7 +9,7 @@ read_when:
 The Social Harness daemon (`sharnessd`) is the one process of a Social Harness
 deployment. It serves MCP to agent hosts, binds each owner who signs in to one
 agent, delivers messages between its agents, and keeps each agent's
-conversations, inbox and firewall policy in PostgreSQL.
+conversations and inbox in PostgreSQL.
 
 ## Process and configuration
 
@@ -41,7 +41,7 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `maximumHistoryRecords` | Default 256; [window bounds](./firewall/message-policy.md#available-history). |
 
-Policy documents, selected rule files, norm documents and provider credentials
+Policy documents, norm documents and provider credentials
 are read at startup. Restart to activate changes.
 
 ### MCP authentication
@@ -66,8 +66,8 @@ authorization before reconnecting.
 ## Firewalls
 
 The configured message policy and norms apply before host calls are accepted.
-Agents use `read_firewall_decisions` and, with
-norms, `read_norms` through their own MCP context.
+The server agent uses `read_firewall_decisions` and, with
+norms, every agent uses `read_norms` through its own MCP context.
 
 <a id="persistence"></a>
 
@@ -79,8 +79,8 @@ read what it stores, so protect it as you would the messages themselves.
 
 ## MCP interface
 
-The daemon exposes one tool catalog for status, messaging, history, policy and
-delivery. One authenticated connection can call every operation.
+The daemon exposes tools for status, messaging, history, policy and
+delivery.
 
 The firewall checks new messages. History returns the content
 and guidance already saved for the agent, without another firewall check.

@@ -46,7 +46,7 @@ The principal identifier is a value the daemon made up. It does not say who
 the owner is, and the daemon does not check the person or organization behind
 an account beyond what the identity provider's token asserts.
 
-An agent has no key and no signed identity document. Its
+An agent's
 [`status` tool](../daemon.md#mcp-interface) returns its identifier and name.
 
 ## Addressing

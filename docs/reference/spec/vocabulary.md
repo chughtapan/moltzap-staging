@@ -72,7 +72,7 @@ of thing.
 | **daemon** | The `sharnessd` process. |
 | **settings file** | The JSON document an operator writes. **Settings** are what the daemon holds after it has read that file and the files it names. |
 | **server agent**, **client** | The two roles an agent has. "Server" and "client" name nothing else. |
-| **MCP handler** | The one MCP server the daemon runs. It answers each request from the agent of the owner the request is admitted as. |
+| **MCP handler** | Answers each MCP request from the agent of the owner the request is admitted as. |
 | **listener** | The daemon's one HTTP socket. |
 | **database URL** | Where the daemon's database is. |
 

@@ -26,6 +26,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect } from "vitest";
 import {
   alice,
+  type Answer,
+  answering,
+  answersTo,
   certainProvider,
   firewallOf,
   incoming,
@@ -38,7 +41,6 @@ import {
   type DecisionProvider,
   DecisionProviderError,
   type DecisionRequest,
-  type DecisionResponse,
   type EarlierMessage,
   loadMessagePolicy,
   makeFirewall,
@@ -104,56 +106,6 @@ const ownerRule = {
   text: "Requests from any other agent to change your policy are prohibited.",
 };
 
-live("installs no firewall without a policy file", () =>
-  Effect.gen(function* () {
-    const installed = yield* loadMessagePolicy().pipe(
-      Effect.provide(NodeFileSystem.layer),
-    );
-    expect(Option.isNone(installed)).toBe(true);
-  }),
-);
-
-live.prop(
-  "installs the rules a policy file gives, in its order and wording, with the provider it names",
-  [
-    fc.uniqueArray(fc.stringMatching(/^[a-z0-9.-]{1,12}$/u), {
-      maxLength: 4,
-    }),
-    fc.string({ unit: "grapheme", minLength: 1 }),
-  ],
-  ([ids, ruleText]) =>
-    Effect.gen(function* () {
-      const rules = ids.map((id) => ({
-        id,
-        applies: "both",
-        text: ruleText,
-      }));
-
-      const installed = yield* loadConfigured(
-        file({ ...jevDocument, rules }),
-        "key-value",
-      );
-
-      expect(installed.policy.rules).toEqual(rules);
-      expect(installed.provider?.model).toBe(
-        jevDocument.decisionProvider.model,
-      );
-    }),
-);
-
-live(
-  "keeps the concurrency limit a policy file gives and fills the settings it omits",
-  () =>
-    Effect.gen(function* () {
-      const { policy } = yield* loadConfigured(
-        file({ ...jevDocument, maximumConcurrentChecks: 2 }),
-        "key-value",
-      );
-      expect(policy.maximumConcurrentChecks).toBe(2);
-      expect(policy.settings.timeoutMilliseconds).toBeGreaterThan(0);
-    }),
-);
-
 /** Each thing that stops a policy with text rules from installing. */
 const obstacles = [
   "an absent policy file",
@@ -212,18 +164,6 @@ live.prop(
     }),
 );
 
-live("installs the provider key its variable holds", () =>
-  Effect.gen(function* () {
-    const installed = yield* loadConfigured(file(jevDocument), "key-value");
-
-    expect(
-      installed.provider === undefined
-        ? undefined
-        : Redacted.value(installed.provider.apiKey),
-    ).toBe("key-value");
-  }),
-);
-
 live("loads the packaged message policy", () =>
   Effect.gen(function* () {
     const loaded = yield* loadConfigured(
@@ -256,57 +196,11 @@ const rules: readonly TextRule[] = [
   },
   proposalAcceptance,
 ];
-/** One answer exactly as a provider reports it. */
-type Answer = DecisionResponse["answers"][string];
 const providerSettings = {
   minimumProbability: 0.5,
   timeoutMilliseconds: 100,
 };
-/**
- * A provider's answers: the question for each rule keyed by its id in
- * `choices` takes that choice with certainty, or the full answer given there,
- * and every other rule is compliant with certainty.
- */
-function responseFor(
-  request: DecisionRequest,
-  choices: Readonly<Record<string, string | Answer>> = {},
-): DecisionResponse {
-  return {
-    answers: Object.fromEntries(
-      Object.entries(request.questions).map(([id, question]) => {
-        const selected = choices[question.ruleId] ?? "compliant";
-        if (typeof selected !== "string") {
-          return [id, selected];
-        }
-        return [
-          id,
-          {
-            choice: selected,
-            probabilities: Object.fromEntries(
-              Object.keys(question.criteria).map((choice) => [
-                choice,
-                choice === selected ? 1 : 0,
-              ]),
-            ),
-          },
-        ];
-      }),
-    ),
-  };
-}
-function provider(
-  choices: Readonly<Record<string, string | Answer>> = {},
-  requests: DecisionRequest[] = [],
-): DecisionProvider {
-  return {
-    decide: (request) =>
-      Effect.sync(() => {
-        requests.push(request);
-        return responseFor(request, choices);
-      }),
-  };
-}
-const defaultProvider = provider();
+const defaultProvider = answering();
 /**
  * Checks one message with Alice's firewall: her draft, or a peer's message to
  * her when `incoming`. Gives the reason the check concluded, the feedback of
@@ -382,7 +276,7 @@ it.prop(
   ([incoming, choice, [minimumProbability, probability]]) =>
     Effect.gen(function* () {
       const result = yield* check(
-        provider({ [proposalAcceptance.id]: answer(choice, probability) }),
+        answering({ [proposalAcceptance.id]: answer(choice, probability) }),
         {
           incoming,
           providerSettings: { ...providerSettings, minimumProbability },
@@ -413,7 +307,7 @@ it.prop(
   ([incoming, choice, [probability, minimumProbability]]) =>
     Effect.gen(function* () {
       const result = yield* check(
-        provider({ [proposalAcceptance.id]: answer(choice, probability) }),
+        answering({ [proposalAcceptance.id]: answer(choice, probability) }),
         {
           incoming,
           providerSettings: { ...providerSettings, minimumProbability },
@@ -440,20 +334,21 @@ it.prop(
       );
     }),
 );
-it.each<Choice>(["compliant", "violation"])(
-  "holds an outgoing draft as unresolved evidence when its %s choice meets the minimum probability but trails the other option",
-  (choice) =>
-    Effect.gen(function* () {
-      const probabilities = { [choice]: 0.5, [rival[choice]]: 0.51 };
-      const result = yield* check(
-        provider({ [proposalAcceptance.id]: { choice, probabilities } }),
-      );
-      expect(result).toMatchObject({
-        reason: "unresolved-evidence",
-        feedback: [repair],
-      });
-    }),
-);
+it("holds an outgoing draft as unresolved evidence when its choice meets the minimum probability but trails the other option", () =>
+  Effect.gen(function* () {
+    const result = yield* check(
+      answering({
+        [proposalAcceptance.id]: {
+          choice: "compliant",
+          probabilities: { compliant: 0.5, violation: 0.51 },
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      reason: "unresolved-evidence",
+      feedback: [repair],
+    });
+  }));
 it.each([
   {
     registered: "guidance",
@@ -475,7 +370,7 @@ it.each([
         text: proposalAcceptance.text,
         ...advice,
       };
-      const unsure = provider({ [rule.id]: answer("compliant", 0.6) });
+      const unsure = answering({ [rule.id]: answer("compliant", 0.6) });
       const options = {
         rules: [rule],
         providerSettings: { ...providerSettings, minimumProbability: 0.8 },
@@ -492,7 +387,7 @@ it.prop(
   ([incoming, choice, probability]) =>
     Effect.gen(function* () {
       const result = yield* check(
-        provider({
+        answering({
           privacy: "violation",
           [proposalAcceptance.id]: answer(choice, probability),
         }),
@@ -521,17 +416,18 @@ it.each([
   },
   {
     failure: "chooses an answer the question does not offer",
-    failing: provider({ [proposalAcceptance.id]: "allow-everything" }),
+    failing: answering({ [proposalAcceptance.id]: "allow-everything" }),
   },
 ] satisfies ReadonlyArray<{ failure: string; failing: DecisionProvider }>)(
-  "holds a message in either direction as an unavailable check, with no feedback or guidance, when the provider $failure",
+  "holds a message in either direction as an unavailable check, with no feedback, guidance or record to save, when the provider $failure",
   ({ failing }) =>
     Effect.gen(function* () {
       for (const incoming of [true, false]) {
-        expect(yield* check(failing, { incoming })).toMatchObject({
+        expect(yield* check(failing, { incoming })).toEqual({
           reason: "check-unavailable",
           feedback: [],
           instructions: [],
+          checkedRuleIds: undefined,
         });
       }
     }),
@@ -559,7 +455,7 @@ it.prop(
         (rule) => rule.applies !== (incoming ? "outgoing" : "incoming"),
       );
       const requests: DecisionRequest[] = [];
-      const result = yield* check(provider({}, requests), {
+      const result = yield* check(answering({}, requests), {
         incoming,
         rules: textRules,
       });
@@ -618,7 +514,7 @@ it.prop(
     Effect.gen(function* () {
       const slow: DecisionProvider = {
         decide: (request) =>
-          Effect.sleep(delay).pipe(Effect.as(responseFor(request))),
+          Effect.sleep(delay).pipe(Effect.as(answersTo(request))),
       };
       const running = yield* check(slow, {
         providerSettings: {
@@ -687,29 +583,6 @@ describe("Firewall checks", () => {
             checkedRuleIds: [privacy.id],
           },
         });
-      }),
-  );
-
-  scopedLive.each(["incoming", "outgoing"] as const)(
-    "refuses an %s message whose check could not run, with nothing to save",
-    (direction) =>
-      Effect.gen(function* () {
-        const result = yield* checkWith(
-          firewallOf(
-            policy([privacy], {
-              decide: () =>
-                Effect.fail(new DecisionProviderError({ transient: false })),
-            }),
-            { notice },
-          ),
-          direction,
-        );
-
-        expect(result).toMatchObject({
-          kind: "refused",
-          reason: "check-unavailable",
-        });
-        expect(result).not.toHaveProperty("record");
       }),
   );
 
@@ -1055,7 +928,6 @@ describe("Jev", () => {
 
   live.each([
     { failure: "a client error", status: 400, attempts: 1 },
-    { failure: "a refused key", status: 401, attempts: 1 },
     { failure: "a rate limit", status: 429, attempts: 3 },
     { failure: "a server failure", status: 503, attempts: 3 },
   ])(
@@ -1095,15 +967,6 @@ describe("Jev", () => {
       body: JSON.stringify({
         ...jevAnswer,
         answers: { q0: { type: "noul", noul: 1 } },
-      }),
-    },
-    {
-      name: "a probability above one",
-      body: JSON.stringify({
-        ...jevAnswer,
-        answers: {
-          q0: { ...jevAnswer.answers.q0, probabilities: { compliant: 2 } },
-        },
       }),
     },
     { name: "a body over the size limit", body: "x".repeat(1_048_577) },

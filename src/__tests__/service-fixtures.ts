@@ -1,6 +1,7 @@
 /** @file Fixtures of one daemon's agents: the server agent behind real policy over stored messages in a test database, with the clients that message it. */
 
 import { Effect, PubSub, Schema } from "effect";
+import type { TestPolicy } from "./firewall-fixtures.js";
 import {
   AgentAddress,
   conversationsOf,
@@ -14,44 +15,13 @@ import {
 import { readDecisions } from "../daemon/store.js";
 import {
   type DecisionProvider,
-  type DecisionRequest,
-  type DecisionResponse,
   type Firewall,
-  type LoadedMessagePolicy,
   makeFirewall,
 } from "../firewall.js";
 import { type AgentCard, Message } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";
 import { openTestDatabase } from "./test.js";
-
-/**
- * Deterministic judgments still exercise the real question construction. Every
- * rule gets `compliance` at `probability`; below the policy's bar, an answer is
- * unsure.
- */
-export function decisionResponse(
-  request: DecisionRequest,
-  compliance: "compliant" | "violation" = "compliant",
-  probability = 1,
-): DecisionResponse {
-  return {
-    answers: Object.fromEntries(
-      Object.entries(request.questions).map(([id, question]) => [
-        id,
-        {
-          choice: compliance,
-          probabilities: Object.fromEntries(
-            Object.keys(question.criteria).map((choice) => [
-              choice,
-              choice === compliance ? probability : 1 - probability,
-            ]),
-          ),
-        },
-      ]),
-    ),
-  };
-}
 
 /** These fields describe observable policy evidence rather than the provider's private trace. */
 export const decisionState = Schema.decodeUnknownSync(
@@ -64,12 +34,6 @@ export const decisionState = Schema.decodeUnknownSync(
     }),
   ),
 );
-
-/** A message policy and the provider that judges its text rules in place of Jev. */
-interface TestPolicy {
-  readonly source: LoadedMessagePolicy;
-  readonly provider: DecisionProvider;
-}
 
 /**
  * One text rule makes check order and saved advice
@@ -122,7 +86,6 @@ interface OpenOptions {
   readonly policy?: TestPolicy;
   /** The norms the agent starts with. */
   readonly norms?: InstalledNorms;
-  readonly decorateFirewall?: (firewall: Firewall) => Firewall;
 }
 
 /**
@@ -172,7 +135,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
   const open = Effect.fn(function* ({
     policy,
     norms,
-    decorateFirewall,
     historyLimit = 256,
     notice,
   }: OpenOptions = {}) {
@@ -183,7 +145,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       ...(notice === undefined ? {} : { notice }),
       ...(norms === undefined ? {} : { structureCheck: structureCheck(norms) }),
     });
-    daemon = yield* testDaemon(alice, decorateFirewall?.(firewall) ?? firewall);
+    daemon = yield* testDaemon(alice, firewall);
     return {
       harness: harnessOf(alice),
       /** The record of each check Alice's firewall has made, newest first. */
