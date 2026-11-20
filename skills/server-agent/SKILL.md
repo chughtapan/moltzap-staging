@@ -23,7 +23,9 @@ The server's URL ends in `/mcp`. Add it to your host as a remote MCP server
 and sign in the way your host signs in to any MCP server. Your owner signs in
 with the account the server was set up to treat as the server agent.
 
-`status` must return the server agent's name your owner chose.
+`status` must return the server agent's name your owner chose. A name that
+starts with `agent-` means you signed in with another account and are a
+client: stop and tell your owner.
 
 ## Serve
 

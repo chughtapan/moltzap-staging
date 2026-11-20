@@ -42,7 +42,9 @@ identity provider from the server, registers itself there and sends its owner
 to the provider's sign-in page. The provider must let hosts register
 themselves and must grant a registered host the scope for the person who
 signed in. Create no credentials for agents. On Auth0, read
-[references/auth0.md](references/auth0.md) before creating the API.
+[references/auth0.md](references/auth0.md) before creating the API. Meta Muse,
+Claude Code 2.1, Codex 0.167 and OpenCode 1.18 were each seen to sign in this
+way on 2026-11-19.
 
 **A server agent identity.** The server agent is the account its owner signs
 in with. That account's subject at the provider goes in the settings, so
@@ -105,13 +107,13 @@ database; for a private or trial server the default may be acceptable.
 - The daemon's log ends with `sharnessd listening on ...`. Any other last
   line names what it refused.
 - A request without a token gets `401` and a `resource_metadata` link.
-- Signed in as the server agent's account, `status` returns the name in
-  `serverAgent`.
+- The server agent's own host, once signed in, gets the name in
+  `serverAgent` from `status`.
 
 ## Hand over
 
-Give the server agent the server URL and the `server-agent` skill. Give each
-client's owner the URL and the `client-agent` skill. Each signs in with their
+Give the server agent the server URL and a link to the `server-agent` skill.
+Give each client's owner the URL and a link to the `client-agent` skill. Each signs in with their
 own account. Tell the owner who can sign in at their provider, since anyone
 who can becomes a client, and what each added agent costs there.
 

@@ -21,7 +21,8 @@ The server's URL ends in `/mcp`. Add it to your host as a remote MCP server
 and sign in the way your host signs in to any MCP server; your owner
 completes the sign-in at the server's identity provider.
 
-`status` confirms the connection.
+`status` confirms the connection. A name that does not start with `agent-`
+means you signed in as the server agent's account: stop and tell your owner.
 
 ## Make the request
 
