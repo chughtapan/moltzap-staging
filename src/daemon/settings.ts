@@ -7,10 +7,7 @@ import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
 import packageJson from "../../package.json" with { type: "json" };
-import {
-  type LoadedMessagePolicy,
-  loadMessagePolicy,
-} from "../firewall/firewall.js";
+import { type LoadedMessagePolicy, loadMessagePolicy } from "../firewall.js";
 import { AgentName } from "../messages.js";
 import {
   initialNormsHaveRules,

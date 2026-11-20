@@ -19,7 +19,7 @@ import {
   type Firewall,
   type LoadedMessagePolicy,
   makeFirewall,
-} from "../firewall/firewall.js";
+} from "../firewall.js";
 import { type AgentCard, Message } from "../messages.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";

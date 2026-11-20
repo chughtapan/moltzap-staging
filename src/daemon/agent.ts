@@ -13,7 +13,7 @@ import {
   type Firewall,
   type FirewallRefusalReason,
   LocalGuidance,
-} from "../firewall/firewall.js";
+} from "../firewall.js";
 import {
   AGENT_NAME_RULE,
   type AgentCard,
