@@ -120,6 +120,19 @@ it("sends each call as new work to the agent its address names, with the reply r
     );
   }));
 
+it("refuses a send and a read whose address names the caller itself", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const { harness } = yield* subject.open();
+    const own = AgentAddress.make(`agent:${subject.self.agentName}`);
+    expect(
+      yield* harness.send({ to: own, text: "Hello" }).pipe(Effect.flip),
+    ).toMatchObject({ reason: "membership-invalid" });
+    expect(
+      yield* harness.readHistory({ address: own }).pipe(Effect.flip),
+    ).toMatchObject({ reason: "invalid-address" });
+  }));
+
 it("checks the messages of one conversation in order while another conversation progresses", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
@@ -379,7 +392,7 @@ it.prop(
     Effect.gen(function* () {
       const subject = yield* makeHarnessFixture;
       const runtime = yield* subject.open({
-        maximumHistoryRecords: window,
+        historyLimit: window,
         contracts: [exchange],
         policy: composedPolicy({
           decide: (request) =>
@@ -410,7 +423,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
     }
     const seen: DecisionRequest[] = [];
     yield* subject.open({
-      maximumHistoryRecords: 2,
+      historyLimit: 2,
       policy: composedPolicy({
         decide: (request) =>
           Effect.sync(() => {

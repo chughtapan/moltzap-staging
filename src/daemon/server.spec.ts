@@ -1,4 +1,4 @@
-/** @file MCP clients discover the tools of their agent's role and read each call's result or failure. */
+/** @file The daemon admits owner-bound JWTs verified against a real issuer key-set endpoint, and MCP clients discover the tools of their agent's role and read each call's result or failure. */
 
 import {
   HttpClient,
@@ -15,7 +15,7 @@ import {
   Exit,
   FastCheck as fc,
   Fiber,
-  Ref,
+  Queue,
   Schema,
   Scope,
   Stream,
@@ -23,15 +23,15 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import { digest, testAgentCard } from "../__tests__/agents.js";
 import { FirewallRefusal } from "../firewall/index.js";
 import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
 } from "./__tests__/mcp-fixtures.js";
-import { serveMcp } from "./listener.js";
-import { AgentAddress, HistoryError, SendError, SendResult } from "./values.js";
+import { HistoryError, SendError } from "./agent.js";
+import { serveMcp } from "./server.js";
+import { AgentAddress } from "./values.js";
 
 const response = Schema.parseJson(
   Schema.Struct({
@@ -49,19 +49,139 @@ const json = (reply: Response) =>
   Effect.tryPromise(() => reply.text()).pipe(
     Effect.flatMap(Schema.decodeUnknown(response)),
   );
-const serverAgent = AgentAddress.make("agent:bob");
+const bob = AgentAddress.make("agent:bob");
 const send = {
   name: "send_message",
-  arguments: { to: serverAgent, text: "hello" },
+  arguments: { to: bob, text: "hello" },
 };
-const read = {
-  name: "read_conversation",
-  arguments: { address: serverAgent },
-};
-const sendReceipt = Schema.decodeUnknownSync(SendResult)({
-  id: digest("msg_", 1),
-  address: serverAgent,
+
+const resource = new URL("https://mcp.example.test/mcp");
+const owner = "owner-subject";
+const scope = "use:mcp";
+
+const admission = Effect.gen(function* () {
+  const test = yield* mcpFixture({ resource });
+  /** The subject of every owner with an agent. */
+  const owners = test.sql<{
+    subject: string;
+  }>`SELECT subject FROM agent_cards ORDER BY subject`.pipe(
+    Effect.map((rows) => rows.map((row) => row.subject)),
+  );
+  const token = (
+    changes: {
+      readonly audience?: string;
+      readonly subject?: string;
+      readonly granted?: readonly string[];
+      readonly secondsLeft?: number;
+    } = {},
+  ) =>
+    test.issuer.token(
+      changes.subject ?? owner,
+      changes.audience ?? resource.href,
+      {
+        scope: (changes.granted ?? [scope]).join(" "),
+        secondsLeft: changes.secondsLeft ?? 300,
+      },
+    );
+  const call = (bearer: string) =>
+    Effect.tryPromise(() =>
+      test.fetch(
+        mcpRequest(
+          "server/discover",
+          {},
+          {
+            headers: {
+              host: resource.host,
+              authorization: `Bearer ${bearer}`,
+            },
+          },
+        ),
+      ),
+    );
+  return { ...test, owners, token, call };
 });
+
+/** A scope that begins with the configured one and goes on past it. */
+const longerScope = fc
+  .stringMatching(/^[a-z:]{1,3}$/u)
+  .map((more) => `${scope}${more}`);
+
+/** Claims the resource admits: any subject, and the configured scope anywhere among those granted. */
+const admissible = fc.record({
+  subject: fc.string({ minLength: 1 }),
+  granted: fc
+    .tuple(fc.array(longerScope), fc.array(longerScope))
+    .map(([before, after]) => [...before, scope, ...after]),
+});
+
+/** One claim that puts a token outside the resource's authority. */
+const defect = fc.oneof(
+  fc.record({ subject: fc.constant("") }),
+  fc.record({ audience: fc.webUrl().filter((url) => url !== resource.href) }),
+  fc.record({ granted: fc.array(longerScope) }),
+  fc.record({ secondsLeft: fc.integer({ min: -3600, max: 0 }) }),
+);
+
+it("answers a token granted the scope from the agent of its subject", () =>
+  Effect.gen(function* () {
+    const test = yield* admission;
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(admissible, (claims) =>
+          Effect.gen(function* () {
+            const response = yield* test.call(yield* test.token(claims));
+            expect(response.status).toBe(200);
+            expect(yield* test.owners).toContain(claims.subject);
+          }).pipe(Effect.runPromise),
+        ),
+      ),
+    );
+  }));
+
+it("refuses a token with an empty subject, another audience, no grant of the scope or no time left", () =>
+  Effect.gen(function* () {
+    const test = yield* admission;
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(defect, (claim) =>
+          Effect.gen(function* () {
+            const response = yield* test.call(yield* test.token(claim));
+            expect(response.ok).toBe(false);
+            expect(yield* test.owners).toEqual(["owner", "peer"]);
+          }).pipe(Effect.runPromise),
+        ),
+      ),
+    );
+  }));
+
+it(
+  "closes an admitted stream at token expiry without closing later requests",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* admission;
+      const token = yield* test.token({ secondsLeft: 2 });
+      const response = yield* Effect.tryPromise(() =>
+        test.fetch(
+          mcpRequest(
+            "subscriptions/listen",
+            { notifications: { toolsListChanged: true } },
+            {
+              headers: {
+                host: resource.host,
+                authorization: `Bearer ${token}`,
+              },
+            },
+          ),
+        ),
+      );
+      expect(response.status).toBe(200);
+      const body = yield* Effect.tryPromise(() => response.text());
+      expect(body).toContain("notifications/subscriptions/acknowledged");
+      const later = yield* test.call(yield* test.token());
+      expect(later.status).toBe(200);
+    }),
+  15000,
+);
 
 type Fixture = Effect.Effect.Success<ReturnType<typeof mcpFixture>>;
 /** Calls a tool on `fixture` and gives the reply's result. */
@@ -118,23 +238,7 @@ it("gives the server agent its tools, and a status result that matches the outpu
 
 it("gives a client tools that name no recipient and no conversation", () =>
   Effect.gen(function* () {
-    const sent: unknown[] = [];
-    const read: unknown[] = [];
-    const fixture = yield* mcpFixture({
-      serverAgentName: testAgentCard("bob").agentName,
-      harness: {
-        send: (request) =>
-          Effect.sync(() => {
-            sent.push(request);
-            return sendReceipt;
-          }),
-        readHistory: (request) =>
-          Effect.sync(() => {
-            read.push(request);
-            return { records: [] };
-          }),
-      },
-    });
+    const fixture = yield* mcpFixture({ client: true });
     const client = yield* connect(fixture);
     const { tools } = yield* Effect.tryPromise(() => client.listTools());
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
@@ -151,14 +255,24 @@ it("gives a client tools that name no recipient and no conversation", () =>
           .properties ?? {},
       ),
     ).toEqual(["text", "replyToMsgId"]);
-    yield* Effect.tryPromise(() =>
+    const sent = yield* Effect.tryPromise(() =>
       client.callTool({ name: "send_message", arguments: { text: "hello" } }),
     );
-    yield* Effect.tryPromise(() =>
+    expect(sent.structuredContent).toMatchObject({ address: bob });
+    const history = yield* Effect.tryPromise(() =>
       client.callTool({ name: "read_conversation", arguments: {} }),
     );
-    expect(sent).toEqual([{ to: serverAgent, text: "hello" }]);
-    expect(read).toEqual([{ address: serverAgent }]);
+    expect(history.structuredContent).toMatchObject({
+      records: [
+        {
+          kind: "sent",
+          message: {
+            recipients: [{ agentName: "bob" }],
+            content: [{ type: "text", text: "hello" }],
+          },
+        },
+      ],
+    });
   }));
 
 it("refuses a call with a wrong or an unknown argument without running the tool", () =>
@@ -176,62 +290,74 @@ it("refuses a call with a wrong or an unknown argument without running the tool"
 
 it("answers a failed call with the failure's message and its fields", () =>
   Effect.gen(function* () {
-    const failing = yield* Ref.make<
-      Effect.Effect<never, SendError | FirewallRefusal>
-    >(Effect.never);
-    const history = new HistoryError({ reason: "unknown-agent" });
+    const refused = yield* Queue.unbounded<FirewallRefusal>();
     const fixture = yield* mcpFixture({
-      harness: {
-        send: () => Effect.flatten(Ref.get(failing)),
-        readHistory: () => Effect.fail(history),
+      firewall: {
+        checkOutgoing: () =>
+          Effect.map(Queue.take(refused), (refusal) => ({
+            kind: "refused" as const,
+            refusal,
+            save: Effect.void,
+          })),
       },
     });
-    const sendErrors = fc
-      .record(
-        {
-          reason: fc.constantFrom(
-            "unknown-agent" as const,
-            "content-invalid" as const,
-          ),
-          detail: fc.string(),
-        },
-        { requiredKeys: ["reason"] },
-      )
-      .map((fields) => ({ fields, failure: new SendError(fields) }));
-    const refusals = fc
-      .record(
-        {
-          reason: fc.constant("firewall-refused" as const),
-          checkId: fc.string({ minLength: 1 }),
-          refusal: fc.constant("rule-violation" as const),
-          rule: fc.string({ minLength: 1 }),
-          feedback: fc.array(fc.string({ minLength: 1 })),
-        },
-        { requiredKeys: ["reason", "checkId", "refusal", "feedback"] },
-      )
-      .map((fields) => ({ fields, failure: new FirewallRefusal(fields) }));
+    const refusals = fc.record(
+      {
+        reason: fc.constant("firewall-refused" as const),
+        checkId: fc.string({ minLength: 1 }),
+        refusal: fc.constant("rule-violation" as const),
+        rule: fc.string({ minLength: 1 }),
+        feedback: fc.array(fc.string({ minLength: 1 })),
+      },
+      { requiredKeys: ["reason", "checkId", "refusal", "feedback"] },
+    );
     yield* Effect.tryPromise(() =>
       fc.assert(
-        fc.asyncProperty(
-          fc.oneof(sendErrors, refusals),
-          ({ fields, failure }) =>
-            Effect.runPromise(
-              Effect.gen(function* () {
-                yield* Ref.set(failing, Effect.fail(failure));
-                expect(yield* toolCall(fixture, send)).toEqual({
-                  isError: true,
-                  content: [{ text: failure.message }],
-                  structuredContent: fields,
-                });
-              }),
-            ),
+        fc.asyncProperty(refusals, (fields) =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const failure = new FirewallRefusal(fields);
+              yield* Queue.offer(refused, failure);
+              expect(yield* toolCall(fixture, send)).toEqual({
+                isError: true,
+                content: [{ text: failure.message }],
+                structuredContent: fields,
+              });
+            }),
+          ),
         ),
         { numRuns: 25 },
       ),
     );
-    expect(yield* toolCall(fixture, read)).toEqual({
+    for (const [to, fields] of [
+      [
+        "agent:nobody",
+        {
+          reason: "unknown-agent",
+          detail:
+            "This daemon has no agent named agent:nobody. Check the name with its owner.",
+        },
+      ],
+      ["agent:alice", { reason: "membership-invalid" }],
+    ] as const) {
+      expect(
+        yield* toolCall(fixture, { ...send, arguments: { to, text: "hello" } }),
+      ).toEqual({
+        isError: true,
+        content: [{ text: new SendError(fields).message }],
+        structuredContent: fields,
+      });
+    }
+    expect(
+      yield* toolCall(fixture, {
+        name: "read_conversation",
+        arguments: { address: "agent:nobody" },
+      }),
+    ).toEqual({
       isError: true,
-      content: [{ text: history.message }],
+      content: [
+        { text: new HistoryError({ reason: "unknown-agent" }).message },
+      ],
       structuredContent: { reason: "unknown-agent" },
     });
   }));
@@ -240,14 +366,17 @@ it("answers a call that dies without the defect's text, and a send that dies as 
   Effect.gen(function* () {
     const dies = () => Effect.dieMessage("PRIVATE relation does not exist");
     const fixture = yield* mcpFixture({
-      harness: { send: dies, readHistory: dies },
+      firewall: { checkOutgoing: dies, readDecisions: dies },
     });
     expect(yield* toolCall(fixture, send)).toEqual({
       isError: true,
       content: [{ text: new SendError({ reason: "outcome-unknown" }).message }],
       structuredContent: { reason: "outcome-unknown" },
     });
-    const result = yield* toolCall(fixture, read);
+    const result = yield* toolCall(fixture, {
+      name: "read_firewall_decisions",
+      arguments: {},
+    });
     expect(result?.isError).toBe(true);
     expect(result?.structuredContent).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain("PRIVATE");
@@ -258,8 +387,8 @@ it("interrupts only the aborted HTTP request", () =>
     const entered = yield* Deferred.make<undefined>();
     const interrupted = yield* Deferred.make<undefined>();
     const fixture = yield* mcpFixture({
-      harness: {
-        receive: () =>
+      firewall: {
+        checkOutgoing: () =>
           Deferred.succeed(entered, undefined).pipe(
             Effect.zipRight(Effect.never),
             Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
@@ -269,11 +398,10 @@ it("interrupts only the aborted HTTP request", () =>
     const abort = new AbortController();
     const waiting = yield* Effect.tryPromise(() =>
       fixture.fetch(
-        mcpRequest(
-          "tools/call",
-          { name: "receive_messages", arguments: {} },
-          { id: "waiting", signal: abort.signal },
-        ),
+        mcpRequest("tools/call", send, {
+          id: "waiting",
+          signal: abort.signal,
+        }),
       ),
     ).pipe(Effect.either, Effect.forkScoped);
     yield* Deferred.await(entered);

@@ -1,104 +1,71 @@
-/** @file MCP tests substitute service behavior while exercising the real protocol and HTTP boundary. */
+/** @file MCP tests exercise the real protocol and HTTP boundary over the agents of a test database. */
 import { HttpApp } from "@effect/platform";
-import { SqlClient } from "@effect/sql";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { Effect, Redacted, Ref } from "effect";
-import type { AgentName } from "../../identity.js";
-import type { SocialHarness } from "../agent.js";
-import { testAgentCard } from "../../__tests__/agents.js";
+import { Context, Effect, Layer } from "effect";
 import { Firewall } from "../../firewall/service.js";
+import { AgentName, Identity } from "../../identity.js";
 import { openTestDatabase } from "../../test.js";
-import { makeMcpHttpApp } from "../listener.js";
+import { getOrCreateOwnedAgent } from "../agent.js";
+import { makeMcpHttpApp } from "../server.js";
 import { issuerFixture, requiredScope } from "../testing.js";
-import { makeInboxEvents } from "../tool-server.js";
-import { AgentAddress } from "../values.js";
+import { testDaemon } from "./service-fixtures.js";
 
 /** The Host of the fixture's resource, unless a test names another resource. */
 const mcpTestHeaders = { host: "127.0.0.1" };
 
 /**
- * The daemon's HTTP app over a database, serving one agent whose `harness`
- * operations a test replaces one by one. The agent is the server agent unless
- * the options name another. Its issuer signs the token of the one
- * owner, which `fetch` presents for a request that carries no authorization.
+ * The daemon's HTTP app over a database that holds two agents: Alice, whose
+ * owner's token `fetch` presents for a request that carries no authorization,
+ * and Bob. Alice is the server agent and Bob her client, unless the options
+ * make Alice the client. The server agent's firewall holds no policy, so it
+ * allows every message.
  */
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
-    /** Makes the agent a client of the server agent with this name. */
-    readonly serverAgentName?: AgentName;
+    /** Makes Bob the server agent and Alice his client. */
+    readonly client?: true;
     /** The daemon's resource, whose host requests name. */
     readonly resource?: URL;
-    readonly harness?: Partial<SocialHarness>;
+    /** Operations that replace those of the server agent's firewall. */
+    readonly firewall?: Partial<Context.Tag.Service<typeof Firewall>>;
   } = {},
 ) {
   const database = yield* openTestDatabase();
-  const card = testAgentCard("alice");
-  const harness: SocialHarness = {
-    send: () => Effect.dieMessage("Unexpected send"),
-    receive: () => Effect.succeed({ entries: [], nextCursor: "0" }),
-    listConversations: () => Effect.succeed({ addresses: [] }),
-    readHistory: () => Effect.succeed({ records: [] }),
-    ...options.harness,
-  };
-  const unused = () => Effect.dieMessage("Unexpected firewall assessment");
-  const firewall = Firewall.of({
-    checkIncoming: unused,
-    checkOutgoing: unused,
-    readContracts: () => Effect.succeed([]),
-    readDecisions: unused,
-  });
-  const agent = {
-    agentKey: card.agentName,
-    card,
-    harness,
-    firewall,
-    serverAgent:
-      options.serverAgentName === undefined
-        ? undefined
-        : AgentAddress.make(`agent:${options.serverAgentName}`),
-    norms: undefined,
-    events: yield* makeInboxEvents.pipe(
-      Effect.provideService(SqlClient.SqlClient, database.sql),
-    ),
-  };
-  const owners = yield* Ref.make<
-    ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
-  >([]);
   const resource =
     options.resource ?? new URL(`https://${mcpTestHeaders.host}/mcp`);
   const issuer = yield* issuerFixture().pipe(Effect.orDie);
-  const owner = { issuer: issuer.issuer, subject: "owner" };
-  const token = yield* issuer
-    .token(owner.subject, resource.href)
-    .pipe(Effect.orDie);
+  const agent = (subject: string, name: string) =>
+    getOrCreateOwnedAgent(
+      { issuer: issuer.issuer, subject },
+      AgentName.make(name),
+    ).pipe(database.run, Effect.orDie);
+  const alice = yield* agent("owner", "alice");
+  const bob = yield* agent("peer", "bob");
+  const serverAgent = options.client ? bob : alice;
+  const firewall = yield* Layer.build(
+    Firewall.layer(serverAgent.agentKey).pipe(
+      Layer.provide(Layer.succeed(Identity, { me: serverAgent.card })),
+    ),
+  ).pipe(Effect.map(Context.get(Firewall)), database.run, Effect.orDie);
   const app = yield* makeMcpHttpApp(
-    {
-      resource,
-      issuer: issuer.issuer,
-      scope: requiredScope,
-    },
-    (admitted) =>
-      Ref.update(owners, (values) => [...values, admitted]).pipe(
-        Effect.as(agent),
-      ),
-  );
+    { resource, issuer: issuer.issuer, scope: requiredScope },
+    yield* testDaemon(serverAgent, { ...firewall, ...options.firewall }),
+  ).pipe(database.run);
+  const token = yield* issuer.token("owner", resource.href).pipe(Effect.orDie);
   const handle = HttpApp.toWebHandler(app);
   return {
-    app,
-    owners,
     issuer,
-    owner,
-    credential: Redacted.make(token),
+    sql: database.sql,
     fetch: (request: Request) => {
       if (!request.headers.has("authorization")) {
         request.headers.set("authorization", `Bearer ${token}`);
       }
       return handle(request);
     },
-    card,
+    card: alice.card,
   };
 });
 
