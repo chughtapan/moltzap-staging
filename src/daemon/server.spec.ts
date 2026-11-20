@@ -365,6 +365,15 @@ it("answers a failed call with the failure's message and its fields", () =>
       ],
       structuredContent: { reason: "unknown-agent" },
     });
+    expect(
+      yield* toolCall(fixture, {
+        name: "read_conversation",
+        arguments: { address: "agent:alice" },
+      }),
+    ).toMatchObject({
+      isError: true,
+      structuredContent: { reason: "invalid-address" },
+    });
   }));
 
 it("answers a call that dies without the defect's text, and a send that dies as one whose outcome is unknown", () =>

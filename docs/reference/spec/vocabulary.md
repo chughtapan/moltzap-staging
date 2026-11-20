@@ -17,7 +17,6 @@ name in code.
 | **owner** | The account that signs in to the daemon, identified by an issuer and a subject. |
 | **agent** | What the daemon hosts for one owner. |
 | **card** | An agent's public identity: its **agent id**, **agent name** and **principal id**. |
-| **agent key** | The key an agent's rows are stored under. It never leaves the daemon. |
 | **host** | The program connected to the daemon over MCP on an agent's behalf. |
 
 ## Messages

@@ -1,17 +1,65 @@
-/** @file Messages between a server agent and its clients on one daemon, as each holds them. */
+/**
+ * @file The store prepares a database without touching what it cannot adopt,
+ * holds each message once for both of its agents, and gives a recipient its
+ * readable messages in the order they became readable.
+ */
+import { Migrator, SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Array as Arr, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
-import type { AgentCard } from "../identity.js";
 import { createTestAgent } from "../__tests__/agents.js";
 import { openTestDatabase } from "../__tests__/test.js";
-import { Message } from "./messages.js";
+import { Message } from "../communication/index.js";
 import {
-  listConversations,
-  readHistory,
+  conversationPeers,
+  prepareDatabase,
+  readConversation,
   readInbox,
-  sendMessage,
-} from "./service.js";
+  saveMessage,
+} from "./store.js";
+
+/** A database nothing has prepared, and the daemon's preparation of it. */
+const unprepared = Effect.gen(function* () {
+  const { sql, run } = yield* openTestDatabase({ prepared: false });
+  const tables = sql<{
+    name: string;
+  }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`;
+  return { sql, tables, prepare: run(prepareDatabase) };
+});
+
+it("prepares a fresh database and leaves a prepared one as it is", () =>
+  Effect.gen(function* () {
+    const test = yield* unprepared;
+    expect(yield* test.tables).toEqual([]);
+    yield* test.prepare;
+    yield* test.sql`INSERT INTO agent_cards (issuer, subject, agent_id, agent_name, principal_id) VALUES ('i', 's', 'a', 'n', 'p')`;
+    yield* test.prepare;
+    expect(yield* test.sql`SELECT * FROM agent_cards`).toHaveLength(1);
+  }));
+
+it("prepares a fresh database whose migration ledger already exists but is empty", () =>
+  Effect.gen(function* () {
+    const test = yield* unprepared;
+    yield* Migrator.make({})({ loader: Effect.succeed([]) }).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    yield* test.prepare;
+    expect(yield* test.sql`SELECT * FROM agent_cards`).toHaveLength(0);
+  }));
+
+it("rejects a database that holds other tables without changing their records", () =>
+  Effect.gen(function* () {
+    const test = yield* unprepared;
+    yield* test.sql`CREATE TABLE retained (value TEXT NOT NULL)`;
+    yield* test.sql`INSERT INTO retained VALUES ('prior installation')`;
+    expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
+      reason: "schema",
+    });
+    expect(yield* test.sql`SELECT * FROM retained`).toEqual([
+      { value: "prior installation" },
+    ]);
+    expect(yield* test.tables).toEqual([{ name: "retained" }]);
+  }));
 
 type Name = "alice" | "bob" | "carol";
 
@@ -27,37 +75,30 @@ const fixture = Effect.gen(function* () {
     sql,
     run,
     agents,
-    /** Sends a new message from one agent to another, held by its recipient as `received` says. */
+    /** Stores a new message from one agent to another, held by its recipient as `received` says. */
     send: (from: Name, to: Name, received: { readonly readable: boolean }) =>
       Effect.gen(function* () {
         const message = yield* Message.create({
-          author: agents[from].card,
-          recipients: [agents[to].card],
+          author: agents[from],
+          recipients: [agents[to]],
           content: [{ type: "text", text: "hello" }],
         });
-        yield* sendMessage(
-          {
-            authorKey: agents[from].agentKey,
-            recipientKey: agents[to].agentKey,
-          },
-          message,
-          received,
-        );
+        yield* saveMessage(message, received);
         return message;
       }).pipe(run),
     /** The ids of the messages an agent may read after `cursor`, in read order, with the cursor to read on from. */
     inbox: (name: Name, cursor?: string) =>
-      readInbox(agents[name].agentKey, { limit: 100, cursor }).pipe(
+      readInbox(agents[name].agentId, { limit: 100, cursor }).pipe(
         Effect.map(({ messages, nextCursor }) => ({
           ids: messages.map(({ message }) => message.msgId),
           nextCursor,
         })),
         run,
       ),
-    /** The first page of a conversation as one agent holds it. */
-    history: (name: Name, members: readonly AgentCard[]) =>
-      readHistory(agents[name].agentKey, { members }).pipe(
-        Effect.map((page) => page.entries.map((entry) => entry.message)),
+    /** The messages two agents sent each other, oldest first. */
+    conversation: (one: Name, other: Name) =>
+      readConversation([agents[one].agentId, agents[other].agentId]).pipe(
+        Effect.map((stored) => stored.map(({ message }) => message)),
         run,
       ),
   };
@@ -65,27 +106,24 @@ const fixture = Effect.gen(function* () {
 
 const readable = { readable: true };
 
-it("retains a client/server exchange for its two members only and puts each message in its recipient's inbox", () =>
+it("holds a client/server exchange once for its two agents only and puts each message in its recipient's inbox", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const members = [f.agents.alice.card, f.agents.bob.card];
     const request = yield* f.send("bob", "alice", readable);
     expect((yield* f.inbox("alice", "0")).ids).toEqual([request.msgId]);
     expect((yield* f.inbox("bob", "0")).ids).toEqual([]);
     const reply = yield* f.send("alice", "bob", readable);
-    expect(yield* f.run(listConversations(f.agents.bob.agentKey))).toEqual([
-      members,
+    expect(yield* f.run(conversationPeers(f.agents.bob.agentId))).toEqual([
+      "alice",
     ]);
-    for (const member of ["alice", "bob"] as const) {
-      expect(yield* f.history(member, members)).toEqual([request, reply]);
-    }
-    expect(yield* f.history("carol", members)).toEqual([]);
+    expect(yield* f.conversation("alice", "bob")).toEqual([request, reply]);
+    expect(yield* f.conversation("bob", "alice")).toEqual([request, reply]);
+    expect(yield* f.conversation("alice", "carol")).toEqual([]);
   }));
 
-it("rolls back both members' views and gives concurrent sends one order", () =>
+it("stores nothing of a message whose transaction fails, and both of two messages stored at the same time", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const members = [f.agents.alice.card, f.agents.bob.card];
     yield* f.sql
       .withTransaction(
         f
@@ -93,16 +131,12 @@ it("rolls back both members' views and gives concurrent sends one order", () =>
           .pipe(Effect.zipRight(Effect.fail("cancel"))),
       )
       .pipe(Effect.either);
-    for (const member of ["alice", "bob"] as const) {
-      expect(yield* f.history(member, members)).toEqual([]);
-    }
+    expect(yield* f.conversation("alice", "bob")).toEqual([]);
     yield* Effect.all(
       [f.send("bob", "alice", readable), f.send("alice", "bob", readable)],
       { concurrency: 2 },
     );
-    const server = yield* f.history("alice", members);
-    expect(server).toEqual(yield* f.history("bob", members));
-    expect(server).toHaveLength(2);
+    expect(yield* f.conversation("alice", "bob")).toHaveLength(2);
   }));
 
 const steps = fc.array(

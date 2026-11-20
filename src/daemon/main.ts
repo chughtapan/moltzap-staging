@@ -8,22 +8,17 @@
  */
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, PubSub } from "effect";
+import { makeFirewall } from "../firewall/firewall.js";
+import { structureCheck } from "../norms/index.js";
+import { getOrCreateOwnedAgent } from "./agent.js";
+import { makeMcpHttpApp, serveMcp } from "./server.js";
 import {
-  getOrCreateOwnedAgent,
   loadDaemonSettings,
-  makeMcpHttpApp,
+  packageVersion,
   refused,
-  serveMcp,
   spanExport,
-} from "./daemon/index.js";
-import {
-  databaseConnection,
-  databaseUrl,
-  prepareDatabase,
-} from "./database.js";
-import { makeFirewall } from "./firewall/firewall.js";
-import { structureCheck } from "./norms/index.js";
-import { packageVersion } from "./version.js";
+} from "./settings.js";
+import { databaseConnection, databaseUrl, prepareDatabase } from "./store.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
 const HELP_MESSAGE = [
@@ -76,7 +71,7 @@ const runDaemon = Effect.gen(function* () {
         ...(settings.messagePolicy === undefined
           ? {}
           : { source: settings.messagePolicy }),
-        me: serverAgent.card,
+        me: serverAgent,
         historyLimit: settings.maximumHistoryRecords ?? 256,
         notice: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
         ...(norms === undefined

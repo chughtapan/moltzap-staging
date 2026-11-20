@@ -72,10 +72,10 @@ function forAll<Value>(
   );
 }
 
-/** An agent an address names: bob and carol, whom the fixture knows, and nobody, whom it does not. */
-const named = fc.constantFrom("bob", "carol", "nobody");
+/** A client an address names. */
+const named = fc.constantFrom("bob", "carol");
 
-it("sends each call as new work to the agent its address names, with the reply reference it gives, and refuses an address that names an unknown agent", () =>
+it("sends each call as new work to the agent it names, with the reply reference it gives", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const { harness } = yield* subject.open();
@@ -93,38 +93,17 @@ it("sends each call as new work to the agent its address names, with the reply r
         const to = AgentAddress.make(`agent:${name}`);
         const request = { to, text: "Hello", replyToMsgId };
         const dispatched = (yield* subject.sent).length;
-        if (name === "nobody") {
-          expect(yield* harness.send(request).pipe(Effect.flip)).toMatchObject({
-            reason: "unknown-agent",
-          });
-          expect(yield* subject.sent).toHaveLength(dispatched);
-        } else {
-          const receipt = yield* harness.send(request);
-          expect(receipt.address).toBe(to);
-          expect(receipts).not.toContain(receipt.id);
-          receipts.push(receipt.id);
-          const [stored] = (yield* subject.sent).slice(dispatched);
-          expect(stored).toMatchObject({
-            msgId: receipt.id,
-            recipients: [{ agentName: name }],
-          });
-          expect(stored?.replyToMsgId).toBe(replyToMsgId);
-        }
+        const receipt = yield* harness.send(request);
+        expect(receipts).not.toContain(receipt.id);
+        receipts.push(receipt.id);
+        const [stored] = (yield* subject.sent).slice(dispatched);
+        expect(stored).toMatchObject({
+          msgId: receipt.id,
+          recipients: [{ agentName: name }],
+        });
+        expect(stored?.replyToMsgId).toBe(replyToMsgId);
       }),
     );
-  }));
-
-it("refuses a send and a read whose address names the caller itself", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const { harness } = yield* subject.open();
-    const own = AgentAddress.make(`agent:${subject.self.agentName}`);
-    expect(
-      yield* harness.send({ to: own, text: "Hello" }).pipe(Effect.flip),
-    ).toMatchObject({ reason: "membership-invalid" });
-    expect(
-      yield* harness.readHistory({ address: own }).pipe(Effect.flip),
-    ).toMatchObject({ reason: "invalid-address" });
   }));
 
 it("checks the messages of one conversation in order while another conversation progresses", () =>
@@ -516,7 +495,7 @@ it("retains a draft's input while its caller changes the original object", () =>
     ]);
   }));
 
-it("reads a saved conversation's history at its agent's address, and reports an unknown agent", () =>
+it("reads a saved conversation's history with each agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -525,19 +504,13 @@ it("reads a saved conversation's history at its agent's address, and reports an 
     const saved: Record<string, unknown> = {
       bob: ["sent"],
       carol: ["received"],
-      nobody: "unknown-agent",
     };
     yield* forAll(
       named,
       Effect.fn(function* (name) {
         const read = yield* runtime.harness
           .readHistory({ address: AgentAddress.make(`agent:${name}`) })
-          .pipe(
-            Effect.match({
-              onFailure: ({ reason }) => reason,
-              onSuccess: ({ records }) => records.map((record) => record.kind),
-            }),
-          );
+          .pipe(Effect.map(({ records }) => records.map(({ kind }) => kind)));
         expect(read).toEqual(saved[name]);
       }),
     );
@@ -575,15 +548,13 @@ it.prop(
       expect(
         new Set(
           owners.map(
-            (each, index) =>
-              `${account(each)} ${agents[index]?.agentKey ?? ""}`,
+            (each, index) => `${account(each)} ${agents[index]?.agentId ?? ""}`,
           ),
         ).size,
       ).toBe(distinct);
       for (const identifiers of [
-        agents.map((agent) => agent.agentKey),
-        agents.map((agent) => agent.card.agentId),
-        agents.map((agent) => agent.card.principalId),
+        agents.map((agent): string => agent.agentId),
+        agents.map((agent): string => agent.principalId),
       ]) {
         expect(new Set(identifiers).size).toBe(distinct);
       }

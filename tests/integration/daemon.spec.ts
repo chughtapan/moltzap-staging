@@ -18,7 +18,9 @@ import {
   stopProcess,
 } from "./daemon-fixture.js";
 
-const BINARY = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
+const BINARY = fileURLToPath(
+  new URL("../../dist/daemon/main.js", import.meta.url),
+);
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";
 const SECRET = "secret-path-value";
 

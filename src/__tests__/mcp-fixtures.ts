@@ -45,7 +45,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const bob = yield* agent("peer", "bob");
   const serverAgent = options.client ? bob : alice;
   const firewall = makeFirewall({
-    me: serverAgent.card,
+    me: serverAgent,
     historyLimit: 256,
   });
   const app = yield* makeMcpHttpApp(
@@ -63,7 +63,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
       }
       return handle(request);
     },
-    card: alice.card,
+    card: alice,
   };
 });
 

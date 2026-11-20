@@ -5,7 +5,7 @@
       "reason": "Names the sharnessd command"
     },
     {
-      "path": "src/main.ts",
+      "path": "src/daemon/main.ts",
       "reason": "Where the sharnessd process starts and its database, firewall and listener are put together"
     }
   ],
@@ -36,8 +36,7 @@
         "src/communication"
       ],
       "entrypoints": [
-        "src/communication/index.ts",
-        "src/communication/service.ts"
+        "src/communication/index.ts"
       ],
       "reason": "Messages, requests and ordered history"
     },
@@ -67,29 +66,9 @@
         "src/daemon"
       ],
       "entrypoints": [
-        "src/daemon/index.ts"
+        "src/daemon/main.ts"
       ],
       "reason": "What sharnessd serves: its settings, its agents with their inboxes, and the MCP tools served to their hosts"
-    },
-    {
-      "name": "version",
-      "roots": [
-        "src/version.ts"
-      ],
-      "entrypoints": [
-        "src/version.ts"
-      ],
-      "reason": "Package version"
-    },
-    {
-      "name": "database",
-      "roots": [
-        "src/database.ts"
-      ],
-      "entrypoints": [
-        "src/database.ts"
-      ],
-      "reason": "SQL connections, typed query compilation, transaction context and migrations shared by daemon domains"
     }
   ],
   "layers": [

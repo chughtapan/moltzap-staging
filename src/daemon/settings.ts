@@ -6,6 +6,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
+import packageJson from "../../package.json" with { type: "json" };
 import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
@@ -18,7 +19,9 @@ import {
   loadNorms,
   type NormsConfigurationError,
 } from "../norms/index.js";
-import { packageVersion } from "../version.js";
+
+/** The version of this package, as the daemon reports it to MCP clients and in telemetry. */
+export const packageVersion: string = packageJson.version;
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.

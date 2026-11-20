@@ -92,29 +92,6 @@ const mintMsgId = (): Effect.Effect<MsgId, JsonRepresentationError> =>
     Effect.mapError(representationFailure),
   );
 
-/** A place in an ordered read, as decimal text. A read returns what follows it. */
-export const Cursor = Schema.String.pipe(
-  Schema.pattern(/^\d{1,15}$/u),
-).annotations({ description: "the nextCursor of an earlier result" });
-
-/** Omit cursor to begin and pass the returned nextCursor unchanged. */
-export const PaginatedRequest = exactStruct({
-  cursor: Schema.optional(Cursor),
-});
-/** Selection arguments remain unchanged between pages.
- * @useDeclaredType
- */
-export type PaginatedRequest = typeof PaginatedRequest.Type;
-/** Absence of nextCursor marks the end of the listing. */
-export const Page = exactStruct({
-  nextCursor: Schema.optional(Cursor),
-});
-/** @useDeclaredType */
-export type Page = typeof Page.Type;
-
-/** The most inbox entries, history records or conversation addresses one page holds. */
-export const PAGE_SIZE = 50;
-
 /** The one recipient is another agent than the author. */
 const AuthorAndRecipients = exactStruct({
   author: AgentCard,
@@ -199,15 +176,6 @@ export function messageWithId(
       }),
   }).pipe(
     Effect.flatMap((captured) => Schema.decodeUnknown(Message)(captured)),
-  );
-}
-
-/** Includes the author and every recipient in agent-name order. */
-export function messageMembers(
-  message: Pick<Message, "author" | "recipients">,
-): readonly AgentCard[] {
-  return [message.author, ...message.recipients].sort((left, right) =>
-    compareAscii(left.agentName, right.agentName),
   );
 }
 
