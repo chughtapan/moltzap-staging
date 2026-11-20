@@ -37,7 +37,6 @@ import {
   saveMessage,
   type StoredMessage,
   transaction,
-  withDecisions,
 } from "./store.js";
 
 /**
@@ -380,10 +379,14 @@ export const send = Effect.fn("send")(
       ),
     );
     yield* takeTurn(daemon, outgoing ? recipient : author);
-    const earlier = yield* Effect.flatMap(
-      readConversation([author.agentId, recipient.agentId]),
-      (stored) => withDecisions(stored.map((row) => row.message)),
-    );
+    const earlier = (yield* readConversation([
+      author.agentId,
+      recipient.agentId,
+    ])).map((stored) => ({
+      message: stored.message,
+      allowed: stored.readNumber !== null,
+      ...(stored.checkedAt === null ? {} : { checkedAt: stored.checkedAt }),
+    }));
     const result = outgoing
       ? yield* daemon.firewall.checkOutgoing(message, earlier)
       : yield* daemon.firewall.checkIncoming(message, earlier);
@@ -392,7 +395,7 @@ export const send = Effect.fn("send")(
       (outgoing || result.reason === "check-unavailable")
     ) {
       if (result.record !== undefined) {
-        yield* saveDecision(message, result.record);
+        yield* saveDecision(result.record);
       }
       return yield* new FirewallRefusal({
         reason: "firewall-refused",
@@ -416,13 +419,19 @@ export const send = Effect.fn("send")(
         yield* saveMessage(message, {
           readable: result.kind === "allowed",
           ...(guidance === undefined ? {} : { guidance }),
+          ...(result.record === undefined
+            ? {}
+            : { checkedAt: result.record.time }),
         });
         if (result.record !== undefined) {
-          yield* saveDecision(message, result.record);
+          yield* saveDecision(result.record);
         }
         if (reply !== undefined) {
-          yield* saveMessage(reply.message, { readable: true });
-          yield* saveDecision(reply.message, reply.record);
+          yield* saveMessage(reply.message, {
+            readable: true,
+            checkedAt: reply.record.time,
+          });
+          yield* saveDecision(reply.record);
         }
       }),
     ).pipe(Effect.orDie);
