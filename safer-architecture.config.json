@@ -11,34 +11,14 @@
   ],
   "domains": [
     {
-      "name": "encoding",
+      "name": "messages",
       "roots": [
-        "src/encoding.ts"
+        "src/messages.ts"
       ],
       "entrypoints": [
-        "src/encoding.ts"
+        "src/messages.ts"
       ],
-      "reason": "Shared encoding at external boundaries"
-    },
-    {
-      "name": "identity",
-      "roots": [
-        "src/identity.ts"
-      ],
-      "entrypoints": [
-        "src/identity.ts"
-      ],
-      "reason": "Agent identifiers and the agents of one daemon"
-    },
-    {
-      "name": "communication",
-      "roots": [
-        "src/communication"
-      ],
-      "entrypoints": [
-        "src/communication/index.ts"
-      ],
-      "reason": "Messages, requests and ordered history"
+      "reason": "Agents and the messages they send each other"
     },
     {
       "name": "firewall",
@@ -93,13 +73,6 @@
         "firewall"
       ],
       "reason": "Local policy uses semantic messages"
-    },
-    {
-      "name": "communication",
-      "folders": [
-        "communication"
-      ],
-      "reason": "Delivery names agents by their cards"
     }
   ],
   "publicTypePackages": [],

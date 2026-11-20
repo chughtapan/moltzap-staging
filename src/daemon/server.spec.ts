@@ -265,8 +265,8 @@ it("gives a client tools that name no recipient and no conversation", () =>
         {
           kind: "sent",
           message: {
-            recipients: [{ agentName: "bob" }],
-            content: [{ type: "text", text: "hello" }],
+            recipient: { agentName: "bob" },
+            text: "hello",
           },
         },
       ],

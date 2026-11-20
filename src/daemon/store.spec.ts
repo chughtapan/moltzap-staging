@@ -9,7 +9,7 @@ import { Array as Arr, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
 import { createTestAgent } from "../__tests__/agents.js";
 import { openTestDatabase } from "../__tests__/test.js";
-import { Message } from "../communication/index.js";
+import { Message } from "../messages.js";
 import {
   conversationPeers,
   prepareDatabase,
@@ -80,8 +80,8 @@ const fixture = Effect.gen(function* () {
       Effect.gen(function* () {
         const message = yield* Message.create({
           author: agents[from],
-          recipients: [agents[to]],
-          content: [{ type: "text", text: "hello" }],
+          recipient: agents[to],
+          text: "hello",
         });
         yield* saveMessage(message, received);
         return message;

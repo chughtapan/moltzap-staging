@@ -2,8 +2,8 @@
 
 import { Effect, Encoding } from "effect";
 import type { DecisionProvider } from "../check.js";
-import { Message } from "../../communication/index.js";
-import { AgentCard, AgentId, AgentName, PrincipalId } from "../../identity.js";
+import { Message } from "../../messages.js";
+import { AgentCard, AgentId, AgentName, PrincipalId } from "../../messages.js";
 import {
   decodeMessagePolicy,
   type LoadedMessagePolicy,
@@ -45,10 +45,8 @@ export const certainProvider: DecisionProvider = {
 export function outgoing(self: AgentCard) {
   return Message.create({
     author: self,
-    recipients: [peer("bob", 2)],
-    content: [
-      { type: "text", text: "The private record says the owner is away." },
-    ],
+    recipient: peer("bob", 2),
+    text: "The private record says the owner is away.",
   });
 }
 
@@ -56,8 +54,8 @@ export function outgoing(self: AgentCard) {
 export function incoming(self: AgentCard) {
   return Message.create({
     author: peer("bob", 2),
-    recipients: [self],
-    content: [{ type: "text", text: "Hello" }],
+    recipient: self,
+    text: "Hello",
   });
 }
 

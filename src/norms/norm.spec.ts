@@ -2,7 +2,7 @@
 
 import { Effect, Either, FastCheck as fc, Struct } from "effect";
 import { expect, it } from "vitest";
-import { Message } from "../communication/index.js";
+import { Message } from "../messages.js";
 import { peer } from "../firewall/__tests__/firewall-fixtures.js";
 import { form, normOf } from "./__tests__/norms-fixtures.js";
 import {
@@ -37,48 +37,32 @@ const act = fc.record({
   ),
 });
 
-/** A message from Alice to Bob with the given text parts. */
-function message([first, ...rest]: readonly [string, ...string[]]) {
-  const part = (text: string) => ({ type: "text" as const, text });
+/** A message of `text` from Alice to Bob. */
+function message(text: string) {
   return Effect.runSync(
-    Message.create({
-      author: alice,
-      recipients: [bob],
-      content: [part(first), ...rest.map(part)],
-    }),
+    Message.create({ author: alice, recipient: bob, text }),
   );
 }
 
 it("reads back every act it writes", () => {
   fc.assert(
     fc.property(act, (written) => {
-      expect(readAct(message([formatAct(written)]))).toEqual(
+      expect(readAct(message(formatAct(written)))).toEqual(
         Either.right(written),
       );
     }),
   );
 });
 
-it("refuses a message that is anything but one act: more text, a comment or a data part", () => {
+it("refuses a message that is anything but one act: more text or a comment", () => {
   fc.assert(
     fc.property(
       act,
       fc.constantFrom<(text: string) => Message>(
-        (text) => message([text, text]),
-        (text) => message([`${text} trailing`]),
-        (text) => message([`${text} ; a comment`]),
-        (text) => message([text.slice(0, -1)]),
-        (text) =>
-          Effect.runSync(
-            Message.create({
-              author: alice,
-              recipients: [bob],
-              content: [
-                { type: "text", text },
-                { type: "data", value: {} },
-              ],
-            }),
-          ),
+        (text) => message(`${text}\n${text}`),
+        (text) => message(`${text} trailing`),
+        (text) => message(`${text} ; a comment`),
+        (text) => message(text.slice(0, -1)),
       ),
       (written, spoiled) => {
         expect(readAct(spoiled(formatAct(written)))).toMatchObject(

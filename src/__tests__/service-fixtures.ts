@@ -7,8 +7,8 @@ import type {
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../firewall/index.js";
-import type { AgentCard } from "../identity.js";
-import { Message } from "../communication/index.js";
+import type { AgentCard } from "../messages.js";
+import { Message } from "../messages.js";
 import {
   AgentAddress,
   conversationsOf,

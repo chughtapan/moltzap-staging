@@ -13,7 +13,6 @@ import {
   send,
   SERVER_AGENT_OWNER,
   sharedDaemon,
-  textContent,
 } from "./daemon-fixture.js";
 
 /** Each trace starts one daemon. */
@@ -47,15 +46,15 @@ it(
       expect(yield* nextItem(client)).toMatchObject({
         msgId: sent.id,
         author: server.agent,
-        recipients: [client.agent],
-        content: textContent(greeting),
+        recipient: client.agent,
+        text: greeting,
       });
       const replied = yield* send(client, { text: reply });
       expect(yield* nextItem(server)).toMatchObject({
         msgId: replied.id,
         author: client.agent,
-        recipients: [server.agent],
-        content: textContent(reply),
+        recipient: server.agent,
+        text: reply,
       });
 
       const serverHistory = (yield* callTool(server.connection.mcp, {

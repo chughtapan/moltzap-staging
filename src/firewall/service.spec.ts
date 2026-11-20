@@ -68,7 +68,7 @@ describe("Firewall checks", () => {
           record: {
             direction,
             decision: direction === "outgoing" ? "refused" : "withheld",
-            peers: [bob],
+            peer: bob,
             reason: "rule-violation",
             decidedBy: [{ ruleId: privacy.id, advice: privacy.feedback }],
             checkedRuleIds: [privacy.id],
@@ -222,9 +222,9 @@ describe("Firewall replies", () => {
             reply.text,
             reply.record.direction,
             reply.record.decision,
-            reply.record.peers,
+            reply.record.peer,
           ],
-        ).toEqual(text && [text, "outgoing", "allowed", [bob]]);
+        ).toEqual(text && [text, "outgoing", "allowed", bob]);
       }),
   );
 
