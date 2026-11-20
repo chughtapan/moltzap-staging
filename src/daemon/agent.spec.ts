@@ -11,6 +11,7 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
+import type { DecisionProvider, DecisionRequest } from "../firewall/index.js";
 import { digest } from "../__tests__/agents.js";
 import {
   composedPolicy,
@@ -21,7 +22,6 @@ import {
 import { openTestDatabase } from "../__tests__/test.js";
 import { MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
-import type { DecisionProvider, DecisionRequest } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
 import {
   contractOf,
@@ -340,10 +340,11 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
       })),
     );
     expect(
-      replies.map(({ content: [part] }) =>
-        part.type === "text"
-          ? part.text.startsWith(`${withheldReply} `)
-          : false,
+      replies.map(({ content }) =>
+        content.every(
+          (part) =>
+            part.type === "text" && part.text.startsWith(`${withheldReply} `),
+        ),
       ),
     ).toEqual([true, true]);
     yield* subject.sendFrom({ text: "(open :ontology exchange)" });

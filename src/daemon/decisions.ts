@@ -118,8 +118,8 @@ export const readDecisions = Effect.fn("readDecisions")(function* (
     Schema.Array(Schema.Struct({ record: savedRecord })),
   )(rows);
   return {
-    decisions: saved.flatMap(({ record: { peers, ...decided } }) =>
-      peers.map((peer) => ({ ...decided, peer })),
+    decisions: saved.flatMap(({ record }) =>
+      record.peers.map((peer) => ({ ...Struct.omit(record, "peers"), peer })),
     ),
   };
 }, Effect.orDie);

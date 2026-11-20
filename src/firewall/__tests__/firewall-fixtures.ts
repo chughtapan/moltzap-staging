@@ -110,9 +110,10 @@ export const alice = peer("alice", 1);
 /** Alice's firewall under `configured`, with whatever `installation` adds. */
 export function firewallOf(
   configured: TestPolicy,
-  installation: Partial<Parameters<typeof makeFirewall>[1]> = {},
+  installation: Partial<Parameters<typeof makeFirewall>[0]> = {},
 ) {
-  return makeFirewall(configured.source, {
+  return makeFirewall({
+    source: configured.source,
     me: alice,
     historyLimit: 256,
     provider: configured.provider,

@@ -72,7 +72,10 @@ const runDaemon = Effect.gen(function* () {
     );
     const app = yield* makeMcpHttpApp(authentication, {
       serverAgent,
-      firewall: makeFirewall(settings.messagePolicy, {
+      firewall: makeFirewall({
+        ...(settings.messagePolicy === undefined
+          ? {}
+          : { source: settings.messagePolicy }),
         me: serverAgent.card,
         historyLimit: settings.maximumHistoryRecords ?? 256,
         notice: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,

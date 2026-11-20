@@ -11,10 +11,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { Firewall } from "../firewall/service.js";
 import type { InstalledNorms } from "../norms/index.js";
 import {
+  type CommunicationError,
   Message,
   MsgId,
   PAGE_SIZE,
-  type PaginatedRequest,
   wellFormedString,
 } from "../communication/index.js";
 import {
@@ -37,8 +37,8 @@ import {
   type FirewallRefusalReason,
   LocalGuidance,
 } from "../firewall/index.js";
-import { saveDecision, withDecisions } from "./decisions.js";
 import { AGENT_NAME_RULE, AgentCard, AgentName } from "../identity.js";
+import { saveDecision, withDecisions } from "./decisions.js";
 
 /** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
 interface Owner {
@@ -378,23 +378,17 @@ function takeTurn(daemon: Daemon, client: HostedAgent) {
   );
 }
 
-/**
- * The agent `address` names for `self`. Fails with `self` when the address
- * names the asking agent and with `unknown` when no agent has the name.
- */
+/** The agent an address names, or none when no agent has the name. */
 export const addressedAgent = Effect.fn("addressedAgent")(function* (
-  self: HostedAgent,
   address: AgentAddress,
 ) {
-  const name = address.slice(AGENT_ADDRESS_PREFIX.length);
-  if (name === self.card.agentName) {
-    return yield* Effect.fail("self" as const);
-  }
-  const [agent] = yield* Effect.orDie(agentsWith({ agent_name: name }));
-  return agent ?? (yield* Effect.fail("unknown" as const));
-});
+  const [agent] = yield* agentsWith({
+    agent_name: address.slice(AGENT_ADDRESS_PREFIX.length),
+  });
+  return agent;
+}, Effect.orDie);
 
-/** The address of `agent`. */
+/** How the agents of its daemon address `agent`. */
 export const addressOfAgent = (agent: HostedAgent): AgentAddress =>
   AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${agent.card.agentName}`);
 
@@ -416,7 +410,7 @@ export const send = Effect.fn("send")(
       readonly author: HostedAgent;
       readonly recipient: HostedAgent;
       readonly text: string;
-      readonly replyToMsgId?: MsgId | undefined;
+      readonly replyToMsgId?: MsgId;
     },
   ) {
     const { author, recipient } = sent;
@@ -427,7 +421,12 @@ export const send = Effect.fn("send")(
       recipients: [recipient.card],
       content: [{ type: "text", text: sent.text }],
       replyToMsgId: sent.replyToMsgId,
-    }).pipe(Effect.mapError(({ reason }) => new SendError({ reason })));
+    }).pipe(
+      Effect.catchTag(
+        "CommunicationError",
+        ({ reason }: CommunicationError) => new SendError({ reason }),
+      ),
+    );
     yield* takeTurn(daemon, outgoing ? recipient : author);
     const earlier = yield* earlierMessages(server, message);
     const result = outgoing

@@ -9,11 +9,6 @@ import {
 import { Effect, FastCheck as fc, Schema } from "effect";
 import { describe, expect } from "vitest";
 import {
-  type DecisionProvider,
-  DecisionProviderError,
-  type StructureCheck,
-} from "./check.js";
-import {
   alice,
   certainProvider,
   firewallOf,
@@ -23,6 +18,11 @@ import {
   policy,
   privacy,
 } from "./__tests__/firewall-fixtures.js";
+import {
+  type DecisionProvider,
+  DecisionProviderError,
+  type StructureCheck,
+} from "./check.js";
 import { type Direction, TextRule } from "./rules.js";
 import { makeFirewall } from "./service.js";
 
@@ -47,7 +47,7 @@ describe("Firewall checks", () => {
     (direction) =>
       Effect.gen(function* () {
         const result = yield* check(
-          makeFirewall(undefined, { me: alice, historyLimit: 256 }),
+          makeFirewall({ me: alice, historyLimit: 256 }),
           direction,
         );
 
@@ -123,12 +123,15 @@ describe("Firewall checks", () => {
             return certainProvider.decide(request);
           },
         };
-        const earlier = yield* Effect.forEach(allowed, (wasAllowed) =>
-          Effect.map(incoming(alice), (message) => ({
-            message,
-            allowed: wasAllowed,
-            checkedAt: 1,
-          })),
+        const earlier = yield* Effect.forEach(
+          allowed,
+          (wasAllowed) =>
+            Effect.map(incoming(alice), (message) => ({
+              message,
+              allowed: wasAllowed,
+              checkedAt: 1,
+            })),
+          { concurrency: 1 },
         );
 
         yield* firewallOf(policy([privacy], recording), {
@@ -212,19 +215,16 @@ describe("Firewall replies", () => {
           "incoming",
         );
 
+        const reply = "reply" in result ? result.reply : undefined;
         expect(result).toMatchObject({ kind: "refused" });
-        expect("reply" in result ? result.reply : undefined).toEqual(
-          text === undefined
-            ? undefined
-            : {
-                text,
-                record: expect.objectContaining({
-                  direction: "outgoing",
-                  decision: "allowed",
-                  peers: [bob],
-                }),
-              },
-        );
+        expect(
+          reply && [
+            reply.text,
+            reply.record.direction,
+            reply.record.decision,
+            reply.record.peers,
+          ],
+        ).toEqual(text && [text, "outgoing", "allowed", [bob]]);
       }),
   );
 

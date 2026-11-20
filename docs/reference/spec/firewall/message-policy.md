@@ -86,8 +86,7 @@ entry the provider settled carries no guidance.
 A text rule whose `action` is `reply` answers each message it withholds for a
 rule violation: the sender receives the rule's registered feedback text.
 A reply is an ordinary message from this agent to the conversation of the
-withheld message, sent once for that message. Every generated reply must pass the outgoing checks. If refused, the daemon
-saves the check and sends no reply. A message withheld for unresolved evidence
+withheld message, sent once for that message. A message withheld for unresolved evidence
 gets no reply, and `deny`, the default, withholds silently.
 
 ## Outgoing messages
@@ -135,9 +134,9 @@ elsewhere require separately supplied evidence.
 
 ### Retained decisions
 
-Each completed check identifies the message, evidence and policy it checked.
-Only completed checks enter decision history. Each completed record saves its decision summary with the revision of
-the policy it applied, checked and deciding rule ids and registered advice.
+Each completed check identifies the message it checked.
+Only completed checks enter decision history. Each completed record saves its decision summary with the
+checked and deciding rule ids and registered advice.
 Reads return that saved summary without message content or private evidence.
 
 ## Message-policy file
@@ -188,7 +187,6 @@ rows identify authors. Daemon-generated failures have no row. Retained identitie
 | Reason | Rules |
 | --- | --- |
 | Rule violation | Violated rules. |
-| Unavailable | None. |
 | Unresolved evidence | Rules reporting unresolved evidence, including an unsure answer about an outgoing draft. |
 | Allowed | Rules the provider was unsure about for an incoming message, otherwise none. |
 

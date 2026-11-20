@@ -40,7 +40,7 @@ export interface AssessmentText {
 }
 
 /** Earlier message text and whether the local agent may read it. */
-export interface HistoryEntry extends AssessmentText {
+interface HistoryEntry extends AssessmentText {
   readonly visibleToAgent: boolean;
 }
 

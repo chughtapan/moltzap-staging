@@ -39,7 +39,7 @@ type InstalledPolicy = ReturnType<typeof buildPolicy>;
  * this agent, with the record of that reply as a message this firewall
  * allowed.
  */
-export type CheckResult =
+type CheckResult =
   | {
       readonly kind: "allowed";
       readonly guidance?: LocalGuidance;
@@ -73,8 +73,10 @@ export interface Firewall {
   ) => Effect.Effect<CheckResult>;
 }
 
-/** What a firewall is made with, besides its message policy. */
+/** What a firewall is made with. */
 interface Installation {
+  /** The message policy the firewall applies for its whole lifetime. Without one it allows every message. */
+  readonly source?: LoadedMessagePolicy;
   /** The card of the agent whose messages the firewall checks. */
   readonly me: AgentCard;
   /** The most earlier messages the provider reads. */
@@ -91,19 +93,14 @@ interface Installation {
   readonly provider?: DecisionProvider;
 }
 
-/**
- * The firewall that applies the message policy `source` for its whole
- * lifetime. Without a policy it allows every message.
- */
-export function makeFirewall(
-  source: LoadedMessagePolicy | undefined,
-  installation: Installation,
-): Firewall {
+/** The firewall of the agent `installation` names, under its message policy. */
+export function makeFirewall(installation: Installation): Firewall {
+  const { source } = installation;
   const installed = {
     ...installation,
     ...(source === undefined
       ? {}
-      : { policy: buildPolicy(source, installation.provider) }),
+      : { policy: buildPolicy({ ...installation, source }) }),
   };
   return {
     checkOutgoing: (message, earlier) =>
@@ -233,35 +230,6 @@ function refused(
 }
 
 /**
- * The provider's window of the earlier messages: the latest `historyLimit`
- * of them within the byte limit of one runtime item. `gaps` names what the
- * byte limit cut.
- */
-function historyWindow(
-  earlier: readonly EarlierMessage[],
-  historyLimit: number,
-) {
-  const latest = earlier.slice(-historyLimit);
-  let bytes = 0;
-  let kept = 0;
-  for (const { message } of [...latest].reverse()) {
-    bytes += Buffer.byteLength(JSON.stringify(message));
-    if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
-      break;
-    }
-    kept += 1;
-  }
-  return {
-    history: latest.slice(latest.length - kept),
-    earlierHistoryOmitted: kept < earlier.length,
-    gaps:
-      kept < latest.length
-        ? ["The preceding history exceeds the evidence byte limit."]
-        : [],
-  };
-}
-
-/**
  * One check of a message against its text rules, with the history before it.
  * A message the structure check passed is also judged by the text rules that
  * check gives it, and the provider reads its protocol context. A refusal of
@@ -279,41 +247,10 @@ function checkMessageText(
   structure?: Passed,
 ) {
   return Effect.gen(function* () {
-    const { policy, me: self } = installed;
+    const { policy } = installed;
     const { message } = candidate;
     const now = yield* Clock.currentTimeMillis;
-    const window = historyWindow(candidate.earlier, installed.historyLimit);
-    const cards = new Map<string, AgentCard>();
-    for (const card of [
-      self,
-      message.author,
-      ...message.recipients,
-      ...window.history.flatMap((entry) => [
-        entry.message.author,
-        ...entry.message.recipients,
-      ]),
-    ]) {
-      cards.set(card.agentId, card);
-    }
-    const evidence: CheckEvidence = {
-      agentId: self.agentId,
-      principal: self.principalId,
-      participants: [...cards.values()].map((card) => ({
-        agentId: card.agentId,
-        principal: card.principalId,
-      })),
-      history: window.history.map((entry) => ({
-        ...assessmentText(entry.message),
-        visibleToAgent:
-          entry.allowed || entry.message.author.agentId === self.agentId,
-      })),
-      earlierHistoryOmitted: window.earlierHistoryOmitted,
-      now,
-      gaps: window.gaps,
-      ...(structure?.protocol === undefined
-        ? {}
-        : { protocol: structure.protocol }),
-    };
+    const evidence = checkEvidence(installed, candidate, now, structure);
     const textRules = [...policy.textRules, ...(structure?.textRules ?? [])];
     const check = yield* checkCapturedMessage(
       direction,
@@ -369,6 +306,86 @@ function checkMessageText(
   });
 }
 
+/**
+ * The evidence the provider reads of one candidate at `now`: its verified
+ * participants, the window of the earlier messages, each visible to the agent
+ * when the firewall allowed it or the agent wrote it, and the protocol
+ * context of a message the structure check passed.
+ */
+function checkEvidence(
+  installed: Installed,
+  candidate: {
+    readonly message: Message;
+    readonly earlier: readonly EarlierMessage[];
+  },
+  now: number,
+  structure?: Passed,
+): CheckEvidence {
+  const { me: self } = installed;
+  const { message } = candidate;
+  const window = historyWindow(candidate.earlier, installed.historyLimit);
+  const cards = new Map<string, AgentCard>();
+  for (const card of [
+    self,
+    message.author,
+    ...message.recipients,
+    ...window.history.flatMap((entry) => [
+      entry.message.author,
+      ...entry.message.recipients,
+    ]),
+  ]) {
+    cards.set(card.agentId, card);
+  }
+  return {
+    agentId: self.agentId,
+    principal: self.principalId,
+    participants: [...cards.values()].map((card) => ({
+      agentId: card.agentId,
+      principal: card.principalId,
+    })),
+    history: window.history.map((entry) => ({
+      ...assessmentText(entry.message),
+      visibleToAgent:
+        entry.allowed || entry.message.author.agentId === self.agentId,
+    })),
+    earlierHistoryOmitted: window.earlierHistoryOmitted,
+    now,
+    gaps: window.gaps,
+    ...(structure?.protocol === undefined
+      ? {}
+      : { protocol: structure.protocol }),
+  };
+}
+
+/**
+ * The provider's window of the earlier messages: the latest `historyLimit`
+ * of them within the byte limit of one runtime item. `gaps` names what the
+ * byte limit cut.
+ */
+function historyWindow(
+  earlier: readonly EarlierMessage[],
+  historyLimit: number,
+) {
+  const latest = earlier.slice(-historyLimit);
+  let bytes = 0;
+  let kept = 0;
+  for (const { message } of [...latest].reverse()) {
+    bytes += Buffer.byteLength(JSON.stringify(message));
+    if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
+      break;
+    }
+    kept += 1;
+  }
+  return {
+    history: latest.slice(latest.length - kept),
+    earlierHistoryOmitted: kept < earlier.length,
+    gaps:
+      kept < latest.length
+        ? ["The preceding history exceeds the evidence byte limit."]
+        : [],
+  };
+}
+
 /** A check id correlates a check without granting lookup authority. */
 function mintCheckId() {
   return `chk_${randomBytes(32).toString("hex")}`;
@@ -389,23 +406,6 @@ function assessmentText(message: Message): AssessmentText {
 
 function referenceId(reference: string): string {
   return `msg_${createHash("sha256").update(reference).digest("hex")}`;
-}
-
-/** Only transient transport, rate-limit and server failures share the stage's bounded retry window. */
-function retryingTransientFailures(
-  provider: DecisionProvider,
-): DecisionProvider {
-  return {
-    ...provider,
-    decide: (request) =>
-      Effect.suspend(() => provider.decide(request)).pipe(
-        Effect.retry({
-          times: 2,
-          schedule: Schedule.exponential("250 millis"),
-          while: (error) => error.transient,
-        }),
-      ),
-  };
 }
 
 /**
@@ -432,10 +432,13 @@ function textReply(
  * provider reads, covers the configured rules and provider. Without
  * `provider`, Jev judges the text rules of a policy that names it.
  */
-function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
+function buildPolicy(
+  installation: Installation & { readonly source: LoadedMessagePolicy },
+) {
+  const { source } = installation;
   const configured = source.policy;
   const provider =
-    injected ??
+    installation.provider ??
     (source.provider === undefined
       ? undefined
       : retryingTransientFailures(makeJevDecisionProvider(source.provider)));
@@ -459,6 +462,23 @@ function buildPolicy(source: LoadedMessagePolicy, injected?: DecisionProvider) {
     }),
     textRules,
     permits: Effect.unsafeMakeSemaphore(maximumConcurrentChecks),
+  };
+}
+
+/** Only transient transport, rate-limit and server failures share the stage's bounded retry window. */
+function retryingTransientFailures(
+  provider: DecisionProvider,
+): DecisionProvider {
+  return {
+    ...provider,
+    decide: (request) =>
+      Effect.suspend(() => provider.decide(request)).pipe(
+        Effect.retry({
+          times: 2,
+          schedule: Schedule.exponential("250 millis"),
+          while: (error) => error.transient,
+        }),
+      ),
   };
 }
 

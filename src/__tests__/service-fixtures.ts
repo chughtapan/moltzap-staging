@@ -7,6 +7,7 @@ import type {
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../firewall/index.js";
+import type { AgentCard } from "../identity.js";
 import { Message } from "../communication/index.js";
 import {
   AgentAddress,
@@ -25,7 +26,6 @@ import {
   sendToServerAgent,
 } from "../daemon/server.js";
 import { type Firewall, makeFirewall } from "../firewall/service.js";
-import type { AgentCard } from "../identity.js";
 import { type InstalledNorms, structureCheck } from "../norms/index.js";
 import { createTestAgent } from "./agents.js";
 import { openTestDatabase } from "./test.js";
@@ -168,14 +168,14 @@ export const makeHarnessFixture = Effect.gen(function* () {
     historyLimit = 256,
     notice,
   }: OpenOptions = {}) {
-    const firewall = makeFirewall(policy?.source, {
+    const firewall = makeFirewall({
+      ...(policy ?? {}),
       me: alice.card,
       historyLimit,
       ...(notice === undefined ? {} : { notice }),
       ...(contracts === undefined
         ? {}
         : { structureCheck: structureCheck({ contracts }) }),
-      ...(policy === undefined ? {} : { provider: policy.provider }),
     });
     daemon = yield* testDaemon(alice, decorateFirewall?.(firewall) ?? firewall);
     return {

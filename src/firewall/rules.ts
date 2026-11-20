@@ -1,15 +1,7 @@
 /** @file Text rules, the message-policy file and the record of a check. */
 
 import { FileSystem } from "@effect/platform";
-import {
-  Config,
-  Data,
-  Effect,
-  Option,
-  type Redacted,
-  Schema,
-  Struct,
-} from "effect";
+import { Config, Data, Effect, Option, type Redacted, Schema } from "effect";
 import { exactStruct } from "../encoding.js";
 import { AgentCard } from "../identity.js";
 
