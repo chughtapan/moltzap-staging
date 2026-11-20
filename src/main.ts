@@ -9,9 +9,9 @@
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, PubSub } from "effect";
 import {
-  getOrCreateOwnedAgent,
   databaseConnection,
   databaseUrl,
+  getOrCreateOwnedAgent,
   loadDaemonSettings,
   makeMcpHttpApp,
   packageVersion,

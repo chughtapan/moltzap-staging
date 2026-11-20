@@ -144,6 +144,10 @@ export const Page = exactStruct({
 /** The most inbox entries, history records or conversation addresses one page holds. */
 export const PAGE_SIZE = 50;
 
+/** How the agents of its daemon address the agent named `agentName`. */
+export const addressOfAgent = (agentName: AgentName): AgentAddress =>
+  AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${agentName}`);
+
 /** One message as the host reads it. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
@@ -362,10 +366,6 @@ function takeTurn(daemon: Daemon, client: AgentCard) {
 /** The agent an address names, or none when no agent has the name. */
 export const addressedAgent = (address: AgentAddress) =>
   agentNamed(address.slice(AGENT_ADDRESS_PREFIX.length));
-
-/** How the agents of its daemon address the agent named `agentName`. */
-export const addressOfAgent = (agentName: AgentName): AgentAddress =>
-  AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${agentName}`);
 
 /**
  * Sends one message between the server agent and a client, whichever of the

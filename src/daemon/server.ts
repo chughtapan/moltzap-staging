@@ -43,7 +43,6 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { AsyncLocalStorage } from "node:async_hooks";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { DaemonSettings } from "./settings.js";
 import { Message, MsgId, wellFormedString } from "../communication/index.js";
 import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
 import { checkRecordSchema, LocalGuidance } from "../firewall/index.js";
@@ -69,7 +68,7 @@ import {
   SendRequest,
   SendResult,
 } from "./agent.js";
-import { packageVersion } from "./settings.js";
+import { type DaemonSettings, packageVersion  } from "./settings.js";
 import { readDecisions } from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: The daemon's orchestrator: it registers every tool.
@@ -489,14 +488,17 @@ function registerServerAgentTools(
     },
     ({ since }) =>
       Effect.map(readDecisions(since ?? 0), (records) => ({
-        decisions: records.flatMap((record) =>
-          record.peers.map((peer) => ({
-            ...Struct.omit(record, "peers"),
-            peer,
-          })),
-        ),
+        decisions: records.flatMap(decisionsOf),
       })),
   );
+}
+
+/** One decision for each peer of a check, as `read_firewall_decisions` reports it. */
+function decisionsOf(record: typeof checkRecordSchema.Type) {
+  return record.peers.map((peer) => ({
+    ...Struct.omit(record, "peers"),
+    peer,
+  }));
 }
 
 /** The tools of a client, which name no recipient and no conversation: both are the server agent. */

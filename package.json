@@ -140,8 +140,7 @@
     "@opentelemetry/semantic-conventions": "catalog:",
     "ajv": "catalog:",
     "effect": "catalog:",
-    "jose": "catalog:",
-    "kysely": "catalog:"
+    "jose": "catalog:"
   },
   "devDependencies": {
     "@chughtapan/safer-architecture-lsp": "catalog:",

@@ -74,8 +74,7 @@ norms, `read_norms` through their own MCP context.
 ## Persistence
 
 Messages, inbox entries and firewall decisions
-belong to an agent. The record of owners and agents and the
-next position of each conversation are shared by every agent. The database
+belong to an agent. The record of owners and agents is shared by every agent. The database
 stores everything as it was written. The daemon's operator administers the database and can
 read what it stores, so protect it as you would the messages themselves.
 

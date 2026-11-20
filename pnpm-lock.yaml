@@ -93,9 +93,6 @@ catalogs:
     jose:
       specifier: 6.2.5
       version: 6.2.5
-    kysely:
-      specifier: 0.29.6
-      version: 0.29.6
     mint:
       specifier: 4.2.749
       version: 4.2.749
@@ -181,9 +178,6 @@ importers:
       jose:
         specifier: 'catalog:'
         version: 6.2.5
-      kysely:
-        specifier: 'catalog:'
-        version: 0.29.6
     devDependencies:
       '@chughtapan/safer-architecture-lsp':
         specifier: 'catalog:'
@@ -4444,10 +4438,6 @@ packages:
 
   kubernetes-types@1.30.0:
     resolution: {integrity: sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==}
-
-  kysely@0.29.6:
-    resolution: {integrity: sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==}
-    engines: {node: '>=22.0.0'}
 
   lcm@0.0.3:
     resolution: {integrity: sha512-TB+ZjoillV6B26Vspf9l2L/vKaRY/4ep3hahcyVkCGFgsTNRUQdc24bQeNFiZeoxH0vr5+7SfNRMQuPHv/1IrQ==}
@@ -10868,8 +10858,6 @@ snapshots:
       - '@emnapi/runtime'
 
   kubernetes-types@1.30.0: {}
-
-  kysely@0.29.6: {}
 
   lcm@0.0.3:
     dependencies:

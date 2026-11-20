@@ -348,9 +348,8 @@ export const readConversation = Effect.fn("readConversation")(function* (
       read_number AS "readNumber" FROM message_log
     WHERE ((author_id = ${one} AND recipient_id = ${other})
       OR (author_id = ${other} AND recipient_id = ${one}))
-      ${page === undefined ? sql`` : sql`AND sequence > ${page.after}`}
-    ORDER BY sequence
-    ${page === undefined ? sql`` : sql`LIMIT ${page.limit}`}`;
+      AND sequence > ${page?.after ?? 0}
+    ORDER BY sequence LIMIT ${page?.limit ?? null}`;
   return yield* Schema.decodeUnknown(storedMessages)(rows);
 }, Effect.orDie);
 

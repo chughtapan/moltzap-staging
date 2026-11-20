@@ -1,5 +1,4 @@
 /** @file Reads the settings file and the files it names into the daemon's settings. */
-import packageJson from "../../package.json" with { type: "json" };
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { FileSystem } from "@effect/platform";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
@@ -7,6 +6,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
+import packageJson from "../../package.json" with { type: "json" };
 import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
