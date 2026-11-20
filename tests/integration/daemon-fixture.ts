@@ -104,7 +104,7 @@ const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 
 const DAEMON_COMMAND: readonly [string, readonly string[]] = [
   process.execPath,
-  [join(WORKSPACE_ROOT, "dist/daemon/main.js")],
+  [join(WORKSPACE_ROOT, "dist/main.js")],
 ];
 
 const failed =

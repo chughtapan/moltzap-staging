@@ -5,8 +5,8 @@
       "reason": "Names the sharnessd command"
     },
     {
-      "path": "src/daemon/main.ts",
-      "reason": "Where the sharnessd process starts and its database, firewall and listener are put together"
+      "path": "src/main.ts",
+      "reason": "Where the sharnessd process starts: its settings, OAuth admission and listener around the server"
     }
   ],
   "domains": [
@@ -31,14 +31,14 @@
       "reason": "Policy, assessment and permitted content"
     },
     {
-      "name": "conversations",
+      "name": "server",
       "roots": [
-        "src/conversations.ts"
+        "src/server.ts"
       ],
       "entrypoints": [
-        "src/conversations.ts"
+        "src/server.ts"
       ],
-      "reason": "Agents, their messages, inboxes and history, and the rows they live in"
+      "reason": "Agents, their messages, inboxes and history, the rows they live in, and the MCP tools that expose them"
     },
     {
       "name": "norms",
@@ -49,26 +49,9 @@
         "src/norms/index.ts"
       ],
       "reason": "Norm documents and the contracts they compile to for the firewall"
-    },
-    {
-      "name": "daemon",
-      "roots": [
-        "src/daemon"
-      ],
-      "entrypoints": [
-        "src/daemon/main.ts"
-      ],
-      "reason": "What sharnessd serves: its settings, its agents with their inboxes, and the MCP tools served to their hosts"
     }
   ],
   "layers": [
-    {
-      "name": "daemon",
-      "folders": [
-        "daemon"
-      ],
-      "reason": "Host calls coordinate lower services"
-    },
     {
       "name": "norms",
       "folders": [
