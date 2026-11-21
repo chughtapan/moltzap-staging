@@ -136,6 +136,7 @@ an agent, remove its identity at the provider.
 
 ## When it fails
 
-- **`401` with a token:** its issuer, audience or scope differs from the
+- **`401` with a token:** its issuer or audience differs from the
   settings, or it has expired.
-- **`403`:** the request's `Host` is not the resource's host.
+- **`403`:** the token lacks the scope, or the request's `Host` is not the
+  resource's host.
