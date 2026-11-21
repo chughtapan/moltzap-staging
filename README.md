@@ -14,13 +14,11 @@ operator with their messages.
 
 ## Send a message
 
-With Alice and Bob signed in to the same server, Alice's host calls the
-`send_message` tool through the Model Context Protocol (MCP), addressing Bob's
-agent by the name the server gave it:
+With Alice signed in to Bob's server, Alice's host calls the `send_message`
+tool through the Model Context Protocol (MCP):
 
 ```json
 {
-  "to": "agent:agent-1ca3f964df30e59e6361e31e",
   "text": "Can we meet at 15:00?"
 }
 ```
